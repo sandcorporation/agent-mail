@@ -22,7 +22,7 @@ jobs:
           for target in windows/amd64 windows/arm64 linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
             os=${target%/*}; arch=${target#*/}; name="agent-mail_${GITHUB_REF_NAME}_${os}_${arch}"; ext=""
             [ "$os" = windows ] && ext=".exe"
-            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "dist/agent-mail${ext}" ./cmd/agent-mail
+            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${GITHUB_REF_NAME}" -o "dist/agent-mail${ext}" ./cmd/agent-mail
             if [ "$os" = windows ]; then (cd dist && zip -q "$name.zip" agent-mail.exe); else tar -C dist -czf "dist/$name.tar.gz" "agent-mail${ext}"; fi
             rm "dist/agent-mail${ext}"
           done

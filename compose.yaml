@@ -7,6 +7,7 @@ services:
       DB_PATH: /data/mail.db
       LISTEN_ADDR: :8080
       AGENT_MAIL_TOKENS: ${AGENT_MAIL_TOKENS:?set in external .env}
+      AGENT_MAIL_ENROLLMENT_TOKEN: ${AGENT_MAIL_ENROLLMENT_TOKEN:-}
     ports:
       - "${MAIL_BIND_ADDRESS:-127.0.0.1}:8097:8080"
     volumes:
