@@ -34,18 +34,23 @@ agent-mail config set --endpoint http://localhost:8080 --role codemit/worker-1 -
 agent-mail --profile codemit-worker config set --endpoint http://localhost:8080 --role codemit/worker-1 --token-file /path/to/role-token
 agent-mail send --to codemit/coordinator --subject 'Build ready' --task task-123 --body-file report.md --idempotency-key task-123-report
 cat report.md | agent-mail send --to codemit/coordinator --subject 'Build ready' --body-file /dev/stdin
-agent-mail inbox [--q term] [--json]
+agent-mail inbox [--q term] [--status pending|read|acknowledged|completed] [--json]
 agent-mail outbox --json
 agent-mail read 42
 agent-mail reply 42 --subject 'Re: Build ready' --body 'Thanks'
 agent-mail ack 42
 agent-mail complete 42
 agent-mail watch --after 0 --json
+agent-mail wait --timeout 1800
 ```
 
 `send` and `reply` accept `--body`, `--body-file`, or piped stdin. `--json` returns machine-readable results for list/read/send/status operations. `watch` is a reconnecting long poll; save its printed cursor and pass it back with `--after` after restarting. Notifications can repeat after reconnect by design.
 
-Use a separate `--profile NAME` for each local session or role; each profile has its own protected credential file. `AGENT_MAIL_PROFILE`, `AGENT_MAIL_ENDPOINT`, `AGENT_MAIL_ROLE`, and `AGENT_MAIL_TOKEN` can select or override a profile for isolated process environments. The server always derives the sender role from the credential, regardless of caller-supplied message fields. To enroll a role without restarting the server, set the operator-only enrollment credential in the deployment's external `.env`, then run `agent-mail register --endpoint URL --role ROLE --token-file ROLE_TOKEN_FILE --enrollment-token-file ENROLLMENT_TOKEN_FILE`. A role owner can resume with the same role credential; registration cannot replace an existing role credential. Keep the enrollment credential private and rotate or remove it when enrollment is closed.
+`wait` checks the inbox for `pending` messages (every `--interval` seconds, default 15), prints them as `#ID sender | subject | task=ID` lines (or a JSON array with `--json`) and exits 0. It never marks anything read, and it returns immediately when pending mail already exists, so it is safe to run as a background "wake me when mail arrives" step. With no pending mail before `--timeout` (default 1800 seconds, `0` = no limit) it exits 3. Credential errors exit 1 at once; transient network errors are retried.
+
+Every command accepts only its own options; `agent-mail <command> --help` lists them. An unknown command or option, a missing option value, or an invalid `--status` exits with code 2 instead of being ignored. Exit codes: 0 success, 1 error, 2 usage error, 3 `wait` timed out.
+
+Use a separate `--profile NAME` for each local session or role; each profile has its own protected credential file. `--profile NAME` (or `--profile=NAME`) works before or after the command, including `config set`, and takes precedence over `AGENT_MAIL_PROFILE`. A profile named by either must already have a saved config; the CLI exits with an error rather than falling back to the default profile. `AGENT_MAIL_PROFILE`, `AGENT_MAIL_ENDPOINT`, `AGENT_MAIL_ROLE`, and `AGENT_MAIL_TOKEN` can select or override a profile for isolated process environments. The server always derives the sender role from the credential, regardless of caller-supplied message fields. To enroll a role without restarting the server, set the operator-only enrollment credential in the deployment's external `.env`, then run `agent-mail register --endpoint URL --role ROLE --token-file ROLE_TOKEN_FILE --enrollment-token-file ENROLLMENT_TOKEN_FILE`. A role owner can resume with the same role credential; registration cannot replace an existing role credential. Keep the enrollment credential private and rotate or remove it when enrollment is closed.
 
 ## Docker deployment
 

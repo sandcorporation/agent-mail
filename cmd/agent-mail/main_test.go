@@ -221,7 +221,8 @@ func TestDefaultProfileKeepsExistingConfigPath(t *testing.T) {
 	if got, want := configPath(), filepath.Join(dir, "config.json"); got != want {
 		t.Fatalf("configPath()=%q, want %q", got, want)
 	}
-	os.Args = []string{"agent-mail", "--profile", "worker-a"}
+	profileFlag = "worker-a"
+	defer func() { profileFlag = "" }()
 	if got, want := configPath(), filepath.Join(dir, "worker-a.json"); got != want {
 		t.Fatalf("profile configPath()=%q, want %q", got, want)
 	}
