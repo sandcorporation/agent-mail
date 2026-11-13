@@ -1,0 +1,49 @@
+# main push -> checks || image -> production fast-forward. The production branch head is the deployed version.
+# The Jenkins deploy job (Jenkinsfile) watches production only: it does not build or test, it pulls the image for that sha.
+#
+#   check    ci.yml (workflow_call) — the same checks as pull requests. If it fails nothing is promoted.
+#   image    image.yml (workflow_call), in parallel with check — ghcr.io/sandcorporation/agent-mail:<sha>.
+#   promote  needs check and image. Fast-forwards production to this sha (scripts/ci/promote.sh ff).
+#            If production is already newer (an older run finished late) it skips instead of failing.
+# production only moves forward. Roll back with a revert PR on main, or for emergencies the Jenkins ROLLBACK_SHA parameter.
+#
+# Security (public repository): main pushes only, GitHub-hosted runners only, actions pinned by SHA, no extra secrets.
+# No default permissions; contents: write only in the promote job. A GITHUB_TOKEN push does not trigger other workflows,
+# but the repository webhook (Jenkins) does see it.
+name: promote
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  check:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  image:
+    uses: ./.github/workflows/image.yml
+    permissions:
+      contents: read
+      packages: write
+
+  promote:
+    needs: [check, image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    concurrency:
+      group: production-branch
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Fast-forward production
+        env:
+          SHA: ${{ github.sha }}
+        run: bash scripts/ci/promote.sh ff "$SHA"
