@@ -5,7 +5,7 @@ Agent Mail is a small self hosted mailbox for stable, role addressed agent ident
 ## Design decisions
 
 - Go service and CLI share one module; SQLite is local to the service and persisted on a named Docker volume. SQLite keeps deployment small and avoids a separate database service.
-- Every API call uses a bearer token mapped server side to exactly one role. Roles are configured explicitly as `role=token`; senders cannot impersonate another sender, and recipients must be configured roles.
+- Every API call uses a bearer credential mapped server side to exactly one role. Existing `AGENT_MAIL_TOKENS=role=token,...` deployments are imported into SQLite at startup. New roles can enroll at runtime when the operator sets an external `AGENT_MAIL_ENROLLMENT_TOKEN`; senders cannot impersonate another sender, and recipients must be registered roles.
 - The dashboard is served by the service and uses browser text nodes for message content. It never renders message markdown as HTML. The browser stores its selected token in local storage on that browser profile.
 - Watch is durable long polling. The cursor is the last delivered global message ID. Multiple watchers can replay from the same cursor and receive duplicate notifications; consumers should deduplicate by message ID. A watch only reports new mail; it does not mark mail read or wake a stopped LLM.
 
@@ -31,6 +31,7 @@ Configure a CLI (read the token from a protected file; the token is stored with 
 
 ```sh
 agent-mail config set --endpoint http://localhost:8080 --role codemit/worker-1 --token-file /path/to/role-token
+agent-mail --profile codemit-worker config set --endpoint http://localhost:8080 --role codemit/worker-1 --token-file /path/to/role-token
 agent-mail send --to codemit/coordinator --subject 'Build ready' --task task-123 --body-file report.md --idempotency-key task-123-report
 cat report.md | agent-mail send --to codemit/coordinator --subject 'Build ready' --body-file /dev/stdin
 agent-mail inbox [--q term] [--json]
@@ -44,9 +45,11 @@ agent-mail watch --after 0 --json
 
 `send` and `reply` accept `--body`, `--body-file`, or piped stdin. `--json` returns machine-readable results for list/read/send/status operations. `watch` is a reconnecting long poll; save its printed cursor and pass it back with `--after` after restarting. Notifications can repeat after reconnect by design.
 
+Use a separate `--profile NAME` for each local session or role; each profile has its own protected credential file. `AGENT_MAIL_PROFILE`, `AGENT_MAIL_ENDPOINT`, `AGENT_MAIL_ROLE`, and `AGENT_MAIL_TOKEN` can select or override a profile for isolated process environments. The server always derives the sender role from the credential, regardless of caller-supplied message fields. To enroll a role without restarting the server, set the operator-only enrollment credential in the deployment's external `.env`, then run `agent-mail register --endpoint URL --role ROLE --token-file ROLE_TOKEN_FILE --enrollment-token-file ENROLLMENT_TOKEN_FILE`. A role owner can resume with the same role credential; registration cannot replace an existing role credential. Keep the enrollment credential private and rotate or remove it when enrollment is closed.
+
 ## Docker deployment
 
-The Compose file binds to loopback by default (`127.0.0.1:8097`). For private network access, set `MAIL_BIND_ADDRESS` in the external `.env` to the intended private interface address; do not bind publicly without a TLS reverse proxy and appropriate network controls. Set `AGENT_MAIL_TOKENS` in an external `.env` file with mode `0600`, build and start with `docker compose up -d --build`. The container runs as nonroot, drops capabilities, has a read-only root filesystem, health check, restart policy, and a named volume. Never put credentials in the Compose file or source control.
+The Compose file binds to loopback by default (`127.0.0.1:8097`). For private network access, set `MAIL_BIND_ADDRESS` in the external `.env` to the intended private interface address; do not bind publicly without a TLS reverse proxy and appropriate network controls. Set legacy `AGENT_MAIL_TOKENS` and, when enabling dynamic enrollment, `AGENT_MAIL_ENROLLMENT_TOKEN` in an external `.env` file with mode `0600`; build and start with `docker compose up -d --build`. The enrollment value is optional so existing deployments continue to start; registration is disabled until it is set. Existing role definitions and message history stay in the SQLite volume. The container runs as nonroot, drops capabilities, has a read-only root filesystem, health check, restart policy, and a named volume. Never put credentials in the Compose file or source control.
 
 Backup and restore while stopped (SQLite WAL is checkpointed on clean shutdown):
 
@@ -62,7 +65,7 @@ Use the actual volume name from `docker volume ls` if Compose prefixes it differ
 
 ## API
 
-All `/api/*` routes require `Authorization: Bearer <role-token>`. Unauthorized requests return 401; a recipient outside the configured role set returns 403.
+All `/api/*` routes except registration require `Authorization: Bearer <role-token>` and `X-Agent-Mail-Role: <expected-role>`. The server checks that the selected role matches the credential, so a session cannot accidentally use another profile's identity. Unauthorized or mismatched requests return 401; a recipient outside the registered role set returns 403. `POST /api/register` accepts `{role,credential}` and requires the operator enrollment bearer credential for new roles. Existing roles may only be resumed by presenting their same role credential.
 
 - `POST /api/messages` with `{recipient,subject,body,task_id?,thread_id?,reply_to?}`. Optional `Idempotency-Key` header.
 - `GET /api/messages?box=inbox|outbox&q=...&status=...`
@@ -71,6 +74,7 @@ All `/api/*` routes require `Authorization: Bearer <role-token>`. Unauthorized r
 - `POST /api/messages/{id}/ack`, `/complete`; recipient only.
 - `GET /api/watch?after=<message-id>` waits up to 25 seconds, returns `{messages:[ids],cursor:id,timeout?:true}`. Replay with the returned cursor. IDs are durable; concurrent watchers independently replay and can see duplicates.
 - `GET /health` is unauthenticated and returns `{ok:true}`.
+- `POST /api/register` durably registers a new role without a service restart, or verifies credential ownership to resume an existing role.
 
 Orca integration belongs in a separate wake/session adapter. This service has no Orca terminal handle dependency and cannot start a stopped session. An adapter may poll/watch and route a role notification to an available session; mailbox durability and explicit acknowledgment remain authoritative.
 

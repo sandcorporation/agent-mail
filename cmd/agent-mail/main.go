@@ -40,20 +40,77 @@ type Server struct {
 	tokens map[string]string
 }
 
+var version = "dev"
+
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "version" {
-		fmt.Println("agent-mail dev")
+	args := os.Args[1:]
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--profile" && i+1 < len(args) {
+			args = append(args[:i], args[i+2:]...)
+			i--
+		}
+	}
+	if len(args) > 0 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
+		if args[0] == "help" && len(args) > 1 {
+			printCommandHelp(args[1])
+			return
+		}
+		printHelp()
 		return
 	}
-	if len(os.Args) > 1 && os.Args[1] == "config" {
-		cliConfig(os.Args[2:])
+	if len(args) > 0 && args[0] == "version" {
+		if hasHelp(args[1:]) || len(args) > 1 && args[1] == "help" {
+			fmt.Println("Usage: agent-mail version")
+			return
+		}
+		fmt.Println("agent-mail " + version)
 		return
 	}
-	if len(os.Args) > 1 {
-		cli(os.Args[1:])
+	if len(args) > 0 && args[0] == "config" {
+		cliConfig(args[1:])
+		return
+	}
+	if len(args) > 0 {
+		cli(args)
 		return
 	}
 	runServer()
+}
+func printHelp() {
+	fmt.Print(`agent-mail — role addressed durable mailbox
+
+Usage: agent-mail [--profile NAME] <command> [options]
+
+Commands:
+  register   Register a new role or prove ownership of an existing role
+  config     Save endpoint and role credential for this user profile
+  send       Send a message to a registered role
+  inbox      List messages for the active role
+  outbox     List messages sent by the active role
+  watch      Watch inbox without consuming messages
+  read ID    Read a message
+  reply ID   Reply to a message
+  ack ID     Acknowledge a message
+  complete ID Mark a message complete
+  version    Show build version
+  help       Show this help
+
+Examples:
+  agent-mail register --endpoint https://mail.example --role team/worker --token-file role.token --enrollment-token-file enrollment.token
+  agent-mail config set --endpoint https://mail.example --role team/worker --token-file role.token
+  agent-mail send --to team/lead --subject 'Done' --body 'Work is complete'
+  agent-mail inbox --json
+
+Use 'agent-mail <command> --help' for command usage.
+Profiles also accept the AGENT_MAIL_PROFILE environment variable.
+`)
+}
+func printCommandHelp(command string) {
+	if command == "config" {
+		fmt.Println("Usage: agent-mail config set --endpoint URL --role ROLE --token-file PATH [--profile NAME]")
+		return
+	}
+	fmt.Printf("Usage: agent-mail %s [options]\nSee 'agent-mail --help' for command details and examples.\n", command)
 }
 func runServer() {
 	path := env("DB_PATH", "/data/mail.db")
@@ -63,7 +120,7 @@ func runServer() {
 		log.Fatal(e)
 	}
 	db.SetMaxOpenConns(1)
-	_, e = db.Exec(`PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT,sender TEXT NOT NULL,recipient TEXT NOT NULL,subject TEXT NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL,task_id TEXT,thread_id INTEGER,reply_to INTEGER,status TEXT NOT NULL DEFAULT 'pending',idem TEXT, UNIQUE(sender,idem)); CREATE INDEX IF NOT EXISTS idx_recipient ON messages(recipient,id); CREATE INDEX IF NOT EXISTS idx_sender ON messages(sender,id); CREATE TABLE IF NOT EXISTS role_states(role TEXT NOT NULL,message_id INTEGER NOT NULL,status TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(role,message_id));`)
+	_, e = db.Exec(`PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT,sender TEXT NOT NULL,recipient TEXT NOT NULL,subject TEXT NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL,task_id TEXT,thread_id INTEGER,reply_to INTEGER,status TEXT NOT NULL DEFAULT 'pending',idem TEXT, UNIQUE(sender,idem)); CREATE INDEX IF NOT EXISTS idx_recipient ON messages(recipient,id); CREATE INDEX IF NOT EXISTS idx_sender ON messages(sender,id); CREATE TABLE IF NOT EXISTS role_states(role TEXT NOT NULL,message_id INTEGER NOT NULL,status TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(role,message_id)); CREATE TABLE IF NOT EXISTS roles(role TEXT PRIMARY KEY, token TEXT NOT NULL, created_at TEXT NOT NULL);`)
 	if e != nil {
 		log.Fatal(e)
 	}
@@ -74,8 +131,8 @@ func runServer() {
 			s.tokens[p[0]] = p[1]
 		}
 	}
-	if len(s.tokens) == 0 {
-		log.Fatal("AGENT_MAIL_TOKENS required (role=token, comma separated)")
+	if e = migrateConfiguredRoles(s); e != nil {
+		log.Fatal("cannot migrate configured roles")
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -87,6 +144,14 @@ func runServer() {
 	addr := env("LISTEN_ADDR", ":8080")
 	log.Printf("agent-mail listening on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, secureHeaders(mux)))
+}
+func migrateConfiguredRoles(s *Server) error {
+	for role, token := range s.tokens {
+		if _, err := s.db.Exec(`INSERT OR IGNORE INTO roles(role,token,created_at) VALUES(?,?,?)`, role, token, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func env(k, d string) string {
 	if x := os.Getenv(k); x != "" {
@@ -104,14 +169,21 @@ func secureHeaders(next http.Handler) http.Handler {
 }
 func (s *Server) auth(r *http.Request) (string, bool) {
 	t := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	for role, v := range s.tokens {
-		if len(v) == len(t) && subtle.ConstantTimeCompare([]byte(v), []byte(t)) == 1 {
-			return role, true
-		}
+	expected := r.Header.Get("X-Agent-Mail-Role")
+	var role string
+	if t == "" || expected == "" || !validRole(expected) {
+		return "", false
+	}
+	if s.db.QueryRow(`SELECT role FROM roles WHERE token=?`, t).Scan(&role) == nil && role == expected {
+		return role, true
 	}
 	return "", false
 }
 func (s *Server) api(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/api/register" {
+		s.register(w, r)
+		return
+	}
 	role, ok := s.auth(r)
 	if !ok {
 		http.Error(w, "unauthorized", 401)
@@ -158,6 +230,62 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	}
 	http.NotFound(w, r)
 }
+func (s *Server) register(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	var req struct {
+		Role       string `json:"role"`
+		Credential string `json:"credential"`
+	}
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req) != nil || !validRole(req.Role) || req.Credential == "" {
+		http.Error(w, "role and credential required", 400)
+		return
+	}
+	var existing string
+	err := s.db.QueryRow(`SELECT token FROM roles WHERE role=?`, req.Role).Scan(&existing)
+	if err == nil {
+		if len(existing) != len(req.Credential) || subtle.ConstantTimeCompare([]byte(existing), []byte(req.Credential)) != 1 {
+			http.Error(w, "role already registered; valid credential required to resume", 409)
+			return
+		}
+		writeJSON(w, map[string]string{"role": req.Role, "status": "resumed"})
+		return
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, "registration failed", 500)
+		return
+	}
+	enrollment := os.Getenv("AGENT_MAIL_ENROLLMENT_TOKEN")
+	provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if len(req.Credential) < 24 || enrollment == "" || len(enrollment) != len(provided) || subtle.ConstantTimeCompare([]byte(enrollment), []byte(provided)) != 1 {
+		http.Error(w, "enrollment authorization required", 401)
+		return
+	}
+	if len(enrollment) == len(req.Credential) && subtle.ConstantTimeCompare([]byte(enrollment), []byte(req.Credential)) == 1 {
+		http.Error(w, "role credential must differ from enrollment credential", 400)
+		return
+	}
+	_, err = s.db.Exec(`INSERT INTO roles(role,token,created_at) VALUES(?,?,?)`, req.Role, req.Credential, time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		http.Error(w, "role registration failed", 409)
+		return
+	}
+	w.WriteHeader(201)
+	writeJSON(w, map[string]string{"role": req.Role, "status": "registered"})
+}
+func validRole(role string) bool {
+	if len(role) < 1 || len(role) > 128 {
+		return false
+	}
+	for _, c := range role {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("._/-", c)) {
+			return false
+		}
+	}
+	return true
+}
 func parseID(x string) (int64, error)        { return strconv.ParseInt(x, 10, 64) }
 func writeJSON(w http.ResponseWriter, v any) { _ = json.NewEncoder(w).Encode(v) }
 func (s *Server) send(w http.ResponseWriter, r *http.Request, role string) {
@@ -171,7 +299,8 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request, role string) {
 		http.Error(w, "recipient and subject required", 400)
 		return
 	}
-	if _, allowed := s.tokens[m.Recipient]; !allowed {
+	var allowed int
+	if s.db.QueryRow(`SELECT 1 FROM roles WHERE role=?`, m.Recipient).Scan(&allowed) != nil {
 		http.Error(w, "unknown recipient role", 403)
 		return
 	}
@@ -357,7 +486,7 @@ func (s *Server) watch(w http.ResponseWriter, r *http.Request, role string) {
 }
 func dashboard(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = io.WriteString(w, `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Agent Mail</title><style>body{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:0 1rem;background:#f5f7fa;color:#172033}input,textarea,button,select{font:inherit;padding:.6rem;margin:.25rem}input,textarea{border:1px solid #ccd3df;border-radius:6px}button{cursor:pointer}header,.row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}.card{background:white;padding:1rem;margin:.7rem 0;border-radius:8px;box-shadow:0 1px 5px #ccd}pre{white-space:pre-wrap;overflow-wrap:anywhere}.muted{color:#667}</style></head><body><h1>Agent Mail</h1><p>Role mailbox · content is displayed as text</p><section class="card"><input id="endpoint" placeholder="Service URL" value=""><input id="token" type="password" placeholder="Bearer token"><button onclick="save()">Connect</button><span id="conn">Disconnected</span></section><div class="row"><button onclick="loadBox('inbox')">Inbox</button><button onclick="loadBox('outbox')">Outbox</button><input id="search" placeholder="Search"><button onclick="loadBox(box)">Search</button><select id="status"><option value="">All statuses</option><option>pending</option><option>read</option><option>acknowledged</option><option>completed</option></select></div><div id="list"></div><section class="card"><h2>Send message</h2><input id="to" placeholder="Recipient role"><input id="subject" placeholder="Subject"><input id="task" placeholder="Task ID"><textarea id="body" rows="5" style="width:95%" placeholder="Markdown or plain text"></textarea><button onclick="send()">Send</button><span id="sendresult"></span></section><div id="detail"></div><script>let box='inbox';function config(){return JSON.parse(localStorage.getItem('amcfg')||'{"endpoint":""}')}function save(){let c={endpoint:document.getElementById('endpoint').value.replace(/\/$/,''),token:document.getElementById('token').value};localStorage.setItem('amcfg',JSON.stringify(c));loadBox('inbox')}async function api(p,opt={}){let c=config();let r=await fetch(c.endpoint+'/api/'+p,{...opt,headers:{'Content-Type':'application/json','Authorization':'Bearer '+c.token,...(opt.headers||{})}});if(!r.ok)throw Error(r.status+' '+await r.text());return r.json()}function init(){let c=config();document.getElementById('endpoint').value=c.endpoint||location.origin;document.getElementById('token').value=c.token||''}async function loadBox(b){box=b;document.getElementById('conn').textContent='Connecting…';try{let q=new URLSearchParams({box:b,q:document.getElementById('search').value,status:document.getElementById('status').value});let a=await api('messages?'+q);document.getElementById('conn').textContent='Connected';let el=document.getElementById('list');el.replaceChildren();for(let m of a){let d=document.createElement('article');d.className='card';let h=document.createElement('h3');h.textContent='#'+m.id+' '+m.subject;let p=document.createElement('p');p.className='muted';p.textContent=m.sender+' → '+m.recipient+' · '+new Date(m.created_at).toLocaleString()+' · '+m.status;let btn=document.createElement('button');btn.textContent='Open';btn.onclick=()=>show(m.id);d.append(h,p,btn);el.append(d)}}catch(e){document.getElementById('conn').textContent='Error: '+e.message}}async function show(id){let m=await api('messages/'+id);let d=document.getElementById('detail');d.replaceChildren();let card=document.createElement('section');card.className='card';let h=document.createElement('h2');h.textContent=m.subject;let meta=document.createElement('p');meta.textContent='#'+m.id+' '+m.sender+' → '+m.recipient+' · '+m.status;let body=document.createElement('pre');body.textContent=m.body;card.append(h,meta,body);for(let s of ['ack','complete']){let b=document.createElement('button');b.textContent=s;b.onclick=async()=>{await api('messages/'+id+'/'+s,{method:'POST'});show(id);loadBox(box)};card.append(b)}let ta=document.createElement('textarea');ta.placeholder='Reply';let rb=document.createElement('button');rb.textContent='Reply';rb.onclick=async()=>{await api('messages/'+id+'/reply',{method:'POST',body:JSON.stringify({subject:'Re: '+m.subject,body:ta.value})});ta.value='';loadBox(box)};card.append(ta,rb);d.append(card)}async function send(){try{let r=await api('messages',{method:'POST',headers:{'Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({recipient:document.getElementById('to').value,subject:document.getElementById('subject').value,task_id:document.getElementById('task').value,body:document.getElementById('body').value})});document.getElementById('sendresult').textContent='Sent #'+r.id;loadBox(box)}catch(e){document.getElementById('sendresult').textContent=e.message}}init();</script></body></html>`)
+	_, _ = io.WriteString(w, `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Agent Mail</title><style>body{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:0 1rem;background:#f5f7fa;color:#172033}input,textarea,button,select{font:inherit;padding:.6rem;margin:.25rem}input,textarea{border:1px solid #ccd3df;border-radius:6px}button{cursor:pointer}header,.row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}.card{background:white;padding:1rem;margin:.7rem 0;border-radius:8px;box-shadow:0 1px 5px #ccd}pre{white-space:pre-wrap;overflow-wrap:anywhere}.muted{color:#667}</style></head><body><h1>Agent Mail</h1><p>Choose the role identity for this browser profile. Message content is displayed as text.</p><section class="card"><input id="endpoint" placeholder="Service URL" value=""><input id="role" placeholder="Role identity"><input id="token" type="password" placeholder="Role credential"><button onclick="save()">Connect</button><span id="conn">Disconnected</span></section><div class="row"><button onclick="loadBox('inbox')">Inbox</button><button onclick="loadBox('outbox')">Outbox</button><input id="search" placeholder="Search"><button onclick="loadBox(box)">Search</button><select id="status"><option value="">All statuses</option><option>pending</option><option>read</option><option>acknowledged</option><option>completed</option></select></div><div id="list"></div><section class="card"><h2>Send message</h2><input id="to" placeholder="Recipient role"><input id="subject" placeholder="Subject"><input id="task" placeholder="Task ID"><textarea id="body" rows="5" style="width:95%" placeholder="Markdown or plain text"></textarea><button onclick="send()">Send</button><span id="sendresult"></span></section><div id="detail"></div><script>let box='inbox';function config(){return JSON.parse(localStorage.getItem('amcfg')||'{"endpoint":""}')}function save(){let c={endpoint:document.getElementById('endpoint').value.replace(/\/$/,''),role:document.getElementById('role').value,token:document.getElementById('token').value};localStorage.setItem('amcfg',JSON.stringify(c));loadBox('inbox')}async function api(p,opt={}){let c=config();let r=await fetch(c.endpoint+'/api/'+p,{...opt,headers:{'Content-Type':'application/json','Authorization':'Bearer '+c.token,'X-Agent-Mail-Role':c.role,...(opt.headers||{})}});if(!r.ok)throw Error(r.status+' '+await r.text());return r.json()}function init(){let c=config();document.getElementById('endpoint').value=c.endpoint||location.origin;document.getElementById('role').value=c.role||'';document.getElementById('token').value=c.token||''}async function loadBox(b){box=b;document.getElementById('conn').textContent='Connecting…';try{let q=new URLSearchParams({box:b,q:document.getElementById('search').value,status:document.getElementById('status').value});let a=await api('messages?'+q);document.getElementById('conn').textContent='Connected';let el=document.getElementById('list');el.replaceChildren();for(let m of a){let d=document.createElement('article');d.className='card';let h=document.createElement('h3');h.textContent='#'+m.id+' '+m.subject;let p=document.createElement('p');p.className='muted';p.textContent=m.sender+' → '+m.recipient+' · '+new Date(m.created_at).toLocaleString()+' · '+m.status;let btn=document.createElement('button');btn.textContent='Open';btn.onclick=()=>show(m.id);d.append(h,p,btn);el.append(d)}}catch(e){document.getElementById('conn').textContent='Error: '+e.message}}async function show(id){let m=await api('messages/'+id);let d=document.getElementById('detail');d.replaceChildren();let card=document.createElement('section');card.className='card';let h=document.createElement('h2');h.textContent=m.subject;let meta=document.createElement('p');meta.textContent='#'+m.id+' '+m.sender+' → '+m.recipient+' · '+m.status;let body=document.createElement('pre');body.textContent=m.body;card.append(h,meta,body);for(let s of ['ack','complete']){let b=document.createElement('button');b.textContent=s;b.onclick=async()=>{await api('messages/'+id+'/'+s,{method:'POST'});show(id);loadBox(box)};card.append(b)}let ta=document.createElement('textarea');ta.placeholder='Reply';let rb=document.createElement('button');rb.textContent='Reply';rb.onclick=async()=>{await api('messages/'+id+'/reply',{method:'POST',body:JSON.stringify({subject:'Re: '+m.subject,body:ta.value})});ta.value='';loadBox(box)};card.append(ta,rb);d.append(card)}async function send(){try{let r=await api('messages',{method:'POST',headers:{'Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({recipient:document.getElementById('to').value,subject:document.getElementById('subject').value,task_id:document.getElementById('task').value,body:document.getElementById('body').value})});document.getElementById('sendresult').textContent='Sent #'+r.id;loadBox(box)}catch(e){document.getElementById('sendresult').textContent=e.message}}init();</script></body></html>`)
 }
 
 type Config struct {
@@ -367,22 +496,63 @@ type Config struct {
 }
 
 func configPath() string {
+	if d := os.Getenv("AGENT_MAIL_CONFIG_DIR"); d != "" {
+		return filepath.Join(d, profileName()+".json")
+	}
 	d, e := os.UserConfigDir()
 	if e != nil {
 		d = "."
 	}
-	return filepath.Join(d, "agent-mail", "config.json")
+	return filepath.Join(d, "agent-mail", profileName()+".json")
+}
+func profileName() string {
+	name := os.Getenv("AGENT_MAIL_PROFILE")
+	for i, a := range os.Args {
+		if a == "--profile" && i+1 < len(os.Args) {
+			name = os.Args[i+1]
+		}
+	}
+	if name == "" {
+		return "default"
+	}
+	if !validProfile(name) {
+		fatal("invalid profile name")
+	}
+	return name
+}
+func validProfile(name string) bool {
+	if name == "" || len(name) > 64 {
+		return false
+	}
+	for _, c := range name {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
 }
 func readConfig() Config {
 	b, e := os.ReadFile(configPath())
-	if e != nil {
-		return Config{}
-	}
 	var c Config
-	_ = json.Unmarshal(b, &c)
+	if e == nil {
+		_ = json.Unmarshal(b, &c)
+	}
+	if v := os.Getenv("AGENT_MAIL_ENDPOINT"); v != "" {
+		c.Endpoint = v
+	}
+	if v := os.Getenv("AGENT_MAIL_ROLE"); v != "" {
+		c.Role = v
+	}
+	if v := os.Getenv("AGENT_MAIL_TOKEN"); v != "" {
+		c.Token = v
+	}
 	return c
 }
 func cliConfig(args []string) {
+	if hasHelp(args) || len(args) > 0 && args[0] == "help" {
+		fmt.Println("Usage: agent-mail config set --endpoint URL --role ROLE --token-file PATH [--profile NAME]\nProfiles are isolated credential files. --profile applies to subsequent commands.")
+		return
+	}
 	if len(args) < 2 || args[0] != "set" {
 		fmt.Fprintln(os.Stderr, "usage: agent-mail config set --endpoint URL --role ROLE --token-file PATH")
 		os.Exit(2)
@@ -423,6 +593,22 @@ func cliConfig(args []string) {
 	fmt.Println("Saved", p)
 }
 func cli(args []string) {
+	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
+		printHelp()
+		return
+	}
+	if hasHelp(args[1:]) {
+		printCommandHelp(args[0])
+		return
+	}
+	if len(args) > 1 && args[1] == "help" {
+		printCommandHelp(args[0])
+		return
+	}
+	if args[0] == "register" {
+		cliRegister(args[1:])
+		return
+	}
 	c := readConfig()
 	if c.Endpoint == "" || c.Token == "" || c.Role == "" {
 		fatal("configure with: agent-mail config set --endpoint URL --role ROLE --token-file PATH")
@@ -431,6 +617,10 @@ func cli(args []string) {
 	flags := map[string]string{}
 	jsonMode := false
 	for i := 1; i < len(args); i++ {
+		if args[i] == "--profile" && i+1 < len(args) {
+			i++
+			continue
+		}
 		if args[i] == "--json" {
 			jsonMode = true
 			continue
@@ -451,6 +641,7 @@ func cli(args []string) {
 		req, _ := http.NewRequest("POST", strings.TrimRight(c.Endpoint, "/")+"/api/messages", bytes.NewReader(b))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+c.Token)
+		req.Header.Set("X-Agent-Mail-Role", c.Role)
 		if key != "" {
 			req.Header.Set("Idempotency-Key", key)
 		}
@@ -464,6 +655,7 @@ func cli(args []string) {
 		}
 		req, _ := http.NewRequest("GET", u, nil)
 		req.Header.Set("Authorization", "Bearer "+c.Token)
+		req.Header.Set("X-Agent-Mail-Role", c.Role)
 		doRequest(req, jsonMode)
 		return
 	}
@@ -484,6 +676,7 @@ func cli(args []string) {
 		}
 		req, _ := http.NewRequest(method, url, nil)
 		req.Header.Set("Authorization", "Bearer "+c.Token)
+		req.Header.Set("X-Agent-Mail-Role", c.Role)
 		doRequest(req, jsonMode)
 		return
 	}
@@ -498,11 +691,59 @@ func cli(args []string) {
 		b, _ := json.Marshal(map[string]any{"subject": flags["--subject"], "body": body, "recipient": flags["--to"]})
 		req, _ := http.NewRequest("POST", strings.TrimRight(c.Endpoint, "/")+"/api/messages/"+args[1]+"/reply", bytes.NewReader(b))
 		req.Header.Set("Authorization", "Bearer "+c.Token)
+		req.Header.Set("X-Agent-Mail-Role", c.Role)
 		req.Header.Set("Content-Type", "application/json")
 		doRequest(req, jsonMode)
 		return
 	}
 	fatal("commands: send inbox outbox read reply ack complete watch config")
+}
+func hasHelp(args []string) bool {
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			return true
+		}
+	}
+	return false
+}
+func cliRegister(args []string) {
+	flags := map[string]string{}
+	for i := 0; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "--") && i+1 < len(args) {
+			flags[args[i]] = args[i+1]
+			i++
+		}
+	}
+	for _, k := range []string{"--endpoint", "--role", "--token-file", "--enrollment-token-file"} {
+		if flags[k] == "" {
+			fatal("register requires --endpoint, --role, --token-file and --enrollment-token-file")
+		}
+	}
+	if !validRole(flags["--role"]) {
+		fatal("invalid role name")
+	}
+	credential, err := os.ReadFile(flags["--token-file"])
+	if err != nil {
+		fatal("cannot read role credential")
+	}
+	enrollment, err := os.ReadFile(flags["--enrollment-token-file"])
+	if err != nil {
+		fatal("cannot read enrollment credential")
+	}
+	payload, _ := json.Marshal(map[string]string{"role": flags["--role"], "credential": strings.TrimSpace(string(credential))})
+	req, _ := http.NewRequest("POST", strings.TrimRight(flags["--endpoint"], "/")+"/api/register", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(enrollment)))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fatal("registration request failed: " + err.Error())
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		fatal(fmt.Sprintf("server returned %s: %s", resp.Status, string(b)))
+	}
+	fmt.Print(string(b))
 }
 func inputBody(flags map[string]string) (string, error) {
 	if f := flags["--body-file"]; f != "" {
@@ -563,6 +804,7 @@ func watchCLI(c Config, flags map[string]string, jsonMode bool) {
 		u := fmt.Sprintf("%s/api/watch?after=%d", strings.TrimRight(c.Endpoint, "/"), after)
 		req, _ := http.NewRequest("GET", u, nil)
 		req.Header.Set("Authorization", "Bearer "+c.Token)
+		req.Header.Set("X-Agent-Mail-Role", c.Role)
 		resp, e := http.DefaultClient.Do(req)
 		if e != nil {
 			time.Sleep(2 * time.Second)
