@@ -110,6 +110,22 @@ func TestHelpDoesNotReadConfigOrConnect(t *testing.T) {
 	}
 }
 
+func TestDefaultProfileKeepsExistingConfigPath(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AGENT_MAIL_CONFIG_DIR", dir)
+	t.Setenv("AGENT_MAIL_PROFILE", "")
+	old := os.Args
+	defer func() { os.Args = old }()
+	os.Args = []string{"agent-mail"}
+	if got, want := configPath(), filepath.Join(dir, "config.json"); got != want {
+		t.Fatalf("configPath()=%q, want %q", got, want)
+	}
+	os.Args = []string{"agent-mail", "--profile", "worker-a"}
+	if got, want := configPath(), filepath.Join(dir, "worker-a.json"); got != want {
+		t.Fatalf("profile configPath()=%q, want %q", got, want)
+	}
+}
+
 func TestActualCLILifecycle(t *testing.T) {
 	s := testServer(t)
 	t.Setenv("AGENT_MAIL_ENROLLMENT_TOKEN", "enrollment-secret")
