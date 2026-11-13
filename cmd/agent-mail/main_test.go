@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	_ "modernc.org/sqlite"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -95,6 +97,105 @@ func TestDynamicRegistrationResumeAndMigration(t *testing.T) {
 	if err = db.QueryRow(`SELECT token FROM roles WHERE role='legacy'`).Scan(&token); err != nil || token != "legacy-token" {
 		t.Fatalf("static migration failed: %v", err)
 	}
+}
+
+func TestAdminReadAPIRequiresProxySecretAndIsReadOnly(t *testing.T) {
+	s := testServer(t)
+	s.adminProxyToken = "proxy-secret"
+	if w := call(s, "POST", "/api/messages", "secret-a", map[string]any{"recipient": "b", "subject": "admin fixture", "body": "hello", "thread_id": 41}, "fixture"); w.Code != 201 {
+		t.Fatalf("fixture send=%d", w.Code)
+	}
+	request := func(method, path, secret string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, nil)
+		r.Header.Set("Remote-User", "admin") // spoofable identity alone must never grant access
+		if secret != "" {
+			r.Header.Set("X-Agent-Mail-Admin", secret)
+		}
+		w := httptest.NewRecorder()
+		s.api(w, r)
+		return w
+	}
+	if w := request("GET", "/api/admin/roles", ""); w.Code != 401 {
+		t.Fatalf("without proxy secret=%d", w.Code)
+	}
+	if w := request("GET", "/api/admin/roles", "wrong"); w.Code != 401 {
+		t.Fatalf("wrong proxy secret=%d", w.Code)
+	}
+	w := request("GET", "/api/admin/roles", "proxy-secret")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `["a","b"]`) || strings.Contains(w.Body.String(), "secret-a") {
+		t.Fatalf("roles response=%d %s", w.Code, w.Body)
+	}
+	w = request("GET", "/api/admin/messages?box=inbox&role=b&thread=41", "proxy-secret")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "admin fixture") {
+		t.Fatalf("admin messages=%d %s", w.Code, w.Body)
+	}
+	w = request("POST", "/api/admin/messages", "proxy-secret")
+	if w.Code != 405 {
+		t.Fatalf("admin write allowed: %d", w.Code)
+	}
+}
+
+func TestDashboardUsesSameOriginAndNoRoleCredentials(t *testing.T) {
+	w := httptest.NewRecorder()
+	dashboard(w, httptest.NewRequest("GET", "/", nil))
+	body := w.Body.String()
+	if w.Code != 200 || !strings.Contains(body, "fetch('/api/admin/") || strings.Contains(body, "Authorization") || strings.Contains(body, "type=\"password\"") || strings.Contains(body, "localStorage") {
+		t.Fatalf("dashboard is not same-origin/read-only: %d", w.Code)
+	}
+}
+
+func TestProtectedReverseProxyAdminRequest(t *testing.T) {
+	s := testServer(t)
+	s.adminProxyToken = "proxy-secret"
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/login" {
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte("<html>login</html>"))
+			return
+		}
+		if _, err := r.Cookie("authelia_session"); err != nil {
+			http.Redirect(w, r, "/login", http.StatusFound)
+			return
+		}
+		// Model the trusted proxy's overwrite: attacker supplied values never
+		// reach the backend, and the browser's Authorization is not forwarded.
+		r.Header.Del("Authorization")
+		r.Header.Del("X-Agent-Mail-Role")
+		r.Header.Set("X-Agent-Mail-Admin", "proxy-secret")
+		s.api(w, r)
+	}))
+	defer proxy.Close()
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	unauth, err := client.Get(proxy.URL + "/api/admin/roles")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unauth.Request.URL.Path != "/login" || !strings.Contains(unauth.Header.Get("Content-Type"), "text/html") {
+		t.Fatalf("unauthenticated proxy response=%d path=%s", unauth.StatusCode, unauth.Request.URL.Path)
+	}
+	jar.SetCookies(mustURL(t, proxy.URL), []*http.Cookie{{Name: "authelia_session", Value: "valid"}})
+	req, _ := http.NewRequest("GET", proxy.URL+"/api/admin/roles", nil)
+	req.Header.Set("X-Agent-Mail-Admin", "attacker-value")
+	req.Header.Set("Authorization", "Bearer role-token")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var roles []string
+	if err = json.NewDecoder(resp.Body).Decode(&roles); err != nil || resp.StatusCode != 200 || len(roles) != 2 {
+		t.Fatalf("authenticated proxy response=%d roles=%v err=%v", resp.StatusCode, roles, err)
+	}
+}
+
+func mustURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
 }
 
 func TestHelpDoesNotReadConfigOrConnect(t *testing.T) {

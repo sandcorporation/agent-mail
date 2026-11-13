@@ -6,7 +6,7 @@ Agent Mail is a small self hosted mailbox for stable, role addressed agent ident
 
 - Go service and CLI share one module; SQLite is local to the service and persisted on a named Docker volume. SQLite keeps deployment small and avoids a separate database service.
 - Every API call uses a bearer credential mapped server side to exactly one role. Existing `AGENT_MAIL_TOKENS=role=token,...` deployments are imported into SQLite at startup. New roles can enroll at runtime when the operator sets an external `AGENT_MAIL_ENROLLMENT_TOKEN`; senders cannot impersonate another sender, and recipients must be registered roles.
-- The dashboard is served by the service and uses browser text nodes for message content. It never renders message markdown as HTML. The browser stores its selected token in local storage on that browser profile.
+- The dashboard is a read-only administrator view of all roles and mailboxes. It uses same-origin requests and never receives role credentials; message content is rendered as text.
 - Watch is durable long polling. The cursor is the last delivered global message ID. Multiple watchers can replay from the same cursor and receive duplicate notifications; consumers should deduplicate by message ID. A watch only reports new mail; it does not mark mail read or wake a stopped LLM.
 
 ## Message and status semantics
@@ -49,7 +49,19 @@ Use a separate `--profile NAME` for each local session or role; each profile has
 
 ## Docker deployment
 
-The Compose file binds to loopback by default (`127.0.0.1:8097`). For private network access, set `MAIL_BIND_ADDRESS` in the external `.env` to the intended private interface address; do not bind publicly without a TLS reverse proxy and appropriate network controls. Set legacy `AGENT_MAIL_TOKENS` and, when enabling dynamic enrollment, `AGENT_MAIL_ENROLLMENT_TOKEN` in an external `.env` file with mode `0600`; build and start with `docker compose up -d --build`. The enrollment value is optional so existing deployments continue to start; registration is disabled until it is set. Existing role definitions and message history stay in the SQLite volume. The container runs as nonroot, drops capabilities, has a read-only root filesystem, health check, restart policy, and a named volume. Never put credentials in the Compose file or source control.
+The Compose file binds to loopback by default (`127.0.0.1:8097`). For private network access, set `MAIL_BIND_ADDRESS` in the external `.env` to the intended private interface address; do not bind publicly without a TLS reverse proxy and appropriate network controls. Set `AGENT_MAIL_TOKENS` and, when enabling dynamic enrollment, `AGENT_MAIL_ENROLLMENT_TOKEN` in an external `.env` file with mode `0600`; build and start with `docker compose up -d --build`. The enrollment value is optional so existing deployments continue to start; registration is disabled until it is set. Existing role definitions and message history stay in the SQLite volume. The container runs as nonroot, drops capabilities, has a read-only root filesystem, health check, restart policy, and a named volume. Never put credentials in the Compose file or source control.
+
+### Protected administrator dashboard
+
+The dashboard provides read-only access to all messages and registered role names. Its `/api/admin/*` endpoints return `401` unless `AGENT_MAIL_ADMIN_PROXY_TOKEN` is configured and the request includes the matching `X-Agent-Mail-Admin` header. The browser does not know this value. Configure a separate random secret in the private deployment `.env` and in the service's private reverse-proxy configuration; do not reuse any role or Authelia credential. The proxy must authenticate the browser session with Authelia before forwarding and must overwrite (never pass through) any incoming `X-Agent-Mail-Admin` header with the configured secret. Keep the backend bound to loopback/private networking so clients cannot bypass the proxy boundary. Requests without the secret cannot use admin APIs, and these endpoints only accept `GET`.
+
+For nginx, keep your existing Authelia protection on the dashboard host and add this directive inside only this service's already-protected `location /` (substitute the private secret from your secret-management process; do not commit it):
+
+```nginx
+proxy_set_header X-Agent-Mail-Admin "<same random value as AGENT_MAIL_ADMIN_PROXY_TOKEN>";
+```
+
+This replaces any browser-supplied admin header, while leaving ordinary role-token API requests intact for CLI use. The dashboard itself does not send an `Authorization` header. Validate nginx configuration before reloading it. If Authelia protects only selected paths, also protect `/api/admin/` with the same authenticated session check.
 
 Backup and restore while stopped (SQLite WAL is checkpointed on clean shutdown):
 

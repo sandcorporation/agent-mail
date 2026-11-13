@@ -36,8 +36,9 @@ type Message struct {
 	IdempotencyKey string    `json:"-"`
 }
 type Server struct {
-	db     *sql.DB
-	tokens map[string]string
+	db              *sql.DB
+	tokens          map[string]string
+	adminProxyToken string
 }
 
 var version = "dev"
@@ -124,7 +125,7 @@ func runServer() {
 	if e != nil {
 		log.Fatal(e)
 	}
-	s := &Server{db: db, tokens: map[string]string{}}
+	s := &Server{db: db, tokens: map[string]string{}, adminProxyToken: os.Getenv("AGENT_MAIL_ADMIN_PROXY_TOKEN")}
 	for _, pair := range strings.Split(os.Getenv("AGENT_MAIL_TOKENS"), ",") {
 		p := strings.SplitN(strings.TrimSpace(pair), "=", 2)
 		if len(p) == 2 && p[0] != "" && p[1] != "" {
@@ -180,6 +181,10 @@ func (s *Server) auth(r *http.Request) (string, bool) {
 	return "", false
 }
 func (s *Server) api(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/api/admin/") {
+		s.adminAPI(w, r)
+		return
+	}
 	if r.URL.Path == "/api/register" {
 		s.register(w, r)
 		return
@@ -229,6 +234,96 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.NotFound(w, r)
+}
+
+// adminAPI exposes read-only mailbox reporting only to a reverse proxy that
+// injects a server-held secret after authenticating its user. The backend
+// must remain private; caller-supplied identity headers are never trusted.
+func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
+	provided := r.Header.Get("X-Agent-Mail-Admin")
+	if s.adminProxyToken == "" || len(provided) != len(s.adminProxyToken) || subtle.ConstantTimeCompare([]byte(provided), []byte(s.adminProxyToken)) != 1 {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	path := strings.TrimPrefix(r.URL.Path, "/api/admin/")
+	switch path {
+	case "roles":
+		rows, err := s.db.Query(`SELECT role FROM roles ORDER BY role`)
+		if err != nil {
+			http.Error(w, "query failed", 500)
+			return
+		}
+		defer rows.Close()
+		roles := []string{}
+		for rows.Next() {
+			var role string
+			if rows.Scan(&role) == nil {
+				roles = append(roles, role)
+			}
+		}
+		writeJSON(w, roles)
+	case "messages":
+		adminList(w, r, s.db)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func adminList(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+	q, status, role, box := strings.TrimSpace(r.URL.Query().Get("q")), r.URL.Query().Get("status"), r.URL.Query().Get("role"), r.URL.Query().Get("box")
+	thread := strings.TrimSpace(r.URL.Query().Get("thread"))
+	if box != "inbox" && box != "outbox" {
+		box = "all"
+	}
+	query := `SELECT m.id,m.sender,m.recipient,m.subject,m.body,m.created_at,COALESCE(m.task_id,''),COALESCE(m.thread_id,0),COALESCE(m.reply_to,0),COALESCE(rs.status,m.status,'pending') FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=m.recipient WHERE 1=1`
+	args := []any{}
+	if role != "" {
+		query += ` AND (m.sender=? OR m.recipient=?)`
+		args = append(args, role, role)
+	}
+	if box == "inbox" && role != "" {
+		query += ` AND m.recipient=?`
+		args = append(args, role)
+	}
+	if box == "outbox" && role != "" {
+		query += ` AND m.sender=?`
+		args = append(args, role)
+	}
+	if q != "" {
+		query += ` AND (m.subject LIKE ? OR m.body LIKE ? OR m.task_id LIKE ? OR m.sender LIKE ? OR m.recipient LIKE ?)`
+		like := "%" + q + "%"
+		args = append(args, like, like, like, like, like)
+	}
+	if status != "" {
+		query += ` AND COALESCE(rs.status,m.status,'pending')=?`
+		args = append(args, status)
+	}
+	if thread != "" {
+		query += ` AND (m.thread_id=? OR m.id=?)`
+		args = append(args, thread, thread)
+	}
+	query += ` ORDER BY m.id DESC LIMIT 500`
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		http.Error(w, "query failed", 500)
+		return
+	}
+	defer rows.Close()
+	out := []Message{}
+	for rows.Next() {
+		var m Message
+		var created string
+		if rows.Scan(&m.ID, &m.Sender, &m.Recipient, &m.Subject, &m.Body, &created, &m.TaskID, &m.ThreadID, &m.ReplyTo, &m.Status) == nil {
+			m.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+			out = append(out, m)
+		}
+	}
+	writeJSON(w, out)
 }
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -485,8 +580,12 @@ func (s *Server) watch(w http.ResponseWriter, r *http.Request, role string) {
 	}
 }
 func dashboard(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = io.WriteString(w, `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Agent Mail</title><style>body{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:0 1rem;background:#f5f7fa;color:#172033}input,textarea,button,select{font:inherit;padding:.6rem;margin:.25rem}input,textarea{border:1px solid #ccd3df;border-radius:6px}button{cursor:pointer}header,.row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}.card{background:white;padding:1rem;margin:.7rem 0;border-radius:8px;box-shadow:0 1px 5px #ccd}pre{white-space:pre-wrap;overflow-wrap:anywhere}.muted{color:#667}</style></head><body><h1>Agent Mail</h1><p>Choose the role identity for this browser profile. Message content is displayed as text.</p><section class="card"><input id="endpoint" placeholder="Service URL" value=""><input id="role" placeholder="Role identity"><input id="token" type="password" placeholder="Role credential"><button onclick="save()">Connect</button><span id="conn">Disconnected</span></section><div class="row"><button onclick="loadBox('inbox')">Inbox</button><button onclick="loadBox('outbox')">Outbox</button><input id="search" placeholder="Search"><button onclick="loadBox(box)">Search</button><select id="status"><option value="">All statuses</option><option>pending</option><option>read</option><option>acknowledged</option><option>completed</option></select></div><div id="list"></div><section class="card"><h2>Send message</h2><input id="to" placeholder="Recipient role"><input id="subject" placeholder="Subject"><input id="task" placeholder="Task ID"><textarea id="body" rows="5" style="width:95%" placeholder="Markdown or plain text"></textarea><button onclick="send()">Send</button><span id="sendresult"></span></section><div id="detail"></div><script>let box='inbox';function config(){return JSON.parse(localStorage.getItem('amcfg')||'{"endpoint":""}')}function save(){let c={endpoint:document.getElementById('endpoint').value.replace(/\/$/,''),role:document.getElementById('role').value,token:document.getElementById('token').value};localStorage.setItem('amcfg',JSON.stringify(c));loadBox('inbox')}async function api(p,opt={}){let c=config();let r=await fetch(c.endpoint+'/api/'+p,{...opt,headers:{'Content-Type':'application/json','Authorization':'Bearer '+c.token,'X-Agent-Mail-Role':c.role,...(opt.headers||{})}});if(!r.ok)throw Error(r.status+' '+await r.text());return r.json()}function init(){let c=config();document.getElementById('endpoint').value=c.endpoint||location.origin;document.getElementById('role').value=c.role||'';document.getElementById('token').value=c.token||''}async function loadBox(b){box=b;document.getElementById('conn').textContent='Connecting…';try{let q=new URLSearchParams({box:b,q:document.getElementById('search').value,status:document.getElementById('status').value});let a=await api('messages?'+q);document.getElementById('conn').textContent='Connected';let el=document.getElementById('list');el.replaceChildren();for(let m of a){let d=document.createElement('article');d.className='card';let h=document.createElement('h3');h.textContent='#'+m.id+' '+m.subject;let p=document.createElement('p');p.className='muted';p.textContent=m.sender+' → '+m.recipient+' · '+new Date(m.created_at).toLocaleString()+' · '+m.status;let btn=document.createElement('button');btn.textContent='Open';btn.onclick=()=>show(m.id);d.append(h,p,btn);el.append(d)}}catch(e){document.getElementById('conn').textContent='Error: '+e.message}}async function show(id){let m=await api('messages/'+id);let d=document.getElementById('detail');d.replaceChildren();let card=document.createElement('section');card.className='card';let h=document.createElement('h2');h.textContent=m.subject;let meta=document.createElement('p');meta.textContent='#'+m.id+' '+m.sender+' → '+m.recipient+' · '+m.status;let body=document.createElement('pre');body.textContent=m.body;card.append(h,meta,body);for(let s of ['ack','complete']){let b=document.createElement('button');b.textContent=s;b.onclick=async()=>{await api('messages/'+id+'/'+s,{method:'POST'});show(id);loadBox(box)};card.append(b)}let ta=document.createElement('textarea');ta.placeholder='Reply';let rb=document.createElement('button');rb.textContent='Reply';rb.onclick=async()=>{await api('messages/'+id+'/reply',{method:'POST',body:JSON.stringify({subject:'Re: '+m.subject,body:ta.value})});ta.value='';loadBox(box)};card.append(ta,rb);d.append(card)}async function send(){try{let r=await api('messages',{method:'POST',headers:{'Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({recipient:document.getElementById('to').value,subject:document.getElementById('subject').value,task_id:document.getElementById('task').value,body:document.getElementById('body').value})});document.getElementById('sendresult').textContent='Sent #'+r.id;loadBox(box)}catch(e){document.getElementById('sendresult').textContent=e.message}}init();</script></body></html>`)
+	_, _ = io.WriteString(w, `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Agent Mail</title><style>body{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:0 1rem;background:#f5f7fa;color:#172033}input,button,select{font:inherit;padding:.6rem;margin:.25rem}button{cursor:pointer}.row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}.card{background:white;padding:1rem;margin:.7rem 0;border-radius:8px;box-shadow:0 1px 5px #ccd}pre{white-space:pre-wrap;overflow-wrap:anywhere}.muted{color:#667}</style></head><body><h1>Agent Mail · Admin overview</h1><p>Read-only view of all registered roles and mailboxes.</p><section class="card row"><select id="box"><option value="all">All messages</option><option value="inbox">All inbox</option><option value="outbox">All outbox</option></select><select id="role"><option value="">All roles</option></select><select id="status"><option value="">All statuses</option><option>pending</option><option>read</option><option>acknowledged</option><option>completed</option></select><input id="search" placeholder="Search content, roles or task"><input id="thread" type="number" placeholder="Thread ID"><button onclick="load()">Search</button><span id="conn">Connecting…</span></section><div id="list"></div><div id="detail"></div><script>async function api(path){let r;try{r=await fetch('/api/admin/'+path,{credentials:'same-origin',headers:{'Accept':'application/json'}})}catch(e){throw Error('Network error. Check the private service connection and sign-in.')}if(r.redirected||!r.headers.get('content-type')?.includes('application/json'))throw Error('The request was redirected to a sign-in page. Sign in through the protected service URL and reload.');if(!r.ok)throw Error(r.status===401?'Admin access is not configured for this protected proxy.':'Request failed ('+r.status+').');return r.json()}function node(tag,text,cls){let n=document.createElement(tag);n.textContent=text;if(cls)n.className=cls;return n}async function init(){try{for(let role of await api('roles'))document.getElementById('role').append(new Option(role,role));await load()}catch(e){document.getElementById('conn').textContent=e.message}}async function load(){document.getElementById('conn').textContent='Loading…';document.getElementById('detail').replaceChildren();try{let q=new URLSearchParams({box:document.getElementById('box').value,role:document.getElementById('role').value,status:document.getElementById('status').value,q:document.getElementById('search').value,thread:document.getElementById('thread').value});let rows=await api('messages?'+q);let list=document.getElementById('list');list.replaceChildren();for(let m of rows){let card=node('article','', 'card');let title=node('h3','#'+m.id+' '+m.subject);let meta=node('p',m.sender+' → '+m.recipient+' · '+new Date(m.created_at).toLocaleString()+' · '+m.status,'muted');let open=node('button','Open');open.onclick=()=>show(m);card.append(title,meta,open);list.append(card)}document.getElementById('conn').textContent=rows.length+' messages (maximum 500)'}catch(e){document.getElementById('conn').textContent=e.message}}function show(m){let card=node('section','','card');card.append(node('h2',m.subject),node('p','#'+m.id+' · '+m.sender+' → '+m.recipient+' · '+m.status));let pre=node('pre',m.body);card.append(pre);if(m.thread_id)card.append(node('p','Thread #'+m.thread_id));document.getElementById('detail').replaceChildren(card)}document.getElementById('thread').addEventListener('input',()=>{});init()</script></body></html>`)
 }
 
 type Config struct {
