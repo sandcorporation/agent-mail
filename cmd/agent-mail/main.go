@@ -496,14 +496,18 @@ type Config struct {
 }
 
 func configPath() string {
+	filename := profileName() + ".json"
+	if filename == "default.json" {
+		filename = "config.json"
+	}
 	if d := os.Getenv("AGENT_MAIL_CONFIG_DIR"); d != "" {
-		return filepath.Join(d, profileName()+".json")
+		return filepath.Join(d, filename)
 	}
 	d, e := os.UserConfigDir()
 	if e != nil {
 		d = "."
 	}
-	return filepath.Join(d, "agent-mail", profileName()+".json")
+	return filepath.Join(d, "agent-mail", filename)
 }
 func profileName() string {
 	name := os.Getenv("AGENT_MAIL_PROFILE")
