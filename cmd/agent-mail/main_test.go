@@ -76,6 +76,10 @@ func TestPersistenceRetryAndStatus(t *testing.T) {
 	if w.Code != 200 || !bytes.Contains(w.Body.Bytes(), []byte("acknowledged")) {
 		t.Fatalf("status filter: %s", w.Body)
 	}
+	w = call(s, "GET", "/api/messages?box=outbox&status=acknowledged", "secret-a", nil, "")
+	if w.Code != 200 || !bytes.Contains(w.Body.Bytes(), []byte("acknowledged")) {
+		t.Fatalf("outbox recipient status: %d %s", w.Code, w.Body)
+	}
 }
 func TestAuthorizationAndWatchCursor(t *testing.T) {
 	s := testServer(t)
