@@ -56,6 +56,16 @@ Use a separate `--profile NAME` for each local session or role; each profile has
 
 The Compose file binds to loopback by default (`127.0.0.1:8097`). For private network access, set `MAIL_BIND_ADDRESS` in the external `.env` to the intended private interface address; do not bind publicly without a TLS reverse proxy and appropriate network controls. Set `AGENT_MAIL_TOKENS` and, when enabling dynamic enrollment, `AGENT_MAIL_ENROLLMENT_TOKEN` in an external `.env` file with mode `0600`; build and start with `docker compose up -d --build`. The enrollment value is optional so existing deployments continue to start; registration is disabled until it is set. Existing role definitions and message history stay in the SQLite volume. The container runs as nonroot, drops capabilities, has a read-only root filesystem, health check, restart policy, and a named volume. Never put credentials in the Compose file or source control.
 
+### Automated deployment (Actions image + Jenkins)
+
+`docker compose up -d --build` above builds locally (the image is tagged `agent-mail:local`). The production path never builds on the server:
+
+1. A pull request runs `CI` (tests, vet, build).
+2. A push to `main` runs `promote`: the same checks in parallel with `image`, which builds `linux/amd64` and pushes `ghcr.io/sandcorporation/agent-mail:<commit sha>`. When both pass, `production` is fast-forwarded to that commit (`scripts/ci/promote.sh`). `production` only moves forward; roll back with a revert PR.
+3. A Jenkins job using the `Jenkinsfile` watches `production` only. Through the `sandcorp` shared library (`sandcorpDeploy`) it waits for the GHCR image of the `production` head, pulls it on the node labelled `agent-mail-deploy`, recreates the `agent-mail` service with `AGENT_MAIL_IMAGE` set to that image (`--no-build`), waits for the container health check and runs `/health` inside the container. If the new container does not become healthy it switches back to the previous successfully deployed image. The `ROLLBACK_SHA` job parameter deploys an older published image.
+
+Nothing deploys until such a job exists. Host-specific values are not in this repository: the deploy node is chosen by its Jenkins label, and secrets plus `MAIL_BIND_ADDRESS` come from the `.env` file in the job workspace on that node (mode `0600`, same keys as above). Keep the Compose project name `agent-mail` so the existing `agent-mail_agent_mail_data` volume is reused; moving from a manual deployment only recreates the container. The deploy node needs Docker with Compose and pull access to the GHCR package.
+
 ### Protected administrator dashboard
 
 The dashboard provides read-only access to all messages and registered role names. Its `/api/admin/*` endpoints return `401` unless `AGENT_MAIL_ADMIN_PROXY_TOKEN` is configured and the request includes the matching `X-Agent-Mail-Admin` header. The browser does not know this value. Configure a separate random secret in the private deployment `.env` and in the service's private reverse-proxy configuration; do not reuse any role or Authelia credential. The proxy must authenticate the browser session with Authelia before forwarding and must overwrite (never pass through) any incoming `X-Agent-Mail-Admin` header with the configured secret. Keep the backend bound to loopback/private networking so clients cannot bypass the proxy boundary. Requests without the secret cannot use admin APIs, and these endpoints only accept `GET`.
@@ -73,7 +83,7 @@ Backup and restore while stopped (SQLite WAL is checkpointed on clean shutdown):
 ```sh
 docker compose stop
 mkdir -p backup
-docker run --rm -v agent-mail-mvp_agent_mail_data:/data -v "$PWD/backup:/backup" alpine sh -c 'cp /data/mail.db /backup/mail.db'
+docker run --rm -v agent-mail_agent_mail_data:/data -v "$PWD/backup:/backup" alpine sh -c 'cp /data/mail.db /backup/mail.db'
 docker compose start
 # Restore: stop service, copy a verified backup back to /data/mail.db, then start.
 ```

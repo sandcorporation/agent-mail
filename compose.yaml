@@ -1,7 +1,9 @@
 services:
   agent-mail:
+    # Deployments set AGENT_MAIL_IMAGE to ghcr.io/sandcorporation/agent-mail:<commit sha> and run without building.
+    # Without it, `docker compose up -d --build` builds a local image from this checkout (development).
+    image: ${AGENT_MAIL_IMAGE:-agent-mail:local}
     build: .
-    image: ghcr.io/sandcorporation/agent-mail:latest
     restart: unless-stopped
     environment:
       DB_PATH: /data/mail.db
