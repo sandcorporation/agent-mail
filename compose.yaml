@@ -1,0 +1,27 @@
+services:
+  agent-mail:
+    build: .
+    image: ghcr.io/sandcorporation/agent-mail:latest
+    restart: unless-stopped
+    environment:
+      DB_PATH: /data/mail.db
+      LISTEN_ADDR: :8080
+      AGENT_MAIL_TOKENS: ${AGENT_MAIL_TOKENS:?set in external .env}
+    ports:
+      - "${MAIL_BIND_ADDRESS:-127.0.0.1}:8097:8080"
+    volumes:
+      - agent_mail_data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+volumes:
+  agent_mail_data:
