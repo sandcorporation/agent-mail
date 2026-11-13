@@ -348,6 +348,23 @@ func TestPersistenceRetryAndStatus(t *testing.T) {
 	if w.Code != 200 || !bytes.Contains(w.Body.Bytes(), []byte("acknowledged")) {
 		t.Fatalf("outbox recipient status: %d %s", w.Code, w.Body)
 	}
+	if w = call(s, "POST", "/api/messages/"+itoa(a.ID)+"/complete", "secret-b", nil, ""); w.Code != 200 {
+		t.Fatal(w.Code)
+	}
+	for _, spelling := range []string{"complete", "completed"} {
+		w = call(s, "GET", "/api/messages?box=outbox&status="+spelling, "secret-a", nil, "")
+		if w.Code != 200 || !bytes.Contains(w.Body.Bytes(), []byte(`"status":"complete"`)) {
+			t.Fatalf("%s filter: %d %s", spelling, w.Code, w.Body)
+		}
+		r := httptest.NewRequest("GET", "/api/admin/messages?status="+spelling, nil)
+		r.Header.Set("X-Agent-Mail-Admin", "proxy-secret")
+		s.adminProxyToken = "proxy-secret"
+		rec := httptest.NewRecorder()
+		s.api(rec, r)
+		if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte(`"status":"complete"`)) {
+			t.Fatalf("admin %s filter: %d %s", spelling, rec.Code, rec.Body)
+		}
+	}
 }
 func TestAuthorizationAndWatchCursor(t *testing.T) {
 	s := testServer(t)

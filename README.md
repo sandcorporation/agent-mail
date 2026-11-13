@@ -34,7 +34,7 @@ agent-mail config set --endpoint http://localhost:8080 --role codemit/worker-1 -
 agent-mail --profile codemit-worker config set --endpoint http://localhost:8080 --role codemit/worker-1 --token-file /path/to/role-token
 agent-mail send --to codemit/coordinator --subject 'Build ready' --task task-123 --body-file report.md --idempotency-key task-123-report
 cat report.md | agent-mail send --to codemit/coordinator --subject 'Build ready' --body-file /dev/stdin
-agent-mail inbox [--q term] [--status pending|read|acknowledged|completed] [--json]
+agent-mail inbox [--q term] [--status pending|read|acknowledged|complete] [--json]
 agent-mail outbox --json
 agent-mail read 42
 agent-mail reply 42 --subject 'Re: Build ready' --body 'Thanks'
@@ -64,7 +64,7 @@ The Compose file binds to loopback by default (`127.0.0.1:8097`). For private ne
 2. A push to `main` runs `promote`: the same checks in parallel with `image`, which builds `linux/amd64` and pushes `ghcr.io/sandcorporation/agent-mail:<commit sha>`. When both pass, `production` is fast-forwarded to that commit (`scripts/ci/promote.sh`). `production` only moves forward; roll back with a revert PR.
 3. A Jenkins job using the `Jenkinsfile` watches `production` only. Through the `sandcorp` shared library (`sandcorpDeploy`) it waits for the GHCR image of the `production` head, pulls it on the node labelled `agent-mail-deploy`, recreates the `agent-mail` service with `AGENT_MAIL_IMAGE` set to that image (`--no-build`), waits for the container health check and runs `/health` inside the container. If the new container does not become healthy it switches back to the previous successfully deployed image. The `ROLLBACK_SHA` job parameter deploys an older published image.
 
-Nothing deploys until such a job exists. Host-specific values are not in this repository: the deploy node is chosen by its Jenkins label, and secrets plus `MAIL_BIND_ADDRESS` come from the `.env` file in the job workspace on that node (mode `0600`, same keys as above). Keep the Compose project name `agent-mail` so the existing `agent-mail_agent_mail_data` volume is reused; moving from a manual deployment only recreates the container. The deploy node needs Docker with Compose and pull access to the GHCR package.
+Nothing deploys until such a job exists. Host-specific values are not in this repository: the deploy node is chosen by its Jenkins label, and secrets plus `MAIL_BIND_ADDRESS` come from the `.env` file in the job workspace on that node (mode `0600`, same keys as above), or from an env file outside the workspace named by the node's `DEPLOY_ENV_FILE` environment variable (recommended: a failed checkout can wipe the workspace). The deploy stops before replacing anything if `AGENT_MAIL_TOKENS` or `MAIL_BIND_ADDRESS` is empty. Keep the Compose project name `agent-mail` so the existing `agent-mail_agent_mail_data` volume is reused; moving from a manual deployment only recreates the container. The deploy node needs Docker with Compose and pull access to the GHCR package.
 
 ### Protected administrator dashboard
 

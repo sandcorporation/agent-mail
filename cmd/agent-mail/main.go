@@ -226,8 +226,9 @@ func adminList(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 		args = append(args, like, like, like, like, like)
 	}
 	if status != "" {
-		query += ` AND COALESCE(rs.status,m.status,'pending')=?`
-		args = append(args, status)
+		values := statusValues(status)
+		query += ` AND COALESCE(rs.status,m.status,'pending') IN (?` + strings.Repeat(",?", len(values)-1) + `)`
+		args = append(args, values...)
 	}
 	if thread != "" {
 		query += ` AND (m.thread_id=? OR m.id=?)`
@@ -391,8 +392,9 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request, role string) {
 		args = append(args, like, like, like)
 	}
 	if status != "" {
-		query += `AND COALESCE(rs.status,m.status)=? `
-		args = append(args, status)
+		values := statusValues(status)
+		query += `AND COALESCE(rs.status,m.status) IN (?` + strings.Repeat(",?", len(values)-1) + `) `
+		args = append(args, values...)
 	}
 	query += `ORDER BY m.id DESC LIMIT ?`
 	args = append(args, limit)
@@ -432,6 +434,16 @@ func (s *Server) get(id int64) (Message, error) {
 	m.CreatedAt, _ = time.Parse(time.RFC3339Nano, c)
 	return m, e
 }
+
+// statusValues maps a status filter to stored values. /complete stores "complete";
+// "completed" (the documented spelling before v0.4.1) is accepted as the same state.
+func statusValues(status string) []any {
+	if status == "complete" || status == "completed" {
+		return []any{"complete", "completed"}
+	}
+	return []any{status}
+}
+
 func (s *Server) status(w http.ResponseWriter, r *http.Request, role string, id int64, status string) {
 	if status == "ack" {
 		status = "acknowledged"
@@ -511,5 +523,5 @@ func dashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = io.WriteString(w, `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Agent Mail</title><style>body{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:0 1rem;background:#f5f7fa;color:#172033}input,button,select{font:inherit;padding:.6rem;margin:.25rem}button{cursor:pointer}.row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}.card{background:white;padding:1rem;margin:.7rem 0;border-radius:8px;box-shadow:0 1px 5px #ccd}pre{white-space:pre-wrap;overflow-wrap:anywhere}.muted{color:#667}</style></head><body><h1>Agent Mail · Admin overview</h1><p>Read-only view of all registered roles and mailboxes.</p><section class="card row"><select id="box"><option value="all">All messages</option><option value="inbox">All inbox</option><option value="outbox">All outbox</option></select><select id="role"><option value="">All roles</option></select><select id="status"><option value="">All statuses</option><option>pending</option><option>read</option><option>acknowledged</option><option>completed</option></select><input id="search" placeholder="Search content, roles or task"><input id="thread" type="number" placeholder="Thread ID"><button onclick="load()">Search</button><span id="conn">Connecting…</span></section><div id="list"></div><div id="detail"></div><script>async function api(path){let r;try{r=await fetch('/api/admin/'+path,{credentials:'same-origin',headers:{'Accept':'application/json'}})}catch(e){throw Error('Network error. Check the private service connection and sign-in.')}if(r.redirected||!r.headers.get('content-type')?.includes('application/json'))throw Error('The request was redirected to a sign-in page. Sign in through the protected service URL and reload.');if(!r.ok)throw Error(r.status===401?'Admin access is not configured for this protected proxy.':'Request failed ('+r.status+').');return r.json()}function node(tag,text,cls){let n=document.createElement(tag);n.textContent=text;if(cls)n.className=cls;return n}async function init(){try{for(let role of await api('roles'))document.getElementById('role').append(new Option(role,role));await load()}catch(e){document.getElementById('conn').textContent=e.message}}async function load(){document.getElementById('conn').textContent='Loading…';document.getElementById('detail').replaceChildren();try{let q=new URLSearchParams({box:document.getElementById('box').value,role:document.getElementById('role').value,status:document.getElementById('status').value,q:document.getElementById('search').value,thread:document.getElementById('thread').value});let rows=await api('messages?'+q);let list=document.getElementById('list');list.replaceChildren();for(let m of rows){let card=node('article','', 'card');let title=node('h3','#'+m.id+' '+m.subject);let meta=node('p',m.sender+' → '+m.recipient+' · '+new Date(m.created_at).toLocaleString()+' · '+m.status,'muted');let open=node('button','Open');open.onclick=()=>show(m);card.append(title,meta,open);list.append(card)}document.getElementById('conn').textContent=rows.length+' messages (maximum 500)'}catch(e){document.getElementById('conn').textContent=e.message}}function show(m){let card=node('section','','card');card.append(node('h2',m.subject),node('p','#'+m.id+' · '+m.sender+' → '+m.recipient+' · '+m.status));let pre=node('pre',m.body);card.append(pre);if(m.thread_id)card.append(node('p','Thread #'+m.thread_id));document.getElementById('detail').replaceChildren(card)}document.getElementById('thread').addEventListener('input',()=>{});init()</script></body></html>`)
+	_, _ = io.WriteString(w, `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Agent Mail</title><style>body{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:0 1rem;background:#f5f7fa;color:#172033}input,button,select{font:inherit;padding:.6rem;margin:.25rem}button{cursor:pointer}.row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}.card{background:white;padding:1rem;margin:.7rem 0;border-radius:8px;box-shadow:0 1px 5px #ccd}pre{white-space:pre-wrap;overflow-wrap:anywhere}.muted{color:#667}</style></head><body><h1>Agent Mail · Admin overview</h1><p>Read-only view of all registered roles and mailboxes.</p><section class="card row"><select id="box"><option value="all">All messages</option><option value="inbox">All inbox</option><option value="outbox">All outbox</option></select><select id="role"><option value="">All roles</option></select><select id="status"><option value="">All statuses</option><option>pending</option><option>read</option><option>acknowledged</option><option>complete</option></select><input id="search" placeholder="Search content, roles or task"><input id="thread" type="number" placeholder="Thread ID"><button onclick="load()">Search</button><span id="conn">Connecting…</span></section><div id="list"></div><div id="detail"></div><script>async function api(path){let r;try{r=await fetch('/api/admin/'+path,{credentials:'same-origin',headers:{'Accept':'application/json'}})}catch(e){throw Error('Network error. Check the private service connection and sign-in.')}if(r.redirected||!r.headers.get('content-type')?.includes('application/json'))throw Error('The request was redirected to a sign-in page. Sign in through the protected service URL and reload.');if(!r.ok)throw Error(r.status===401?'Admin access is not configured for this protected proxy.':'Request failed ('+r.status+').');return r.json()}function node(tag,text,cls){let n=document.createElement(tag);n.textContent=text;if(cls)n.className=cls;return n}async function init(){try{for(let role of await api('roles'))document.getElementById('role').append(new Option(role,role));await load()}catch(e){document.getElementById('conn').textContent=e.message}}async function load(){document.getElementById('conn').textContent='Loading…';document.getElementById('detail').replaceChildren();try{let q=new URLSearchParams({box:document.getElementById('box').value,role:document.getElementById('role').value,status:document.getElementById('status').value,q:document.getElementById('search').value,thread:document.getElementById('thread').value});let rows=await api('messages?'+q);let list=document.getElementById('list');list.replaceChildren();for(let m of rows){let card=node('article','', 'card');let title=node('h3','#'+m.id+' '+m.subject);let meta=node('p',m.sender+' → '+m.recipient+' · '+new Date(m.created_at).toLocaleString()+' · '+m.status,'muted');let open=node('button','Open');open.onclick=()=>show(m);card.append(title,meta,open);list.append(card)}document.getElementById('conn').textContent=rows.length+' messages (maximum 500)'}catch(e){document.getElementById('conn').textContent=e.message}}function show(m){let card=node('section','','card');card.append(node('h2',m.subject),node('p','#'+m.id+' · '+m.sender+' → '+m.recipient+' · '+m.status));let pre=node('pre',m.body);card.append(pre);if(m.thread_id)card.append(node('p','Thread #'+m.thread_id));document.getElementById('detail').replaceChildren(card)}document.getElementById('thread').addEventListener('input',()=>{});init()</script></body></html>`)
 }
