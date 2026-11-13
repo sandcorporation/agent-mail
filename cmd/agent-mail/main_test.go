@@ -142,6 +142,23 @@ func TestDashboardUsesSameOriginAndNoRoleCredentials(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(body, "fetch('/api/admin/") || strings.Contains(body, "Authorization") || strings.Contains(body, "type=\"password\"") || strings.Contains(body, "localStorage") {
 		t.Fatalf("dashboard is not same-origin/read-only: %d", w.Code)
 	}
+	// Message content must be rendered as text; the body opens inside the clicked card.
+	for _, banned := range []string{"innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", `id="detail"`} {
+		if strings.Contains(body, banned) {
+			t.Fatalf("dashboard uses %s", banned)
+		}
+	}
+	for _, want := range []string{`lang="ko"`, "열기", "닫기", "스레드 보기", "aria-expanded"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("dashboard missing %q", want)
+		}
+	}
+	if w := httptest.NewRecorder(); true {
+		dashboard(w, httptest.NewRequest("GET", "/other", nil))
+		if w.Code != 404 {
+			t.Fatalf("non-root path=%d", w.Code)
+		}
+	}
 }
 
 func TestProtectedReverseProxyAdminRequest(t *testing.T) {
