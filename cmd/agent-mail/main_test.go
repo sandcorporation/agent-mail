@@ -94,4 +94,14 @@ func TestAuthorizationAndWatchCursor(t *testing.T) {
 	if w.Code != 200 || !bytes.Contains(w.Body.Bytes(), []byte(`"cursor":1`)) {
 		t.Fatalf("watch: %d %s", w.Code, w.Body)
 	}
+	// Independent watchers replay from the same durable cursor; neither claims mail.
+	w2 := httptest.NewRecorder()
+	s.api(w2, r.Clone(r.Context()))
+	if w2.Code != 200 || !bytes.Contains(w2.Body.Bytes(), []byte(`"messages":[1]`)) {
+		t.Fatalf("replay: %d %s", w2.Code, w2.Body)
+	}
+	w = call(s, "GET", "/api/messages?box=inbox", "secret-b", nil, "")
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"status":"pending"`)) {
+		t.Fatalf("watch consumed message: %s", w.Body)
+	}
 }
