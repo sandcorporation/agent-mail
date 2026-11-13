@@ -81,7 +81,7 @@ var commands = []command{
 	{name: "inbox", summary: "List messages for the active role (newest 100)",
 		options: []option{
 			{"--q", "TEXT", "only messages whose subject, body or task contain TEXT"},
-			{"--status", "STATUS", "only messages in STATUS: pending, read, acknowledged or completed"},
+			{"--status", "STATUS", "only messages in STATUS: pending, read, acknowledged or complete (completed also accepted)"},
 			optJSON, optProfile,
 		}},
 	{name: "outbox", summary: "List messages sent by the active role (newest 100)",
@@ -113,7 +113,7 @@ var commands = []command{
 	{name: "version", summary: "Show build version"},
 }
 
-var validStatuses = map[string]bool{"pending": true, "read": true, "acknowledged": true, "completed": true}
+var validStatuses = map[string]bool{"pending": true, "read": true, "acknowledged": true, "complete": true, "completed": true}
 
 // profileFlag holds the --profile value given on the command line. It wins over AGENT_MAIL_PROFILE.
 var profileFlag string
@@ -226,7 +226,7 @@ func dispatch(args []string) (int, error) {
 		return cliConfig(p)
 	}
 	if s := p.values["--status"]; s != "" && !validStatuses[s] {
-		return 0, usagef("%s: unknown status %q (pending, read, acknowledged, completed)", name, s)
+		return 0, usagef("%s: unknown status %q (pending, read, acknowledged, complete)", name, s)
 	}
 	if cmd.args == "ID" {
 		if id, e := strconv.ParseInt(p.pos[0], 10, 64); e != nil || id <= 0 {

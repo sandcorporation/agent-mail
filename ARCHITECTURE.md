@@ -4,7 +4,7 @@ The Go HTTP server authenticates each request by constant-time comparison agains
 
 ## State model
 
-`pending` means newly delivered. Opening as recipient records `read`; `/ack` records `acknowledged`; `/complete` records `completed`. Each is explicit and recipient scoped. Listing and watch have no state side effects. State is monotonic by intent but endpoints allow an explicit later state update; clients should use the furthest state reached.
+`pending` means newly delivered. Opening as recipient records `read`; `/ack` records `acknowledged`; `/complete` records `complete` (status filters also accept `completed`). Each is explicit and recipient scoped. Listing and watch have no state side effects. State is monotonic by intent but endpoints allow an explicit later state update; clients should use the furthest state reached.
 
 ## Delivery model
 

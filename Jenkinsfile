@@ -9,7 +9,8 @@
 //
 // Host-specific values stay out of this public repository:
 //   - the deploy node is whatever Jenkins node carries the label below;
-//   - secrets and MAIL_BIND_ADDRESS come from the .env file in the job workspace on that node (not created here).
+//   - secrets and MAIL_BIND_ADDRESS come from the .env file in the job workspace on that node (not created here),
+//     or from the node's DEPLOY_ENV_FILE, which the shared library links to ./.env before each deploy.
 // The Compose project name, service and volume names must stay as in compose.yaml so the existing data volume is reused.
 sandcorpDeploy(
   name: 'Agent Mail',
@@ -21,4 +22,8 @@ sandcorpDeploy(
   composeFiles: ['compose.yaml'],
   service: 'agent-mail',
   healthCmd: 'wget -q -O - http://127.0.0.1:8080/health',
+  // Stop before touching the running service if the deploy .env lacks these. Without MAIL_BIND_ADDRESS Compose
+  // would silently bind to loopback and every remote client would lose the mailbox.
+  // The .env may live outside the workspace: set DEPLOY_ENV_FILE on the deploy node (shared library README).
+  requiredEnv: ['AGENT_MAIL_TOKENS', 'MAIL_BIND_ADDRESS'],
 )
