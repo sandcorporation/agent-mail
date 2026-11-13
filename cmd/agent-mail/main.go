@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -157,7 +158,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	}
 	http.NotFound(w, r)
 }
-func parseID(x string) (int64, error)        { var id int64; _, e := fmt.Sscan(x, &id); return id, e }
+func parseID(x string) (int64, error)        { return strconv.ParseInt(x, 10, 64) }
 func writeJSON(w http.ResponseWriter, v any) { _ = json.NewEncoder(w).Encode(v) }
 func (s *Server) send(w http.ResponseWriter, r *http.Request, role string) {
 	var m Message
@@ -383,7 +384,7 @@ func readConfig() Config {
 }
 func cliConfig(args []string) {
 	if len(args) < 2 || args[0] != "set" {
-		fmt.Fprintln(os.Stderr, "usage: agent-mail config set --endpoint URL --role ROLE --token TOKEN")
+		fmt.Fprintln(os.Stderr, "usage: agent-mail config set --endpoint URL --role ROLE --token-file PATH")
 		os.Exit(2)
 	}
 	c := readConfig()
@@ -399,10 +400,14 @@ func cliConfig(args []string) {
 			if i < len(args) {
 				c.Role = args[i]
 			}
-		case "--token":
+		case "--token-file":
 			i++
 			if i < len(args) {
-				c.Token = args[i]
+				b, e := os.ReadFile(args[i])
+				if e != nil {
+					fatal("cannot read token file")
+				}
+				c.Token = strings.TrimSpace(string(b))
 			}
 		}
 	}
@@ -420,7 +425,7 @@ func cliConfig(args []string) {
 func cli(args []string) {
 	c := readConfig()
 	if c.Endpoint == "" || c.Token == "" || c.Role == "" {
-		fatal("configure with: agent-mail config set --endpoint URL --role ROLE --token TOKEN")
+		fatal("configure with: agent-mail config set --endpoint URL --role ROLE --token-file PATH")
 	}
 	cmd := args[0]
 	flags := map[string]string{}

@@ -105,3 +105,12 @@ func TestAuthorizationAndWatchCursor(t *testing.T) {
 		t.Fatalf("watch consumed message: %s", w.Body)
 	}
 }
+
+func TestParseIDRejectsTrailingJunk(t *testing.T) {
+	if _, err := parseID("12junk"); err == nil {
+		t.Fatal("expected malformed ID to be rejected")
+	}
+	if id, err := parseID("12"); err != nil || id != 12 {
+		t.Fatalf("parseID(12) = %d, %v", id, err)
+	}
+}

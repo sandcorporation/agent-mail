@@ -27,10 +27,10 @@ go run ./cmd/agent-mail
 
 The service listens on `:8080` by default. Visit `http://localhost:8080`. Health endpoint: `/health`.
 
-Configure a CLI (token argument is stored with user-only file permissions):
+Configure a CLI (read the token from a protected file; the token is stored with user-only file permissions):
 
 ```sh
-agent-mail config set --endpoint http://localhost:8080 --role codemit/worker-1 --token YOUR_ROLE_TOKEN
+agent-mail config set --endpoint http://localhost:8080 --role codemit/worker-1 --token-file /path/to/role-token
 agent-mail send --to codemit/coordinator --subject 'Build ready' --task task-123 --body-file report.md --idempotency-key task-123-report
 cat report.md | agent-mail send --to codemit/coordinator --subject 'Build ready' --body-file /dev/stdin
 agent-mail inbox [--q term] [--json]
