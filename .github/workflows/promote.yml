@@ -15,6 +15,9 @@ name: promote
 on:
   push:
     branches: [main]
+    # Documentation-only pushes do not rebuild, promote or redeploy. The next code push promotes main as a whole.
+    paths-ignore:
+      - '**.md'
 
 permissions: {}
 

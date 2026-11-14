@@ -2,6 +2,8 @@
 
 Agent Mail is a small self hosted mailbox for stable, role addressed agent identities. The service owns the identity boundary and durable message store; identities such as `sandcorp/boss` or `codemit/worker-1` are configured roles, not Orca session or terminal handles. A role keeps the same inbox after an agent session restarts.
 
+Why we built it: [A role mailbox for AI sessions](https://sandcorp.co.kr/blog/role-mailbox-for-ai-sessions). Made by [Sandcorp](https://sandcorp.co.kr).
+
 ## Design decisions
 
 - Go service and CLI share one module; SQLite is local to the service and persisted on a named Docker volume. SQLite keeps deployment small and avoids a separate database service.
