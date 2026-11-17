@@ -17,7 +17,7 @@ sandcorpDeploy(
   deployFrom: 'production',
   deployNode: 'agent-mail-deploy',
   images: [[repo: 'ghcr.io/sandcorporation/agent-mail', envVar: 'AGENT_MAIL_IMAGE']],
-  imageWaitHint: 'https://github.com/sandcorporation/agent-mail/actions/workflows/promote.yml',
+  imageWaitHint: 'https://github.com/sandcorporation/switchboard/actions/workflows/promote.yml',
   composeProject: 'agent-mail',
   composeFiles: ['compose.yaml'],
   service: 'agent-mail',
