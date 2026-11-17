@@ -103,7 +103,7 @@ func roleRecord(q queryer, role string) (hash string, revoked bool, ok bool) {
 }
 
 // roleView is one row of GET /api/admin/roles. It never carries the token or
-// its hash. Group stays empty until roles get groups (#71 §2).
+// its hash. Group is the role's group prefix, "" for an internal role.
 type roleView struct {
 	Role      string  `json:"role"`
 	CreatedAt string  `json:"created_at"`
@@ -126,6 +126,9 @@ func (s *Server) listRoles() ([]roleView, error) {
 		}
 		if at.Valid {
 			v.RevokedAt = &at.String
+		}
+		if g, ok := s.groupOf(v.Role); ok {
+			v.Group = g.Prefix
 		}
 		out = append(out, v)
 	}

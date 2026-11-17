@@ -77,13 +77,6 @@ func (s *Server) answerCandidates(ds []flowMail) ([]flowMail, error) {
 	return out, load("task_id", tasks)
 }
 
-// isBossName reports whether a mailbox name is a boss role or a slot of one.
-func (s *Server) isBossName(base func(string) string) func(string) bool {
-	return func(name string) bool {
-		return s.bossRoles[name] || s.bossRoles[base(name)]
-	}
-}
-
 // scanFlowMail reads id,sender,recipient,subject,created_at,task_id,thread_id,
 // reply_to rows and closes them. Rows whose created_at does not parse are
 // skipped.

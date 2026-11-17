@@ -240,21 +240,26 @@ func queryDecisionRows(q rowsQueryer, where string, args ...any) ([]decision, er
 // relatedDecisions picks up to maxRelated past decisions for a new question
 // of askerBase: the base's own, newest first; then, when the asker's
 // settings came from a "<prefix>/*" target, other bases under that prefix;
-// then any whose first header equals header (ASCII case-insensitive).
-func relatedDecisions(q rowsQueryer, askerBase, target, header string) ([]decision, error) {
+// then any whose first header equals header (ASCII case-insensitive). A
+// non-empty group keeps the last two to askers of that group (groups.go).
+func relatedDecisions(q rowsQueryer, askerBase, target, header, group string) ([]decision, error) {
+	scope, scopeArgs := "", []any(nil)
+	if group != "" {
+		scope, scopeArgs = ` AND substr(asker_base,1,?)=?`, []any{len(group) + 1, group + "/"}
+	}
 	out, err := queryDecisionRows(q, `asker_base=?`, askerBase, maxRelated)
 	if err != nil {
 		return nil, err
 	}
 	if p, ok := strings.CutSuffix(target, "/*"); ok && len(out) < maxRelated {
-		more, err := queryDecisionRows(q, `substr(asker_base,1,?)=? AND asker_base<>?`, len(p)+1, p+"/", askerBase, maxRelated-len(out))
+		more, err := queryDecisionRows(q, `substr(asker_base,1,?)=? AND asker_base<>?`+scope, append(append([]any{len(p) + 1, p + "/", askerBase}, scopeArgs...), maxRelated-len(out))...)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, more...)
 	}
 	if len(out) < maxRelated {
-		where, args := `json_extract(questions,'$[0].header')=? COLLATE NOCASE`, []any{header}
+		where, args := `json_extract(questions,'$[0].header')=? COLLATE NOCASE`+scope, append([]any{header}, scopeArgs...)
 		for _, d := range out {
 			where += ` AND id<>?`
 			args = append(args, d.ID)

@@ -132,11 +132,9 @@ func baseOf(q queryer, name string) string {
 	return ""
 }
 
-func (s *Server) isBoss(p principal) bool { return s.bossRoles[p.Base] || s.bossRoles[p.Role] }
-
-// mayAnswer: a boss, never the requester's own base.
+// mayAnswer: the requester's boss (bossesFor), never its own base.
 func (s *Server) mayAnswer(p principal, v permissionView) bool {
-	return p.Base != v.requesterBase && s.isBoss(p)
+	return p.Base != v.requesterBase && s.isBossFor(p, v.requesterBase)
 }
 
 // mayRead: the requester's base, the recorded parent base, or a boss.
@@ -220,13 +218,13 @@ func (s *Server) requestPermission(w http.ResponseWriter, r *http.Request, p pri
 			return e
 		}
 		parent, parentBase := "", ""
-		if pb := baseOf(tx, declared); pb != "" && pb != p.Base {
+		if pb := baseOf(tx, declared); pb != "" && pb != p.Base && s.maySee(p, pb) {
 			parent, _ = mailbox(tx, declared)
 			parentBase = pb
 		}
-		// Registered bosses of another base answer; the requester's own base
-		// cannot.
-		for _, boss := range sortedKeys(s.bossRoles) {
+		// The requester's registered bosses of another base answer; the
+		// requester's own base cannot.
+		for _, boss := range s.bossesFor(p.Base) {
 			if b := baseOf(tx, boss); b != "" && b != p.Base {
 				box, _ := mailbox(tx, boss)
 				notify = append(notify, box)
@@ -238,7 +236,7 @@ func (s *Server) requestPermission(w http.ResponseWriter, r *http.Request, p pri
 		// A trusted parent is told, but cannot answer unless it is a boss.
 		var inform []string
 		if parent != "" && !slices.Contains(notify, parent) {
-			if s.isBoss(principal{Role: parent, Base: parentBase}) {
+			if s.isBossFor(principal{Role: parent, Base: parentBase}, p.Base) {
 				notify = append(notify, parent)
 			} else {
 				inform = []string{parent}
@@ -308,9 +306,9 @@ func (s *Server) listPermissions(w http.ResponseWriter, r *http.Request, p princ
 	now := s.now()
 	q := `SELECT ` + permissionCols() + ` FROM permissions WHERE requester_base=? OR (parent_base=? AND requester_base<>?)`
 	args := []any{p.Base, p.Base, p.Base}
-	if s.isBoss(p) {
-		q = `SELECT ` + permissionCols() + ` FROM permissions WHERE 1=1`
-		args = nil
+	if cond, more := s.answerableSQL(p, "permissions.requester_base"); cond != "" {
+		q += ` OR ` + cond
+		args = append(args, more...)
 	}
 	if pendingOnly {
 		q = `SELECT * FROM (` + q + `) WHERE decision='' AND expires_at>?`

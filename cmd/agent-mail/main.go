@@ -59,6 +59,7 @@ type Server struct {
 	discord          *discordNotifier // AGENT_MAIL_DISCORD_WEBHOOK; nil sends no question notices
 	alerts           *alertThresholds // SWITCHBOARD_ALERT_*; nil means defaultAlertThresholds
 	oldHeaders       aliasCounter     // requests that used an X-Agent-Mail-* header
+	groups           groupCache       // collaborator groups (groups.go)
 }
 
 var version = "dev"
@@ -114,6 +115,9 @@ func runServer() {
 	}
 	if e = migrateConfiguredRoles(s); e != nil {
 		log.Fatal("cannot migrate configured roles")
+	}
+	if e = s.loadGroups(); e != nil {
+		log.Fatal("cannot load groups")
 	}
 	if old := oldEnvNames(); len(old) > 0 {
 		log.Printf("old environment names in use (rename AGENT_MAIL_* to SWITCHBOARD_*): %s", strings.Join(old, ", "))
@@ -182,6 +186,9 @@ func initSchema(db *sql.DB) error {
 		return e
 	}
 	if e = migrateQuestionSettings(db); e != nil {
+		return e
+	}
+	if e = migrateGroups(db); e != nil {
 		return e
 	}
 	return migrateQuestions(db)
@@ -279,15 +286,19 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if path == "presence" {
-		s.presenceAPI(w, r)
+		s.presenceAPI(w, r, &who)
+		return
+	}
+	if path == "whoami" {
+		s.whoamiAPI(w, r, who)
 		return
 	}
 	if path == "metrics" {
-		s.metricsAPI(w, r, s.isBoss(who), false)
+		s.metricsAPI(w, r, s.isGlobalBoss(who), false)
 		return
 	}
 	if path == "progress" {
-		s.progressAPI(w, r, s.isBoss(who))
+		s.progressAPI(w, r, s.isGlobalBoss(who))
 		return
 	}
 	if path == "slots" || strings.HasPrefix(path, "slots/") {
@@ -297,7 +308,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	if path == "messages" {
 		switch r.Method {
 		case "POST":
-			s.send(w, r, role)
+			s.send(w, r, who)
 		case "GET":
 			s.list(w, r, role)
 		default:
@@ -334,7 +345,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(parts) == 3 && r.Method == "POST" {
 			if parts[2] == "reply" {
-				s.reply(w, r, role, id)
+				s.reply(w, r, who, id)
 				return
 			}
 			if parts[2] == "ack" || parts[2] == "complete" || parts[2] == "read" {
@@ -382,6 +393,10 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 		s.adminRolesAPI(w, r, strings.TrimPrefix(rest, "/"))
 		return
 	}
+	if rest, ok := strings.CutPrefix(path, "groups"); ok && (rest == "" || strings.HasPrefix(rest, "/")) {
+		s.adminGroupsAPI(w, r, strings.TrimPrefix(rest, "/"))
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -395,7 +410,7 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, out)
 	case "presence":
-		s.presenceAPI(w, r)
+		s.presenceAPI(w, r, nil)
 	case "metrics":
 		s.metricsAPI(w, r, true, true)
 	case "progress":
@@ -491,6 +506,10 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "role name is reserved", 403)
 		return
 	}
+	if g, ok := s.groupOf(req.Role); ok && g.RevokedAt != nil {
+		http.Error(w, "group revoked", 403)
+		return
+	}
 	var existing string
 	var revokedAt sql.NullString
 	err := s.db.QueryRow(`SELECT token,revoked_at FROM roles WHERE role=?`, req.Role).Scan(&existing, &revokedAt)
@@ -541,7 +560,8 @@ func validRole(role string) bool {
 }
 func parseID(x string) (int64, error)        { return strconv.ParseInt(x, 10, 64) }
 func writeJSON(w http.ResponseWriter, v any) { _ = json.NewEncoder(w).Encode(v) }
-func (s *Server) send(w http.ResponseWriter, r *http.Request, role string) {
+func (s *Server) send(w http.ResponseWriter, r *http.Request, p principal) {
+	role := p.Role
 	var m Message
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&m) != nil {
 		http.Error(w, "invalid JSON", 400)
@@ -570,11 +590,19 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request, role string) {
 			http.Error(w, "unknown recipient role", 403)
 			return
 		}
+		if !s.maySend(p, label.Base) {
+			http.Error(w, "outside your group", 403)
+			return
+		}
 		m.Recipient = label.String()
 	} else {
 		box, ok := mailbox(s.db, m.Recipient)
 		if !ok {
 			http.Error(w, "unknown recipient role", 403)
+			return
+		}
+		if !s.maySend(p, baseOf(s.db, box)) && !s.isReplyToSender(role, m.ReplyTo, box) {
+			http.Error(w, "outside your group", 403)
 			return
 		}
 		m.Recipient = box
@@ -726,7 +754,8 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request, role string, id 
 	m.Status = status
 	writeJSON(w, m)
 }
-func (s *Server) reply(w http.ResponseWriter, r *http.Request, role string, id int64) {
+func (s *Server) reply(w http.ResponseWriter, r *http.Request, p principal, id int64) {
+	role := p.Role
 	orig, e := s.get(id)
 	if e != nil || orig.Recipient != role {
 		http.Error(w, "not found", 404)
@@ -749,7 +778,17 @@ func (s *Server) reply(w http.ResponseWriter, r *http.Request, role string, id i
 	}
 	b, _ := json.Marshal(m)
 	r.Body = io.NopCloser(bytes.NewReader(b))
-	s.send(w, r, role)
+	s.send(w, r, p)
+}
+
+// isReplyToSender: mail replyTo was received by role and box sent it. A group
+// role may always answer whoever mailed it.
+func (s *Server) isReplyToSender(role string, replyTo int64, box string) bool {
+	if replyTo <= 0 {
+		return false
+	}
+	orig, err := s.get(replyTo)
+	return err == nil && orig.Recipient == role && orig.Sender == box
 }
 func (s *Server) watch(w http.ResponseWriter, r *http.Request, role string) {
 	after, _ := parseID(r.URL.Query().Get("after"))
