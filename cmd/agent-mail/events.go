@@ -64,7 +64,9 @@ type mailEvent struct {
 	CreatedAt time.Time `json:"created_at"`
 	TaskID    string    `json:"task_id,omitempty"`
 	ThreadID  int64     `json:"thread_id,omitempty"`
-	Body      *string   `json:"body,omitempty"`
+	// AddressedTo is the label address the sender used, for label mail.
+	AddressedTo string  `json:"addressed_to,omitempty"`
+	Body        *string `json:"body,omitempty"`
 }
 
 const defaultEventKeepAlive = 20 * time.Second
@@ -166,7 +168,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, role string) {
 // assigned and committed in order on the single connection, so no message with
 // a smaller ID can appear after a larger one has been seen.
 func (s *Server) pendingAfter(role string, cursor int64) ([]mailEvent, error) {
-	rows, e := s.db.Query(`SELECT m.id,m.sender,m.recipient,m.subject,m.created_at,COALESCE(m.task_id,''),COALESCE(m.thread_id,0),COALESCE(m.priority,'normal'),m.body FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=m.recipient WHERE m.recipient=? AND m.id>? AND COALESCE(rs.status,m.status,'pending')='pending' ORDER BY m.id LIMIT ?`, role, cursor, eventBatch)
+	rows, e := s.db.Query(`SELECT m.id,m.sender,m.recipient,m.subject,m.created_at,COALESCE(m.task_id,''),COALESCE(m.thread_id,0),COALESCE(m.priority,'normal'),COALESCE(m.addressed_to,''),m.body FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=m.recipient WHERE m.recipient=? AND m.id>? AND COALESCE(rs.status,m.status,'pending')='pending' ORDER BY m.id LIMIT ?`, role, cursor, eventBatch)
 	if e != nil {
 		return nil, e
 	}
@@ -175,7 +177,7 @@ func (s *Server) pendingAfter(role string, cursor int64) ([]mailEvent, error) {
 	for rows.Next() {
 		var ev mailEvent
 		var created, body string
-		if e = rows.Scan(&ev.ID, &ev.Sender, &ev.Recipient, &ev.Subject, &created, &ev.TaskID, &ev.ThreadID, &ev.Priority, &body); e != nil {
+		if e = rows.Scan(&ev.ID, &ev.Sender, &ev.Recipient, &ev.Subject, &created, &ev.TaskID, &ev.ThreadID, &ev.Priority, &ev.AddressedTo, &body); e != nil {
 			return nil, e
 		}
 		ev.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)

@@ -22,18 +22,22 @@ import (
 )
 
 type Message struct {
-	ID             int64     `json:"id"`
-	Sender         string    `json:"sender"`
-	Recipient      string    `json:"recipient"`
-	Subject        string    `json:"subject"`
-	Body           string    `json:"body"`
-	CreatedAt      time.Time `json:"created_at"`
-	TaskID         string    `json:"task_id,omitempty"`
-	ThreadID       int64     `json:"thread_id,omitempty"`
-	ReplyTo        int64     `json:"reply_to,omitempty"`
-	Status         string    `json:"status"`
-	Priority       string    `json:"priority"` // "normal" or "urgent"
-	IdempotencyKey string    `json:"-"`
+	ID             int64      `json:"id"`
+	Sender         string     `json:"sender"`
+	Recipient      string     `json:"recipient"`
+	Subject        string     `json:"subject"`
+	Body           string     `json:"body"`
+	CreatedAt      time.Time  `json:"created_at"`
+	TaskID         string     `json:"task_id,omitempty"`
+	ThreadID       int64      `json:"thread_id,omitempty"`
+	ReplyTo        int64      `json:"reply_to,omitempty"`
+	Status         string     `json:"status"`
+	Priority       string     `json:"priority"`               // "normal" or "urgent"
+	AddressedTo    string     `json:"addressed_to,omitempty"` // label address the sender used (see labels.go)
+	HeldID         int64      `json:"held_id,omitempty"`      // ID while held, when the message moved to a session
+	HeldAt         *time.Time `json:"held_at,omitempty"`      // when the message was held for a label
+	DeliveredAt    *time.Time `json:"delivered_at,omitempty"` // when held mail moved to a session
+	IdempotencyKey string     `json:"-"`
 }
 type Server struct {
 	db               *sql.DB
@@ -142,6 +146,9 @@ func initSchema(db *sql.DB) error {
 		if _, e = db.Exec(`ALTER TABLE messages ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`); e != nil {
 			return e
 		}
+	}
+	if e = migrateLabels(db); e != nil {
+		return e
 	}
 	return migratePresence(db)
 }
@@ -330,10 +337,10 @@ func adminList(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	if mb, ok := mailbox(db, role); ok {
 		role = mb
 	}
-	if box != "inbox" && box != "outbox" {
+	if box != "inbox" && box != "outbox" && box != "held" {
 		box = "all"
 	}
-	query := `SELECT m.id,m.sender,m.recipient,m.subject,m.body,m.created_at,COALESCE(m.task_id,''),COALESCE(m.thread_id,0),COALESCE(m.reply_to,0),COALESCE(rs.status,m.status,'pending'),COALESCE(m.priority,'normal') FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=m.recipient WHERE 1=1`
+	query := `SELECT ` + messageCols(`COALESCE(rs.status,m.status,'pending')`) + ` FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=m.recipient WHERE 1=1`
 	args := []any{}
 	if role != "" {
 		query += ` AND (m.sender=? OR m.recipient=?)`
@@ -346,6 +353,9 @@ func adminList(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	if box == "outbox" && role != "" {
 		query += ` AND m.sender=?`
 		args = append(args, role)
+	}
+	if box == "held" {
+		query += ` AND m.status='held'`
 	}
 	if q != "" {
 		query += ` AND (m.subject LIKE ? OR m.body LIKE ? OR m.task_id LIKE ? OR m.sender LIKE ? OR m.recipient LIKE ?)`
@@ -370,10 +380,7 @@ func adminList(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	defer rows.Close()
 	out := []Message{}
 	for rows.Next() {
-		var m Message
-		var created string
-		if rows.Scan(&m.ID, &m.Sender, &m.Recipient, &m.Subject, &m.Body, &created, &m.TaskID, &m.ThreadID, &m.ReplyTo, &m.Status, &m.Priority) == nil {
-			m.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+		if m, err := scanMessage(rows); err == nil {
 			out = append(out, m)
 		}
 	}
@@ -454,24 +461,34 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request, role string) {
 		return
 	}
 	m.Priority = priority
-	box, ok := mailbox(s.db, m.Recipient)
-	if !ok {
-		http.Error(w, "unknown recipient role", 403)
-		return
-	}
-	m.Recipient = box
-	if m.Recipient == role { /* allowed */
+	m.AddressedTo, m.HeldID, m.HeldAt, m.DeliveredAt = "", 0, nil, nil
+	var label labelAddr
+	if isLabelAddress(m.Recipient) {
+		var e error
+		if label, e = parseLabelAddress(m.Recipient); e != nil {
+			http.Error(w, e.Error(), 400)
+			return
+		}
+		if !roleExists(s.db, label.Base) {
+			http.Error(w, "unknown recipient role", 403)
+			return
+		}
+		m.Recipient = label.String()
+	} else {
+		box, ok := mailbox(s.db, m.Recipient)
+		if !ok {
+			http.Error(w, "unknown recipient role", 403)
+			return
+		}
+		m.Recipient = box
 	}
 	key := r.Header.Get("Idempotency-Key")
 	if key == "" {
 		key = m.IdempotencyKey
 	}
 	if key != "" {
-		var existing Message
-		var created string
-		e := s.db.QueryRow(`SELECT id,sender,recipient,subject,body,created_at,COALESCE(task_id,''),COALESCE(thread_id,0),COALESCE(reply_to,0),status,COALESCE(priority,'normal') FROM messages WHERE sender=? AND idem=?`, role, key).Scan(&existing.ID, &existing.Sender, &existing.Recipient, &existing.Subject, &existing.Body, &created, &existing.TaskID, &existing.ThreadID, &existing.ReplyTo, &existing.Status, &existing.Priority)
+		existing, e := scanMessage(s.db.QueryRow(`SELECT `+messageCols(`m.status`)+` FROM messages m WHERE m.sender=? AND m.idem=?`, role, key))
 		if e == nil {
-			existing.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 			w.WriteHeader(200)
 			writeJSON(w, existing)
 			return
@@ -481,15 +498,38 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request, role string) {
 	if m.ThreadID == 0 && m.ReplyTo > 0 {
 		m.ThreadID = m.ReplyTo
 	}
-	res, e := s.db.Exec(`INSERT INTO messages(sender,recipient,subject,body,created_at,task_id,thread_id,reply_to,idem,priority) VALUES(?,?,?,?,?,?,?,?,?,?)`, role, m.Recipient, m.Subject, m.Body, now.Format(time.RFC3339Nano), m.TaskID, nullInt(m.ThreadID), nullInt(m.ReplyTo), nullable(key), m.Priority)
+	m.Status = "pending"
+	e := s.inTx(r.Context(), func(tx *sql.Tx) error {
+		var heldAt any
+		if label.Base != "" {
+			// Look up the label's session in the same transaction as the insert, so
+			// a registration either sees this message as held or is seen here.
+			target, err := labelTarget(tx, label, s.now())
+			if err != nil {
+				return err
+			}
+			m.AddressedTo = label.String()
+			if target != "" {
+				m.Recipient = target
+			} else {
+				m.Status, m.HeldAt, heldAt = statusHeld, &now, now.Format(time.RFC3339Nano)
+			}
+		}
+		res, err := tx.Exec(`INSERT INTO messages(sender,recipient,subject,body,created_at,task_id,thread_id,reply_to,idem,priority,status,addressed_to,held_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, role, m.Recipient, m.Subject, m.Body, now.Format(time.RFC3339Nano), m.TaskID, nullInt(m.ThreadID), nullInt(m.ReplyTo), nullable(key), m.Priority, m.Status, nullable(m.AddressedTo), heldAt)
+		if err != nil {
+			return err
+		}
+		m.ID, err = res.LastInsertId()
+		return err
+	})
 	if e != nil {
 		http.Error(w, "could not store message", 500)
 		return
 	}
-	m.ID, _ = res.LastInsertId()
 	m.CreatedAt = now
-	m.Status = "pending"
-	s.hub.publish(m.Recipient)
+	if m.Status != statusHeld {
+		s.hub.publish(m.Recipient)
+	}
 	w.WriteHeader(201)
 	writeJSON(w, m)
 }
@@ -513,7 +553,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request, role string) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	status := r.URL.Query().Get("status")
 	limit := 100
-	query := `SELECT m.id,m.sender,m.recipient,m.subject,m.body,m.created_at,COALESCE(m.task_id,''),COALESCE(m.thread_id,0),COALESCE(m.reply_to,0),COALESCE(CASE WHEN rs.status IS NOT NULL THEN rs.status ELSE m.status END,'pending'),COALESCE(m.priority,'normal') FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=CASE WHEN m.sender=? THEN m.recipient ELSE ? END WHERE `
+	query := `SELECT ` + messageCols(`COALESCE(CASE WHEN rs.status IS NOT NULL THEN rs.status ELSE m.status END,'pending')`) + ` FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=CASE WHEN m.sender=? THEN m.recipient ELSE ? END WHERE `
 	args := []any{role, role}
 	if box == "outbox" {
 		query += `m.sender=? `
@@ -541,10 +581,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request, role string) {
 	defer rows.Close()
 	out := []Message{}
 	for rows.Next() {
-		var m Message
-		var created string
-		if rows.Scan(&m.ID, &m.Sender, &m.Recipient, &m.Subject, &m.Body, &created, &m.TaskID, &m.ThreadID, &m.ReplyTo, &m.Status, &m.Priority) == nil {
-			m.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+		if m, err := scanMessage(rows); err == nil {
 			out = append(out, m)
 		}
 	}
@@ -563,11 +600,7 @@ func (s *Server) read(w http.ResponseWriter, r *http.Request, role string, id in
 	writeJSON(w, m)
 }
 func (s *Server) get(id int64) (Message, error) {
-	var m Message
-	var c string
-	e := s.db.QueryRow(`SELECT id,sender,recipient,subject,body,created_at,COALESCE(task_id,''),COALESCE(thread_id,0),COALESCE(reply_to,0),status,COALESCE(priority,'normal') FROM messages WHERE id=?`, id).Scan(&m.ID, &m.Sender, &m.Recipient, &m.Subject, &m.Body, &c, &m.TaskID, &m.ThreadID, &m.ReplyTo, &m.Status, &m.Priority)
-	m.CreatedAt, _ = time.Parse(time.RFC3339Nano, c)
-	return m, e
+	return scanMessage(s.db.QueryRow(`SELECT `+messageCols(`m.status`)+` FROM messages m WHERE m.id=?`, id))
 }
 
 // statusValues maps a status filter to stored values. /complete stores "complete";

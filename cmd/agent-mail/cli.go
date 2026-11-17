@@ -74,7 +74,7 @@ var commands = []command{
 	{name: "send", synopsis: "--to ROLE --subject TEXT (--body TEXT | --body-file PATH | stdin)",
 		summary: "Send a message to a registered role",
 		options: []option{
-			{"--to", "ROLE", "recipient role"},
+			{"--to", "ROLE", "recipient role, or label:BASE/LABEL for the session of BASE carrying LABEL"},
 			optSubject, optBody, optBodyF,
 			{"--task", "ID", "task identifier to attach"},
 			optUrgent,

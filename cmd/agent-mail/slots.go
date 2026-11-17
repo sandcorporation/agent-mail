@@ -143,8 +143,8 @@ func mailbox(q queryer, name string) (string, bool) {
 }
 
 // slotRequest is the body of the slot endpoints. Machine and Directory form
-// the identity; session, label and parent are stored for display (and label
-// routing later). State, ContextTokens and LastTurnAt are the presence report
+// the identity; session, label and parent are stored for display, and the
+// label also routes label mail (see labels.go). State, ContextTokens and LastTurnAt are the presence report
 // (see presence.go); release ignores them.
 type slotRequest struct {
 	Machine       string `json:"machine"`
@@ -190,6 +190,9 @@ type slotGrant struct {
 	OtherActive  int       `json:"other_active"`        // other leased slots under the same base
 	Reclaimed    bool      `json:"reclaimed"`           // the identity already held this number
 	Displaced    *slotView `json:"displaced,omitempty"` // takeover: where the previous -1 holder went
+	// HeldDelivered counts held label mail this call moved to the slot's
+	// mailbox (see labels.go).
+	HeldDelivered int `json:"held_delivered,omitempty"`
 }
 
 func ms(t time.Time) int64     { return t.UnixMilli() }
@@ -364,6 +367,7 @@ func (s *Server) claimSlot(ctx context.Context, base string, req slotRequest, ta
 	now := s.now()
 	until := now.Add(s.leaseLength())
 	var g slotGrant
+	var box string
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
 		own, has, err := identityRow(tx, base, req)
 		if err != nil {
@@ -409,9 +413,20 @@ func (s *Server) claimSlot(ctx context.Context, base string, req slotRequest, ta
 		if err = applyPresence(tx, base, number, req, now, true); err != nil {
 			return err
 		}
+		if box, g.HeldDelivered, err = deliverHeld(tx, base, number, req.Label, now); err != nil {
+			return err
+		}
 		return s.fillGrant(tx, &g, base, number)
 	})
+	s.wake(err, box, g.HeldDelivered)
 	return g, err
+}
+
+// wake tells subscribers of box about held mail a committed slot change moved.
+func (s *Server) wake(err error, box string, moved int) {
+	if err == nil && moved > 0 {
+		s.hub.publish(box)
+	}
 }
 
 // displaceFirst moves the current holder of number 1 out of the way.
@@ -456,6 +471,7 @@ func (s *Server) renewSlot(ctx context.Context, base string, req slotRequest, re
 		until = now
 	}
 	var g slotGrant
+	var box string
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
 		own, has, err := identityRow(tx, base, req)
 		if err != nil {
@@ -476,10 +492,14 @@ func (s *Server) renewSlot(ctx context.Context, base string, req slotRequest, re
 			if err = applyPresence(tx, base, own.Number, req, now, false); err != nil {
 				return err
 			}
+			if box, g.HeldDelivered, err = deliverHeld(tx, base, own.Number, req.Label, now); err != nil {
+				return err
+			}
 		}
 		g.Reclaimed = true
 		return s.fillGrant(tx, &g, base, own.Number)
 	})
+	s.wake(err, box, g.HeldDelivered)
 	return g, err
 }
 
