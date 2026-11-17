@@ -41,6 +41,7 @@ type Server struct {
 	adminProxyToken string
 	hub             mailHub
 	eventKeepAlive  time.Duration
+	pollMax         time.Duration // cap on a long poll's wait; 0 means defaultPollMax
 	done            chan struct{} // closed on shutdown; ends event streams
 }
 
@@ -65,6 +66,13 @@ func runServer() {
 		}
 		s.eventKeepAlive = d
 	}
+	if v := os.Getenv("AGENT_MAIL_POLL_MAX"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			log.Fatal("AGENT_MAIL_POLL_MAX must be a positive whole number of seconds such as 55")
+		}
+		s.pollMax = time.Duration(n) * time.Second
+	}
 	for _, pair := range strings.Split(os.Getenv("AGENT_MAIL_TOKENS"), ",") {
 		p := strings.SplitN(strings.TrimSpace(pair), "=", 2)
 		if len(p) == 2 && p[0] != "" && p[1] != "" {
@@ -82,7 +90,8 @@ func runServer() {
 	mux.HandleFunc("/api/", s.api)
 	mux.HandleFunc("/", dashboard)
 	addr := env("LISTEN_ADDR", ":8080")
-	// No WriteTimeout: /api/events responses stay open indefinitely.
+	// No WriteTimeout: /api/events responses stay open indefinitely and
+	// /api/events/poll waits up to AGENT_MAIL_POLL_MAX.
 	srv := &http.Server{Addr: addr, Handler: secureHeaders(mux), ReadHeaderTimeout: 10 * time.Second}
 	srv.RegisterOnShutdown(func() { close(s.done) })
 	stop := make(chan os.Signal, 1)
@@ -207,6 +216,10 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		default:
 			http.Error(w, "method not allowed", 405)
 		}
+		return
+	}
+	if path == "events/poll" && r.Method == "GET" {
+		s.pollEvents(w, r, role)
 		return
 	}
 	if path == "events" && r.Method == "GET" {
