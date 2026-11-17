@@ -42,6 +42,7 @@ th,td{text-align:left;padding:.3rem .5rem;border-bottom:1px solid #dde;white-spa
 td.dir{white-space:normal;overflow-wrap:anywhere;min-width:10rem}
 tr.offline td{color:#889}
 .st-busy{color:#b26a00;font-weight:600}.st-compacting{color:#6a1b9a;font-weight:600}.st-idle{color:#2e7d32}
+.st-error{color:#c62828;font-weight:600}.st-blocked{color:#b26a00;font-weight:700}
 </style>
 </head>
 <body>
@@ -65,6 +66,11 @@ tr.offline td{color:#889}
 <div id="list"></div>
 <script>
 const sessionLabel={idle:'유휴',busy:'바쁨',compacting:'compact 중',unknown:'모름',offline:'오프라인'};
+function sessionStatus(st){
+  const m=/^(error|blocked):(.*)$/.exec(st||'');
+  if(m)return [(m[1]==='error'?'오류: ':'막힘: ')+m[2],'st-'+m[1]];
+  return [sessionLabel[st]||st,'st-'+st];
+}
 const statusLabel={pending:'안 읽음',read:'읽음',acknowledged:'확인함',complete:'완료',completed:'완료',held:'보관 중'};
 const $=id=>document.getElementById(id);
 async function api(path){
@@ -91,8 +97,9 @@ async function loadSessions(){
     const body=$('sessions');body.replaceChildren();
     for(const v of p.sessions){
       const tr=node('tr','',v.online?'':'offline');
-      const cells=[v.role,sessionLabel[v.status]||v.status,kTokens(v.context_tokens),when(v.last_turn_at),v.machine,v.directory,v.label||'-',v.parent||'-',ago(p.now,v.reported_at)];
-      cells.forEach((text,i)=>tr.append(node('td',text,i===1?'st-'+v.status:(i===5?'dir':''))));
+      const [stText,stClass]=sessionStatus(v.status);
+      const cells=[v.role,stText,kTokens(v.context_tokens),when(v.last_turn_at),v.machine,v.directory,v.label||'-',v.parent||'-',ago(p.now,v.reported_at)];
+      cells.forEach((text,i)=>tr.append(node('td',text,i===1?stClass:(i===5?'dir':''))));
       body.append(tr);
     }
     $('sessionsNote').textContent=p.sessions.length+'개 · 심장박동 '+p.interval_seconds+'초, '+p.missed+'번 놓치면 오프라인';

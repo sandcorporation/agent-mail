@@ -30,6 +30,41 @@ const (
 
 var presenceStates = map[string]bool{"idle": true, "busy": true, "compacting": true}
 
+// presenceKindPrefixes are the states that carry a kind: error:<kind> (the
+// turn failed) and blocked:<kind> (the session waits on a person).
+var presenceKindPrefixes = []string{"error:", "blocked:"}
+
+const maxPresenceKind = 64
+
+// validPresenceState reports whether state is idle, busy, compacting, or
+// error:<kind> / blocked:<kind> with a kind of 1-64 characters from
+// A-Z a-z 0-9 . _ -.
+func validPresenceState(state string) bool {
+	if presenceStates[state] {
+		return true
+	}
+	for _, prefix := range presenceKindPrefixes {
+		if kind, ok := strings.CutPrefix(state, prefix); ok {
+			return validPresenceKind(kind)
+		}
+	}
+	return false
+}
+
+func validPresenceKind(kind string) bool {
+	if kind == "" || len(kind) > maxPresenceKind {
+		return false
+	}
+	for _, c := range kind {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '.', c == '_', c == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // presenceColumns are added to slots in place; see migratePresence.
 var presenceColumns = []struct{ name, def string }{
 	{"state", `TEXT NOT NULL DEFAULT ''`},
@@ -112,8 +147,8 @@ func (e presenceError) Error() string { return string(e) }
 // presence parses the presence fields of a slot request. last is the zero
 // time when last_turn_at was not given.
 func (q slotRequest) presence() (last time.Time, err error) {
-	if q.State != "" && !presenceStates[q.State] {
-		return last, presenceError(fmt.Sprintf("state must be idle, busy or compacting, not %q", q.State))
+	if q.State != "" && !validPresenceState(q.State) {
+		return last, presenceError(fmt.Sprintf("state must be idle, busy, compacting, error:<kind> or blocked:<kind> (kind: 1-64 of A-Z a-z 0-9 . _ -), not %q", q.State))
 	}
 	if q.ContextTokens != nil && *q.ContextTokens < 0 {
 		return last, presenceError("context_tokens must be a whole number of at least 0")

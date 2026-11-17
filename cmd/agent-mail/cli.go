@@ -131,7 +131,7 @@ var commands = []command{
 			{"--session-id", "ID", "session id to record with the slot"},
 			{"--label", "TEXT", "label to record with the slot"},
 			{"--parent", "ROLE", "parent role to record with the slot"},
-			{"--state", "STATE", "presence state to report: idle, busy or compacting (register, heartbeat, takeover)"},
+			{"--state", "STATE", "presence state to report: idle, busy, compacting, error:<kind> or blocked:<kind> (kind: 1-64 of A-Z a-z 0-9 . _ -) (register, heartbeat, takeover)"},
 			{"--context-tokens", "N", "context size in tokens to report (register, heartbeat, takeover)"},
 			{"--last-turn-at", "TIME", "time the last turn ended, RFC 3339 (register, heartbeat, takeover)"},
 			optJSON, optProfile,
