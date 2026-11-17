@@ -48,7 +48,7 @@ tr.offline td{color:#889}
 <h1>Agent Mail · 관리자 보기</h1>
 <p class="muted">등록된 모든 역할과 메일함을 읽기 전용으로 봅니다.</p>
 <section class="card row">
-<select id="box"><option value="all">모든 메일</option><option value="inbox">받은 메일</option><option value="outbox">보낸 메일</option></select>
+<select id="box"><option value="all">모든 메일</option><option value="inbox">받은 메일</option><option value="outbox">보낸 메일</option><option value="held">보관 중(라벨)</option></select>
 <select id="role"><option value="">모든 역할</option></select>
 <select id="status"><option value="">모든 상태</option><option value="pending">안 읽음</option><option value="read">읽음</option><option value="acknowledged">확인함</option><option value="complete">완료</option></select>
 <input id="search" placeholder="내용·역할·task 검색">
@@ -65,7 +65,7 @@ tr.offline td{color:#889}
 <div id="list"></div>
 <script>
 const sessionLabel={idle:'유휴',busy:'바쁨',compacting:'compact 중',unknown:'모름',offline:'오프라인'};
-const statusLabel={pending:'안 읽음',read:'읽음',acknowledged:'확인함',complete:'완료',completed:'완료'};
+const statusLabel={pending:'안 읽음',read:'읽음',acknowledged:'확인함',complete:'완료',completed:'완료',held:'보관 중'};
 const $=id=>document.getElementById(id);
 async function api(path){
   let r;
@@ -113,7 +113,7 @@ async function load(){
 function card(m){
   const urgent=m.priority==='urgent';
   const c=node('article','',urgent?'card urgent':'card');
-  const meta=m.sender+' → '+m.recipient+' · '+new Date(m.created_at).toLocaleString('ko-KR')+' · '+(statusLabel[m.status]||m.status)+(m.task_id?' · task '+m.task_id:'');
+  const meta=m.sender+' → '+m.recipient+' · '+new Date(m.created_at).toLocaleString('ko-KR')+' · '+(statusLabel[m.status]||m.status)+(m.task_id?' · task '+m.task_id:'')+(m.addressed_to&&m.addressed_to!==m.recipient?' · '+m.addressed_to+' 앞':'');
   const toggle=node('button','열기');
   toggle.setAttribute('aria-expanded','false');
   let body=null;
