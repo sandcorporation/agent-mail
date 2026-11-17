@@ -17,8 +17,9 @@ import (
 // N days (1-90, default 7) ending now:
 //
 //   - first_reply: how long a thread-starting message from a non-system sender
-//     waits for the first later message in its thread, or with its non-empty
-//     task_id, sent by the recipient's base back to the sender's base.
+//     waits for the first message that answers it (answers in answered.go:
+//     in its thread back to the sender's base, or with its non-empty task_id
+//     to the sender's base or any boss role, sent by the recipient's base).
 //   - pending: per recipient role, the pending non-system mail right now.
 //   - threads: direction changes between a thread's two main bases.
 //   - sessions: error:* and blocked:* time from presence_log, clipped to the
@@ -235,7 +236,7 @@ func (s *Server) metrics(days int) (metricsReport, error) {
 		return out, err
 	}
 	bases := newBaseResolver(s.db)
-	out.FirstReply = firstReplies(msgs, bases.of)
+	out.FirstReply = firstReplies(msgs, bases.of, s.isBossName(bases.of))
 	out.Threads = threadRoundTrips(msgs, bases.of)
 	if out.Pending, err = s.pendingAges(to, lim.Pending); err != nil {
 		return out, err
@@ -276,18 +277,15 @@ func (s *Server) windowMail(from time.Time) ([]flowMail, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	all, err := scanFlowMail(rows)
+	if err != nil {
+		return nil, err
+	}
 	var out []flowMail
-	for rows.Next() {
-		var m flowMail
-		var created string
-		if err = rows.Scan(&m.ID, &m.Sender, &m.Recipient, &m.Subject, &created, &m.TaskID, &m.ThreadID, &m.ReplyTo); err != nil {
-			return nil, err
+	for _, m := range all {
+		if !m.Created.Before(from) {
+			out = append(out, m)
 		}
-		if m.Created, err = time.Parse(time.RFC3339Nano, created); err != nil || m.Created.Before(from) {
-			continue
-		}
-		out = append(out, m)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Created.Before(out[j].Created) })
 	return out, rows.Err()
@@ -333,7 +331,7 @@ var latencyBucketBounds = []struct {
 // firstReplies measures thread-starting mail in msgs (sorted oldest first):
 // no thread_id or reply_to, not from the system, and not carrying a task_id
 // an earlier message in the window already carried.
-func firstReplies(msgs []flowMail, base func(string) string) firstReplyMetrics {
+func firstReplies(msgs []flowMail, base func(string) string, isBoss func(string) bool) firstReplyMetrics {
 	byThread, byTask := map[int64][]flowMail{}, map[string][]flowMail{}
 	for _, m := range msgs {
 		byThread[m.thread()] = append(byThread[m.thread()], m)
@@ -354,17 +352,14 @@ func firstReplies(msgs []flowMail, base func(string) string) firstReplyMetrics {
 		if root.Sender == systemSender || root.ThreadID != 0 || root.ReplyTo != 0 || continued {
 			continue
 		}
-		from, to := base(root.Sender), base(root.Recipient)
-		reply := func(m flowMail) bool {
-			return m.ID != root.ID && !m.Created.Before(root.Created) && base(m.Sender) == to && base(m.Recipient) == from
-		}
+		to := base(root.Recipient)
 		var first *flowMail
 		candidates := byThread[root.ID]
 		if root.TaskID != "" {
 			candidates = append(append([]flowMail{}, candidates...), byTask[root.TaskID]...)
 		}
 		for i := range candidates {
-			if m := candidates[i]; reply(m) && (first == nil || m.Created.Before(first.Created) || (m.Created.Equal(first.Created) && m.ID < first.ID)) {
+			if m := candidates[i]; answers(root, m, base, isBoss) && (first == nil || m.Created.Before(first.Created) || (m.Created.Equal(first.Created) && m.ID < first.ID)) {
 				first = &candidates[i]
 			}
 		}

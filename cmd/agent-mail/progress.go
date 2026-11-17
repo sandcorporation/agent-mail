@@ -130,10 +130,11 @@ type progressMailRow struct {
 	Sender, Recipient, Subject string
 	TaskID, Status             string
 	At                         time.Time
+	ThreadID, ReplyTo          int64
 }
 
 func (s *Server) progressMailQuery(where string, args ...any) ([]progressMailRow, error) {
-	rows, err := s.db.Query(`SELECT m.id,m.sender,m.recipient,m.subject,COALESCE(m.task_id,''),COALESCE(rs.status,m.status,'pending'),m.created_at FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=m.recipient WHERE `+where+` ORDER BY m.id`, args...)
+	rows, err := s.db.Query(`SELECT m.id,m.sender,m.recipient,m.subject,COALESCE(m.task_id,''),COALESCE(rs.status,m.status,'pending'),m.created_at,COALESCE(m.thread_id,0),COALESCE(m.reply_to,0) FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=m.recipient WHERE `+where+` ORDER BY m.id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +143,7 @@ func (s *Server) progressMailQuery(where string, args ...any) ([]progressMailRow
 	for rows.Next() {
 		var m progressMailRow
 		var created string
-		if err = rows.Scan(&m.ID, &m.Sender, &m.Recipient, &m.Subject, &m.TaskID, &m.Status, &created); err != nil {
+		if err = rows.Scan(&m.ID, &m.Sender, &m.Recipient, &m.Subject, &m.TaskID, &m.Status, &created, &m.ThreadID, &m.ReplyTo); err != nil {
 			return nil, err
 		}
 		m.At, _ = time.Parse(time.RFC3339Nano, created)
@@ -186,7 +187,7 @@ func (s *Server) progress() (progressReport, error) {
 	lim := s.alertLimits()
 	out := progressReport{GeneratedAt: now, PendingAlertS: int64(lim.Pending / time.Second), Services: []serviceProgress{}}
 	bases := newBaseResolver(s.db)
-	isBossName := func(name string) bool { return s.bossRoles[name] || s.bossRoles[bases.of(name)] }
+	isBossName := s.isBossName(bases.of)
 	svcs := map[string]*serviceProgress{}
 	get := func(name string) *serviceProgress {
 		svc := serviceOf(name)
@@ -265,7 +266,8 @@ func (s *Server) progress() (progressReport, error) {
 		}
 	}
 
-	// Open directives: mail from a boss role, not completed, oldest first.
+	// Open directives: mail from a boss role, neither completed nor answered
+	// (answers in answered.go), oldest first.
 	senders, err := s.distinctNames("sender")
 	if err != nil {
 		return out, err
@@ -281,7 +283,35 @@ func (s *Server) progress() (progressReport, error) {
 		if err != nil {
 			return out, err
 		}
-		for _, m := range directives {
+		ds := make([]flowMail, len(directives))
+		for i, m := range directives {
+			ds[i] = flowMail{ID: m.ID, Sender: m.Sender, Recipient: m.Recipient, Created: m.At, TaskID: m.TaskID, ThreadID: m.ThreadID, ReplyTo: m.ReplyTo}
+		}
+		candidates, err := s.answerCandidates(ds)
+		if err != nil {
+			return out, err
+		}
+		byThread, byTask := map[int64][]flowMail{}, map[string][]flowMail{}
+		for _, c := range candidates {
+			byThread[c.ThreadID] = append(byThread[c.ThreadID], c)
+			if c.TaskID != "" {
+				byTask[c.TaskID] = append(byTask[c.TaskID], c)
+			}
+		}
+	directive:
+		for i, m := range directives {
+			d := ds[i]
+			var near []flowMail
+			if d.TaskID != "" {
+				near = byTask[d.TaskID]
+			}
+			for _, group := range [][]flowMail{byThread[d.thread()], byThread[d.ID], near} {
+				for _, c := range group {
+					if answers(d, c, bases.of, isBossName) {
+						continue directive
+					}
+				}
+			}
 			age := max(0, int64(now.Sub(m.At)/time.Second))
 			p := get(m.Recipient)
 			p.OpenDirectives = append(p.OpenDirectives, progressDirective{ID: m.ID, To: m.Recipient, Subject: m.Subject, Status: m.Status, AgeS: age, OverThreshold: lim.Pending > 0 && age >= int64(lim.Pending/time.Second)})
