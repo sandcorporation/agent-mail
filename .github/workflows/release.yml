@@ -19,12 +19,18 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
+          # One build per target, archived under both names: switchboard (new) and
+          # agent-mail (old). The binary is the same; help shows the name it runs as.
           for target in windows/amd64 windows/arm64 linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
-            os=${target%/*}; arch=${target#*/}; name="agent-mail_${GITHUB_REF_NAME}_${os}_${arch}"; ext=""
+            os=${target%/*}; arch=${target#*/}; ext=""
             [ "$os" = windows ] && ext=".exe"
-            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${GITHUB_REF_NAME}" -o "dist/agent-mail${ext}" ./cmd/agent-mail
-            if [ "$os" = windows ]; then (cd dist && zip -q "$name.zip" agent-mail.exe); else tar -C dist -czf "dist/$name.tar.gz" "agent-mail${ext}"; fi
-            rm "dist/agent-mail${ext}"
+            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${GITHUB_REF_NAME}" -o "dist/switchboard${ext}" ./cmd/agent-mail
+            cp "dist/switchboard${ext}" "dist/agent-mail${ext}"
+            for bin in switchboard agent-mail; do
+              name="${bin}_${GITHUB_REF_NAME}_${os}_${arch}"
+              if [ "$os" = windows ]; then (cd dist && zip -q "$name.zip" "$bin.exe"); else tar -C dist -czf "dist/$name.tar.gz" "$bin${ext}"; fi
+              rm "dist/$bin${ext}"
+            done
           done
           (cd dist && sha256sum *.zip *.tar.gz > checksums.txt)
       - uses: softprops/action-gh-release@v2

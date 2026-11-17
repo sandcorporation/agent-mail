@@ -93,14 +93,15 @@ func sameSecret(a, b string) bool {
 	return len(a) == len(b) && subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
-// authenticate checks the bearer token against X-Agent-Mail-Role. A role row
+// authenticate checks the bearer token against X-Switchboard-Role (or the old
+// X-Agent-Mail-Role). A role row
 // with exactly that name always wins, so a pre-existing role ending in -N
 // keeps its own token. Otherwise "<base>-N" is accepted with the token of
 // <base>. The slot need not be currently leased: the base token can claim any
 // slot anyway, and mail queued for an expired slot must stay readable.
 func (s *Server) authenticate(r *http.Request) (principal, bool) {
 	t := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	h := r.Header.Get("X-Agent-Mail-Role")
+	h := s.header(r, "Role")
 	if t == "" || h == "" || !validRole(h) || reservedRole(h) {
 		return principal{}, false
 	}

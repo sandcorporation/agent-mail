@@ -47,7 +47,7 @@ type command struct {
 
 var (
 	optJSON    = option{"--json", "", "print the server's JSON response"}
-	optProfile = option{"--profile", "NAME", "use the named credential profile (same as AGENT_MAIL_PROFILE)"}
+	optProfile = option{"--profile", "NAME", "use the named credential profile (same as SWITCHBOARD_PROFILE)"}
 	optBody    = option{"--body", "TEXT", "message body"}
 	optBodyF   = option{"--body-file", "PATH", "read the message body from a file (stdin is used when neither is given)"}
 	optSubject = option{"--subject", "TEXT", "message subject"}
@@ -180,7 +180,7 @@ var commands = []command{
 
 var validStatuses = map[string]bool{"pending": true, "read": true, "acknowledged": true, "complete": true, "completed": true}
 
-// profileFlag holds the --profile value given on the command line. It wins over AGENT_MAIL_PROFILE.
+// profileFlag holds the --profile value given on the command line. It wins over SWITCHBOARD_PROFILE.
 var profileFlag string
 
 type usageError struct{ msg string }
@@ -212,12 +212,12 @@ func runCLI(args []string) int {
 	code, err := dispatch(args)
 	var ue usageError
 	if errors.As(err, &ue) {
-		fmt.Fprintln(os.Stderr, "agent-mail: "+ue.msg)
-		fmt.Fprintln(os.Stderr, "Run 'agent-mail --help' for usage.")
+		fmt.Fprintln(os.Stderr, progName()+": "+ue.msg)
+		fmt.Fprintln(os.Stderr, "Run '"+progName()+" --help' for usage.")
 		return exitUsage
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "agent-mail: "+err.Error())
+		fmt.Fprintln(os.Stderr, progName()+": "+err.Error())
 		return exitError
 	}
 	return code
@@ -274,7 +274,7 @@ func dispatch(args []string) (int, error) {
 	}
 	p, err := parseCommandArgs(cmd, rest)
 	if err != nil {
-		return 0, usagef("%s: %s (see 'agent-mail %s --help')", name, err.Error(), name)
+		return 0, usagef("%s: %s (see '%s %s --help')", name, err.Error(), progName(), name)
 	}
 	if v, ok := p.values["--profile"]; ok {
 		profileFlag = v
@@ -282,12 +282,12 @@ func dispatch(args []string) (int, error) {
 	if profileFlag != "" && !validProfile(profileFlag) {
 		return 0, usagef("invalid profile name %q", profileFlag)
 	}
-	if v := os.Getenv("AGENT_MAIL_PROFILE"); profileFlag == "" && v != "" && !validProfile(v) {
-		return 0, usagef("invalid profile name %q in AGENT_MAIL_PROFILE", v)
+	if v, from := envAliasFrom(os.Getenv, "PROFILE"); profileFlag == "" && v != "" && !validProfile(v) {
+		return 0, usagef("invalid profile name %q in %s", v, from)
 	}
 	switch name {
 	case "version":
-		fmt.Println("agent-mail " + version)
+		fmt.Println(progName() + " " + version)
 		return exitOK, nil
 	case "register":
 		return cliRegister(p)
@@ -422,7 +422,7 @@ func hasHelp(args []string) bool {
 
 func printHelp() {
 	var b strings.Builder
-	b.WriteString("agent-mail — role addressed durable mailbox\n\nUsage: agent-mail [--profile NAME] [--role ROLE] <command> [options]\n\nCommands:\n")
+	b.WriteString("PROG — role addressed durable mailbox\n\nUsage: PROG [--profile NAME] [--role ROLE] <command> [options]\n\nCommands:\n")
 	for _, c := range commands {
 		label := c.name
 		if c.args != "" {
@@ -433,22 +433,23 @@ func printHelp() {
 	b.WriteString(`  help CMD     Show options for a command
 
 Examples:
-  agent-mail register --endpoint https://mail.example --role team/worker --token-file role.token --enrollment-token-file enrollment.token
-  agent-mail --profile worker config set --endpoint https://mail.example --role team/worker --token-file role.token
-  agent-mail --profile worker send --to team/lead --subject 'Done' --body 'Work is complete'
-  agent-mail inbox --status pending --json
-  agent-mail wait --timeout 1800
-  agent-mail events --after 41 --timeout 25
+  PROG register --endpoint https://mail.example --role team/worker --token-file role.token --enrollment-token-file enrollment.token
+  PROG --profile worker config set --endpoint https://mail.example --role team/worker --token-file role.token
+  PROG --profile worker send --to team/lead --subject 'Done' --body 'Work is complete'
+  PROG inbox --status pending --json
+  PROG wait --timeout 1800
+  PROG events --after 41 --timeout 25
 
-Use 'agent-mail <command> --help' for command options.
---profile NAME may come before or after the command; it overrides AGENT_MAIL_PROFILE.
+Use 'PROG <command> --help' for command options.
+--profile NAME may come before or after the command; it overrides SWITCHBOARD_PROFILE.
 A named profile that has no saved config is an error.
---role ROLE (before the command) or AGENT_MAIL_ROLE acts as a numbered role of the
+--role ROLE (before the command) or SWITCHBOARD_ROLE acts as a numbered role of the
 profile's role, e.g. team/worker-2 for a team/worker profile (--role wins over the env).
+Every SWITCHBOARD_* variable also answers to its old AGENT_MAIL_* name; the new name wins.
 
 Exit codes: 0 success, 1 error, 2 usage error (unknown command or option), 3 wait or events found no mail.
 `)
-	fmt.Print(b.String())
+	fmt.Print(strings.ReplaceAll(b.String(), "PROG", progName()))
 }
 
 func printCommandHelp(name string) {
@@ -457,7 +458,7 @@ func printCommandHelp(name string) {
 		printHelp()
 		return
 	}
-	usage := "agent-mail " + c.name
+	usage := progName() + " " + c.name
 	if c.args != "" {
 		usage += " " + c.args
 	}
@@ -486,14 +487,29 @@ func configPath() string {
 	if filename == "default.json" {
 		filename = "config.json"
 	}
-	if d := os.Getenv("AGENT_MAIL_CONFIG_DIR"); d != "" {
+	if d := envAlias("CONFIG_DIR"); d != "" {
 		return filepath.Join(d, filename)
 	}
 	d, e := os.UserConfigDir()
 	if e != nil {
 		d = "."
 	}
-	return filepath.Join(d, "agent-mail", filename)
+	return profilePath(d, filename)
+}
+
+// profilePath picks <config>/switchboard/<file>, unless only the old
+// <config>/agent-mail/ holds that profile: then the old file is read and
+// updated in place, so a profile is never split across the two directories.
+func profilePath(configDir, filename string) string {
+	p := filepath.Join(configDir, configDirName, filename)
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	old := filepath.Join(configDir, legacyConfigDir, filename)
+	if _, err := os.Stat(old); err == nil {
+		return old
+	}
+	return p
 }
 
 // explicitProfile reports whether the user named a profile (flag or environment).
@@ -502,7 +518,7 @@ func explicitProfile() bool { return profileName() != "default" }
 func profileName() string {
 	name := profileFlag
 	if name == "" {
-		name = os.Getenv("AGENT_MAIL_PROFILE")
+		name = envAlias("PROFILE")
 	}
 	if name == "" {
 		return "default"
@@ -531,33 +547,33 @@ func readConfig() Config {
 	if e == nil {
 		_ = json.Unmarshal(b, &c)
 	}
-	if v := os.Getenv("AGENT_MAIL_ENDPOINT"); v != "" {
+	if v := envAlias("ENDPOINT"); v != "" {
 		c.Endpoint = v
 	}
-	// With a saved role and no AGENT_MAIL_TOKEN, AGENT_MAIL_ROLE picks a
+	// With a saved role and no SWITCHBOARD_TOKEN, SWITCHBOARD_ROLE picks a
 	// numbered role of the saved one (see actingRole); otherwise it is the
 	// role itself, as in environment-only setups.
-	if v := os.Getenv("AGENT_MAIL_ROLE"); v != "" && (c.Role == "" || os.Getenv("AGENT_MAIL_TOKEN") != "") {
+	if v := envAlias("ROLE"); v != "" && (c.Role == "" || envAlias("TOKEN") != "") {
 		c.Role = v
 	}
-	if v := os.Getenv("AGENT_MAIL_TOKEN"); v != "" {
+	if v := envAlias("TOKEN"); v != "" {
 		c.Token = v
 	}
 	return c
 }
 
 // loadConfig returns the active profile's configuration. A profile named on the
-// command line or in AGENT_MAIL_PROFILE must exist; it never falls back to another profile.
+// command line or in SWITCHBOARD_PROFILE must exist; it never falls back to another profile.
 func loadConfig() (Config, error) {
 	p := configPath()
 	if explicitProfile() {
 		if _, err := os.Stat(p); err != nil {
-			return Config{}, fmt.Errorf("profile %q not found (%s); create it with: agent-mail --profile %s config set --endpoint URL --role ROLE --token-file PATH", profileName(), p, profileName())
+			return Config{}, fmt.Errorf("profile %q not found (%s); create it with: %s --profile %s config set --endpoint URL --role ROLE --token-file PATH", profileName(), p, progName(), profileName())
 		}
 	}
 	c := readConfig()
 	if c.Endpoint == "" || c.Token == "" || c.Role == "" {
-		return c, fmt.Errorf("profile %q is not configured (%s); run: agent-mail config set --endpoint URL --role ROLE --token-file PATH", profileName(), p)
+		return c, fmt.Errorf("profile %q is not configured (%s); run: %s config set --endpoint URL --role ROLE --token-file PATH", profileName(), p, progName())
 	}
 	role, err := actingRole(c.Role)
 	if err != nil {
@@ -567,16 +583,16 @@ func loadConfig() (Config, error) {
 	return c, nil
 }
 
-// roleFlag holds the global --role value. It wins over AGENT_MAIL_ROLE.
+// roleFlag holds the global --role value. It wins over SWITCHBOARD_ROLE.
 var roleFlag string
 
-// actingRole is the X-Agent-Mail-Role to send: --role, else AGENT_MAIL_ROLE,
+// actingRole is the X-Switchboard-Role to send: --role, else SWITCHBOARD_ROLE,
 // else the profile's role. An override must be the profile role itself or a
 // numbered role <base>-N under it, since the profile's token covers only those.
 func actingRole(profileRole string) (string, error) {
 	want, from := roleFlag, "--role"
-	if want == "" && os.Getenv("AGENT_MAIL_TOKEN") == "" {
-		want, from = os.Getenv("AGENT_MAIL_ROLE"), "AGENT_MAIL_ROLE"
+	if want == "" && envAlias("TOKEN") == "" {
+		want, from = envAliasFrom(os.Getenv, "ROLE")
 	}
 	if want == "" || want == profileRole {
 		return profileRole, nil
@@ -711,7 +727,7 @@ func inputBody(p parsedArgs) (string, error) {
 
 func authorize(c Config, req *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+c.Token)
-	req.Header.Set("X-Agent-Mail-Role", c.Role)
+	req.Header.Set(headerPrefix+"Role", c.Role)
 }
 
 func doRequest(c Config, req *http.Request, jsonMode bool) (int, error) {
@@ -854,7 +870,7 @@ func cliWait(c Config, p parsedArgs) (int, error) {
 				if jsonMode {
 					fmt.Println("[]")
 				}
-				fmt.Fprintf(os.Stderr, "agent-mail wait: no pending messages after %s\n", timeout)
+				fmt.Fprintf(os.Stderr, progName()+" wait: no pending messages after %s\n", timeout)
 				return exitTimeout, nil
 			}
 			if left < sleep {
@@ -926,7 +942,7 @@ func cliEvents(c Config, p parsedArgs) (int, error) {
 		}
 	}
 	if len(v.Events) == 0 {
-		fmt.Fprintf(os.Stderr, "agent-mail events: no new mail (cursor %d)\n", v.Cursor)
+		fmt.Fprintf(os.Stderr, progName()+" events: no new mail (cursor %d)\n", v.Cursor)
 		return exitTimeout, nil
 	}
 	return exitOK, nil

@@ -37,6 +37,7 @@ func TestProgressGroupsByServiceAndSortsByActivity(t *testing.T) {
 	mailAt(t, s, flowRow{sender: "team/reviewer", recipient: "ops/lead", at: now.Add(-2 * time.Hour)})
 	mailAt(t, s, flowRow{sender: "ops/lead", recipient: "team/worker", at: now.Add(-time.Hour)})
 	mailAt(t, s, flowRow{sender: systemSender, recipient: "team/worker", at: now})
+	mailAt(t, s, flowRow{sender: legacySystemSender, recipient: "team/worker", at: now})
 	mailAt(t, s, flowRow{sender: "solo", recipient: "ops/lead", at: now.Add(-5 * time.Hour)})
 
 	r := mustProgress(t, s)
@@ -262,9 +263,12 @@ func TestProgressOpenTasksIgnoreSystemMail(t *testing.T) {
 	// Task ids carried only by system mail (old name and numbered form) are not tasks.
 	mailAt(t, s, flowRow{sender: systemSender, recipient: "sandcorp/boss", task: "alert:stall:team/worker:2026-11-17", at: now.Add(-time.Hour), status: "pending"})
 	mailAt(t, s, flowRow{sender: systemSender + "-2", recipient: "sandcorp/boss", task: "q_abc", at: now.Add(-time.Hour), status: "pending"})
+	mailAt(t, s, flowRow{sender: legacySystemSender, recipient: "sandcorp/boss", task: "alert:pending:x", at: now.Add(-time.Hour), status: "pending"})
+	mailAt(t, s, flowRow{sender: legacySystemSender + "-3", recipient: "sandcorp/boss", task: "q_old", at: now.Add(-time.Hour), status: "pending"})
 	// A task id with a real message is listed; the system mail on it does not count.
 	mailAt(t, s, flowRow{sender: "team/worker", recipient: "sandcorp/boss", task: "REAL", at: now.Add(-2 * time.Hour), status: "pending"})
 	mailAt(t, s, flowRow{sender: systemSender, recipient: "sandcorp/boss", task: "REAL", at: now.Add(-time.Minute), status: "pending"})
+	mailAt(t, s, flowRow{sender: legacySystemSender, recipient: "sandcorp/boss", task: "REAL", at: now.Add(-time.Minute), status: "pending"})
 
 	tasks := serviceNamed(t, mustProgress(t, s), "sandcorp").OpenTasks
 	if len(tasks) != 1 || tasks[0].TaskID != "REAL" || tasks[0].Messages != 1 {

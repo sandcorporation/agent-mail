@@ -22,7 +22,7 @@ func dashboard(w http.ResponseWriter, r *http.Request) {
 // productName and headerText are the only places the product name and the
 // dashboard header live, so a rename is a one-line change.
 const (
-	productName = "Agent Mail"
+	productName = "Switchboard"
 	headerText  = productName + " · 관리자 보기"
 )
 
@@ -236,6 +236,7 @@ table.stack tbody tr:hover td{background:none}
 <table id="mCurrentTbl" class="stack"><thead><tr><th>역할</th><th>상태</th><th>시작</th><th class="num">지난 시간</th></tr></thead><tbody id="mCurrent"></tbody></table>
 </div>
 </div>
+<p id="mAliases" class="muted"></p>
 </section>
 <section id="panel-mail" role="tabpanel" aria-labelledby="tab-mail" tabindex="0" hidden>
 <div class="card filters">
@@ -315,7 +316,7 @@ async function api(path){
 // HTTP status (e.status) and the server's message.
 async function apiSend(method,path,body){
   let r;
-  try{r=await fetch('/api/admin/'+path,{method:method,credentials:'same-origin',headers:{'Accept':'application/json','Content-Type':'application/json','X-Agent-Mail-Dashboard':'1'},body:body===undefined?undefined:JSON.stringify(body)})}
+  try{r=await fetch('/api/admin/'+path,{method:method,credentials:'same-origin',headers:{'Accept':'application/json','Content-Type':'application/json','X-Switchboard-Dashboard':'1'},body:body===undefined?undefined:JSON.stringify(body)})}
   catch(e){throw Error('네트워크 오류 · 연결과 로그인 확인')}
   if(r.redirected)throw Error('로그인 필요 · 다시 로그인한 뒤 새로 고침');
   if(r.ok){
@@ -509,6 +510,11 @@ function renderSessionStates(ss,t){
   }
   if(!cur.children.length)emptyRow(cur,4,'지금 오류·막힘 없음');
 }
+// renderAliases shows old-name use since the server started (#72).
+function renderAliases(a){
+  a=a||{};const h=Object.entries(a.old_headers||{}).sort().map(([k,v])=>k+' '+v),e=a.old_env||[];
+  $('mAliases').textContent='옛 이름 헤더: '+(h.join(', ')||'0')+' · 옛 이름 환경 변수: '+(e.join(', ')||'없음');
+}
 async function loadMetrics(){
   const seq=++metricsSeq;
   $('metricsNote').textContent='불러오는 중…';
@@ -516,7 +522,7 @@ async function loadMetrics(){
     const m=await api('metrics?days='+metricsDays);
     if(seq!==metricsSeq)return;
     const t=m.thresholds||{};
-    renderFirstReply(m.first_reply);renderPending(m.pending||[],t);renderThreads(m.threads||{multi_round:0,top:[]});renderSessionStates(m.sessions||{},t);
+    renderFirstReply(m.first_reply);renderPending(m.pending||[],t);renderThreads(m.threads||{multi_round:0,top:[]});renderSessionStates(m.sessions||{},t);renderAliases(m.aliases);
     const n=metricsBreaches(m);setTabCount('metrics',n||null);
     $('metricsNote').textContent='최근 '+m.window.days+'일 · '+when(m.window.from)+' ~ '+when(m.window.to)+(n?' · 문턱 넘은 것 '+n+'개':'');
   }catch(e){if(seq===metricsSeq)$('metricsNote').textContent=e.message}

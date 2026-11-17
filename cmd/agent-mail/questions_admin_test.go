@@ -129,7 +129,7 @@ func TestDashboardQuestionsAndSettings(t *testing.T) {
 	for _, want := range []string{
 		`id="questions"`, `id="reloadQuestions"`, `id="settingsTable"`, `id="settingsForm"`, `id="setTarget"`, `id="setCanAsk"`, `id="setDiscord"`, `id="setWatchers"`,
 		"tabLoaders.questions=", "tabLoaders.settings=", "setTabCount('questions'", "'questions/'+encodeURIComponent(", "/answer'",
-		"'X-Agent-Mail-Dashboard':'1'", "'Content-Type':'application/json'", "이미 답했거나 거둔 질문입니다", "기타", "'radio'", "'checkbox'", "'pre'",
+		"'X-Switchboard-Dashboard':'1'", "'Content-Type':'application/json'", "이미 답했거나 거둔 질문입니다", "기타", "'radio'", "'checkbox'", "'pre'",
 		"question-settings/'", "'DELETE'", "'PUT'",
 	} {
 		if !strings.Contains(body, want) {

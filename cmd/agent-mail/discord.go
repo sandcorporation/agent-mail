@@ -40,23 +40,29 @@ type discordPayload struct {
 	AllowedMentions discordMentions `json:"allowed_mentions"`
 }
 
-// configureDiscord reads the AGENT_MAIL_DISCORD_* and AGENT_MAIL_PUBLIC_URL
-// variables. An unset or empty webhook leaves s.discord nil (no notices).
+// configureDiscord reads the SWITCHBOARD_DISCORD_* and SWITCHBOARD_PUBLIC_URL
+// variables (or their AGENT_MAIL_* aliases). An unset or empty webhook leaves s.discord nil (no notices).
 func configureDiscord(s *Server, getenv func(string) string) {
-	webhook := strings.TrimSpace(getenv("AGENT_MAIL_DISCORD_WEBHOOK"))
+	get := func(name string) (string, string) {
+		v, from := envAliasFrom(getenv, name)
+		return strings.TrimSpace(v), from
+	}
+	webhook, _ := get("DISCORD_WEBHOOK")
 	if webhook == "" {
 		s.discord = nil
 		return
 	}
-	avatar := strings.TrimSpace(getenv("AGENT_MAIL_DISCORD_AVATAR_URL"))
+	avatar, avatarFrom := get("DISCORD_AVATAR_URL")
 	if avatar != "" && !strings.HasPrefix(avatar, "https://") {
-		log.Printf("AGENT_MAIL_DISCORD_AVATAR_URL must start with https://; ignored")
+		log.Printf("%s must start with https://; ignored", avatarFrom)
 		avatar = ""
 	}
+	publicURL, _ := get("PUBLIC_URL")
+	username, _ := get("DISCORD_USERNAME")
 	s.discord = &discordNotifier{
 		webhook:   webhook,
-		publicURL: strings.TrimRight(strings.TrimSpace(getenv("AGENT_MAIL_PUBLIC_URL")), "/"),
-		username:  strings.TrimSpace(getenv("AGENT_MAIL_DISCORD_USERNAME")),
+		publicURL: strings.TrimRight(publicURL, "/"),
+		username:  username,
 		avatarURL: avatar,
 		timeout:   discordNoticeTimeout,
 		client:    &http.Client{},

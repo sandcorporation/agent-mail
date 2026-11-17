@@ -262,7 +262,7 @@ func TestActualCLILifecycle(t *testing.T) {
 	if err := os.WriteFile(enrollFile, []byte("enrollment-secret\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	env := append(os.Environ(), "AGENT_MAIL_TEST_CLI=1", "AGENT_MAIL_CONFIG_DIR="+dir)
+	env := append(append(os.Environ(), clearNewEnv...), "AGENT_MAIL_TEST_CLI=1", "AGENT_MAIL_CONFIG_DIR="+dir)
 	run := func(args ...string) string {
 		cmd := exec.Command(os.Args[0], "-test.run=^TestCLIHelperProcess$")
 		argJSON, _ := json.Marshal(args)
@@ -305,7 +305,11 @@ func TestCLIHelperProcess(t *testing.T) {
 	if err := json.Unmarshal([]byte(os.Getenv("AGENT_MAIL_TEST_ARGS")), &args); err != nil {
 		t.Fatal(err)
 	}
-	os.Args = append([]string{"agent-mail"}, args...)
+	arg0 := "agent-mail"
+	if v := os.Getenv("AGENT_MAIL_TEST_ARG0"); v != "" {
+		arg0 = v
+	}
+	os.Args = append([]string{arg0}, args...)
 	main()
 }
 func call(s *Server, method, path, token string, body any, idem string) *httptest.ResponseRecorder {

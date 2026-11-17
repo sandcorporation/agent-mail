@@ -72,7 +72,7 @@ func TestDecisionsCommandParameters(t *testing.T) {
 	h, api := decisionsHarness(t)
 	h.mustRun(nil, "decisions")
 	r := api.last(t)
-	if r.URL.RawQuery != "" || r.Header.Get("Authorization") != "Bearer secret-a" || r.Header.Get("X-Agent-Mail-Role") != "a" {
+	if r.URL.RawQuery != "" || r.Header.Get("Authorization") != "Bearer secret-a" || r.Header.Get("X-Switchboard-Role") != "a" {
 		t.Fatalf("bare request: %q %v", r.URL.RawQuery, r.Header)
 	}
 	h.mustRun(nil, "decisions", "--from", "2026-11-01", "--to", "2026-11-17T12:00:00+09:00", "--role", "team/*", "--q", "배포 계획")

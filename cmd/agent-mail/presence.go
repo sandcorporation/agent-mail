@@ -94,24 +94,24 @@ func migratePresence(db *sql.DB) error {
 
 // configurePresence reads the presence settings from the environment.
 func configurePresence(s *Server, getenv func(string) string) error {
-	if v := getenv("AGENT_MAIL_PRESENCE_INTERVAL"); v != "" {
+	if v, from := envAliasFrom(getenv, "PRESENCE_INTERVAL"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil || d < time.Second {
-			return errors.New("AGENT_MAIL_PRESENCE_INTERVAL must be a duration of at least 1s such as 60s")
+			return errors.New(from + " must be a duration of at least 1s such as 60s")
 		}
 		s.presenceInterval = d
 	}
-	if v := getenv("AGENT_MAIL_PRESENCE_MISSED"); v != "" {
+	if v, from := envAliasFrom(getenv, "PRESENCE_MISSED"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 {
-			return errors.New("AGENT_MAIL_PRESENCE_MISSED must be a whole number of at least 1 such as 3")
+			return errors.New(from + " must be a whole number of at least 1 such as 3")
 		}
 		s.presenceMissed = n
 	}
-	if v := getenv("AGENT_MAIL_PRESENCE_RETAIN"); v != "" {
+	if v, from := envAliasFrom(getenv, "PRESENCE_RETAIN"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil || d < 0 {
-			return errors.New("AGENT_MAIL_PRESENCE_RETAIN must be a duration such as 24h (0 hides offline sessions)")
+			return errors.New(from + " must be a duration such as 24h (0 hides offline sessions)")
 		}
 		s.presenceRetain = &d
 	}

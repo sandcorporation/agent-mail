@@ -55,7 +55,7 @@ func shortAge(d time.Duration) string {
 	return fmt.Sprintf("%dh%dm", h, m)
 }
 
-const alertHint = "자세히: `agent-mail metrics` 또는 대시보드 #metrics 탭."
+const alertHint = "자세히: `switchboard metrics`(옛 이름 `agent-mail metrics`) 또는 대시보드 #metrics 탭."
 
 // dueAlerts lists the alerts whose threshold is crossed at now, before
 // dedupe.
@@ -76,7 +76,7 @@ func (s *Server) dueAlerts(now time.Time) ([]alertDue, error) {
 				Kind:    "pending",
 				Role:    p.Role,
 				Subject: fmt.Sprintf("[지표] pending %s %d통, 가장 오래 %s", p.Role, p.Pending, age),
-				Body: fmt.Sprintf("%s 앞으로 아직 읽지 않은(pending) 메일이 %d통 있습니다(시스템 메일 제외). 가장 오래된 것은 %s 전에 왔습니다. 문턱은 %s(AGENT_MAIL_ALERT_PENDING)입니다.\n\n%s",
+				Body: fmt.Sprintf("%s 앞으로 아직 읽지 않은(pending) 메일이 %d통 있습니다(시스템 메일 제외). 가장 오래된 것은 %s 전에 왔습니다. 문턱은 %s(SWITCHBOARD_ALERT_PENDING)입니다.\n\n%s",
 					p.Role, p.Pending, age, shortAge(lim.Pending), alertHint),
 			})
 		}
@@ -87,9 +87,9 @@ func (s *Server) dueAlerts(now time.Time) ([]alertDue, error) {
 			return nil, err
 		}
 		for _, c := range cur {
-			kind, limit, env := "error", lim.Error, "AGENT_MAIL_ALERT_ERROR"
+			kind, limit, env := "error", lim.Error, "SWITCHBOARD_ALERT_ERROR"
 			if isBlockedState(c.State) {
-				kind, limit, env = "blocked", lim.Blocked, "AGENT_MAIL_ALERT_BLOCKED"
+				kind, limit, env = "blocked", lim.Blocked, "SWITCHBOARD_ALERT_BLOCKED"
 			}
 			if limit <= 0 || time.Duration(c.Seconds)*time.Second < limit {
 				continue
