@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -375,5 +376,54 @@ func TestPermissionConcurrentAnswersAndSweepsActOnce(t *testing.T) {
 	}
 	if total != 2 { // team/worker-1 and team/worker-2, once each
 		t.Fatalf("offline notices from concurrent sweeps: %d", total)
+	}
+}
+
+func TestGlobalRoleOptionActsAsNumberedRole(t *testing.T) {
+	h := newCLIHarnessWith(t, func(s *Server) {
+		if _, err := s.db.Exec(`INSERT INTO roles VALUES('team/worker',?,'now')`, workerToken); err != nil {
+			t.Fatal(err)
+		}
+	})
+	f := filepath.Join(h.dir, "worker.token")
+	if err := os.WriteFile(f, []byte(workerToken), 0600); err != nil {
+		t.Fatal(err)
+	}
+	h.tokens["team/worker"] = f
+	h.configure(nil, "team/worker")
+	h.configure(nil, "a")
+	h.mustRun(nil, "send", "--to", "team/worker-2", "--subject", "for two", "--body", "x")
+	h.configure(nil, "team/worker")
+	out := h.mustRun(nil, "--role", "team/worker-2", "inbox", "--json")
+	var msgs []Message
+	if err := json.Unmarshal([]byte(out), &msgs); err != nil || len(msgs) != 1 {
+		t.Fatalf("inbox as -2: %q", out)
+	}
+	id := itoa(msgs[0].ID)
+	// Without the role the base is refused with a pointer to the right role.
+	if r := h.run(nil, "read", id); r.code != 1 || !strings.Contains(r.stderr, "--role team/worker-2") {
+		t.Fatalf("read as base: %d %s", r.code, r.stderr)
+	}
+	h.mustRun([]string{"AGENT_MAIL_ROLE=team/worker-2"}, "read", id)
+	if out = h.mustRun(nil, "--role=team/worker-2", "inbox", "--status", "read", "--json"); !strings.Contains(out, "for two") {
+		t.Fatalf("state not changed for -2: %q", out)
+	}
+	// --role wins over the env; both must stay under the profile's base.
+	if out = h.mustRun([]string{"AGENT_MAIL_ROLE=team/worker-7"}, "--role", "team/worker-2", "inbox", "--json"); !strings.Contains(out, "for two") {
+		t.Fatalf("--role over env: %q", out)
+	}
+	for _, c := range []struct {
+		env  []string
+		args []string
+	}{
+		{nil, []string{"--role", "team/other-2", "inbox"}},
+		{nil, []string{"--role", "a", "inbox"}},
+		{nil, []string{"--role", "team/worker-0", "inbox"}},
+		{[]string{"AGENT_MAIL_ROLE=b"}, []string{"inbox"}},
+		{nil, []string{"--role"}},
+	} {
+		if r := h.run(c.env, c.args...); r.code != exitUsage {
+			t.Fatalf("%v %v: %d %s", c.env, c.args, r.code, r.stderr)
+		}
 	}
 }

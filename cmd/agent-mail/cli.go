@@ -212,6 +212,13 @@ func dispatch(args []string) (int, error) {
 			profileFlag, args = args[1], args[2:]
 		case strings.HasPrefix(a, "--profile="):
 			profileFlag, args = strings.TrimPrefix(a, "--profile="), args[1:]
+		case a == "--role":
+			if len(args) < 2 {
+				return 0, usagef("--role requires a value")
+			}
+			roleFlag, args = args[1], args[2:]
+		case strings.HasPrefix(a, "--role="):
+			roleFlag, args = strings.TrimPrefix(a, "--role="), args[1:]
 		default:
 			return 0, usagef("unknown option %s", a)
 		}
@@ -381,7 +388,7 @@ func hasHelp(args []string) bool {
 
 func printHelp() {
 	var b strings.Builder
-	b.WriteString("agent-mail — role addressed durable mailbox\n\nUsage: agent-mail [--profile NAME] <command> [options]\n\nCommands:\n")
+	b.WriteString("agent-mail — role addressed durable mailbox\n\nUsage: agent-mail [--profile NAME] [--role ROLE] <command> [options]\n\nCommands:\n")
 	for _, c := range commands {
 		label := c.name
 		if c.args != "" {
@@ -402,6 +409,8 @@ Examples:
 Use 'agent-mail <command> --help' for command options.
 --profile NAME may come before or after the command; it overrides AGENT_MAIL_PROFILE.
 A named profile that has no saved config is an error.
+--role ROLE (before the command) or AGENT_MAIL_ROLE acts as a numbered role of the
+profile's role, e.g. team/worker-2 for a team/worker profile (--role wins over the env).
 
 Exit codes: 0 success, 1 error, 2 usage error (unknown command or option), 3 wait or events found no mail.
 `)
@@ -491,7 +500,10 @@ func readConfig() Config {
 	if v := os.Getenv("AGENT_MAIL_ENDPOINT"); v != "" {
 		c.Endpoint = v
 	}
-	if v := os.Getenv("AGENT_MAIL_ROLE"); v != "" {
+	// With a saved role and no AGENT_MAIL_TOKEN, AGENT_MAIL_ROLE picks a
+	// numbered role of the saved one (see actingRole); otherwise it is the
+	// role itself, as in environment-only setups.
+	if v := os.Getenv("AGENT_MAIL_ROLE"); v != "" && (c.Role == "" || os.Getenv("AGENT_MAIL_TOKEN") != "") {
 		c.Role = v
 	}
 	if v := os.Getenv("AGENT_MAIL_TOKEN"); v != "" {
@@ -513,7 +525,35 @@ func loadConfig() (Config, error) {
 	if c.Endpoint == "" || c.Token == "" || c.Role == "" {
 		return c, fmt.Errorf("profile %q is not configured (%s); run: agent-mail config set --endpoint URL --role ROLE --token-file PATH", profileName(), p)
 	}
+	role, err := actingRole(c.Role)
+	if err != nil {
+		return c, err
+	}
+	c.Role = role
 	return c, nil
+}
+
+// roleFlag holds the global --role value. It wins over AGENT_MAIL_ROLE.
+var roleFlag string
+
+// actingRole is the X-Agent-Mail-Role to send: --role, else AGENT_MAIL_ROLE,
+// else the profile's role. An override must be the profile role itself or a
+// numbered role <base>-N under it, since the profile's token covers only those.
+func actingRole(profileRole string) (string, error) {
+	want, from := roleFlag, "--role"
+	if want == "" && os.Getenv("AGENT_MAIL_TOKEN") == "" {
+		want, from = os.Getenv("AGENT_MAIL_ROLE"), "AGENT_MAIL_ROLE"
+	}
+	if want == "" || want == profileRole {
+		return profileRole, nil
+	}
+	base, _, ok := splitSlot(want)
+	if ok {
+		if pb, _, numbered := splitSlot(profileRole); base == profileRole || numbered && base == pb {
+			return want, nil
+		}
+	}
+	return "", usagef("%s %q must be %s or %s-N (the profile's role or one of its numbered roles)", from, want, profileRole, profileRole)
 }
 
 func cliConfig(p parsedArgs) (int, error) {

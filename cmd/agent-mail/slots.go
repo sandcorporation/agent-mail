@@ -145,6 +145,24 @@ func mailbox(q queryer, name string) (string, bool) {
 	return name, true
 }
 
+// otherSlotMailbox returns the mailbox message id belongs to when that is
+// another mailbox of the caller's base (for example mail of <base>-2 while
+// the header names <base>). Mailboxes of one base are kept apart: such
+// requests are refused with 403 naming the role to act as, rather than
+// showing the body while the state stays with the other mailbox.
+func (s *Server) otherSlotMailbox(p principal, id int64) (string, bool) {
+	m, err := s.get(id)
+	if err != nil || m.Recipient == p.Role || m.Sender == p.Role {
+		return "", false
+	}
+	for _, box := range []string{m.Recipient, m.Sender} {
+		if baseOf(s.db, box) == p.Base {
+			return box, true
+		}
+	}
+	return "", false
+}
+
 // slotRequest is the body of the slot endpoints. Machine and Directory form
 // the identity; session, label and parent are stored for display, and the
 // label also routes label mail (see labels.go). State, ContextTokens and LastTurnAt are the presence report

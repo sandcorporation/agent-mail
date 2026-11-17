@@ -223,8 +223,28 @@ func TestSlotUnnumberedAddressIsSlotOne(t *testing.T) {
 	if w := callAs(s, "GET", "/api/messages?status=acknowledged", workerToken, "team/worker", nil); !strings.Contains(w.Body.String(), "to-base") {
 		t.Fatalf("base sees ack: %s", w.Body)
 	}
-	if w := callAs(s, "POST", "/api/messages/3/ack", workerToken, "team/worker-1", nil); w.Code != 404 {
-		t.Fatalf("-1 must not touch -2 mail: %d", w.Code)
+	// Mailboxes of one base stay apart: -1 (or the base header) gets a clear
+	// 403 naming the role to use, with no body and no state change.
+	for _, path := range []string{"/api/messages/3", "/api/messages/3/ack", "/api/messages/3/read", "/api/messages/3/complete", "/api/messages/3/reply"} {
+		for _, role := range []string{"team/worker-1", "team/worker"} {
+			w := callAs(s, "POST", path, workerToken, role, map[string]any{"body": "x"})
+			if strings.HasSuffix(path, "/3") {
+				w = callAs(s, "GET", path, workerToken, role, nil)
+			}
+			if w.Code != 403 || !strings.Contains(w.Body.String(), "team/worker-2") || strings.Contains(w.Body.String(), "to-two") {
+				t.Fatalf("%s as %s on -2 mail: %d %s", path, role, w.Code, w.Body)
+			}
+		}
+	}
+	if w := callAs(s, "GET", "/api/messages?status=pending", workerToken, "team/worker-2", nil); !strings.Contains(w.Body.String(), "to-two") {
+		t.Fatalf("-2 mail changed state: %s", w.Body)
+	}
+	if w := callAs(s, "GET", "/api/messages/3", workerToken, "team/worker-2", nil); w.Code != 200 || decodeMessage(t, w.Body.Bytes()).Status != "read" {
+		t.Fatalf("read as -2: %d %s", w.Code, w.Body)
+	}
+	// Mail of another base stays 404.
+	if w := callAs(s, "GET", "/api/messages/3", "secret-b", "b", nil); w.Code != 404 {
+		t.Fatalf("other base: %d", w.Code)
 	}
 	// A reply from -1 goes out as the base, so answers come back to slot 1.
 	w := callAs(s, "POST", "/api/messages", workerToken, "team/worker-1", map[string]any{"recipient": "a", "subject": "hi"})

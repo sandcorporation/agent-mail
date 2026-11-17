@@ -286,6 +286,10 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid id", 400)
 			return
 		}
+		if box, other := s.otherSlotMailbox(who, id); other {
+			http.Error(w, "message belongs to "+box+"; send X-Agent-Mail-Role: "+box+" (CLI: agent-mail --role "+box+" or AGENT_MAIL_ROLE)", 403)
+			return
+		}
 		if len(parts) == 2 && r.Method == "GET" {
 			s.read(w, r, role, id)
 			return
