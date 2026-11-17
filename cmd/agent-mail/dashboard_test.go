@@ -13,9 +13,9 @@ func TestDashboardTabsSkeleton(t *testing.T) {
 	if !strings.Contains(body, `role="tablist"`) {
 		t.Fatal("dashboard has no tablist")
 	}
-	// Tab order matters: 세션, 메일, 권한 요청, 질문, 설정.
+	// Tab order matters: 세션, 지표, 메일, 권한 요청, 질문, 설정.
 	last := -1
-	for _, name := range []string{"sessions", "mail", "permissions", "questions", "settings"} {
+	for _, name := range []string{"sessions", "metrics", "mail", "permissions", "questions", "settings"} {
 		tab := `id="tab-` + name + `" data-tab="` + name + `" aria-controls="panel-` + name + `"`
 		i := strings.Index(body, tab)
 		if i < 0 {
@@ -40,6 +40,26 @@ func TestDashboardTabsSkeleton(t *testing.T) {
 	for _, banned := range []string{"innerHTML", "insertAdjacentHTML"} {
 		if strings.Contains(body, banned) {
 			t.Fatalf("dashboard uses %s", banned)
+		}
+	}
+}
+
+func TestDashboardMetricsTab(t *testing.T) {
+	w := httptest.NewRecorder()
+	dashboard(w, httptest.NewRequest("GET", "/", nil))
+	body := w.Body.String()
+	for _, want := range []string{
+		`<span class="tab-name">지표</span>`,
+		"tabLoaders.metrics=loadMetrics",
+		"api('metrics?days='+metricsDays)",
+		`id="metDays7" data-days="7"`, `id="metDays30" data-days="30"`, `id="reloadMetrics"`,
+		"document.createElementNS(SVG,tag)", "'http://www.w3.org/2000/svg'",
+		"setTabCount('metrics',", "p.over_threshold", "t.error_s", "t.blocked_s",
+		"function openThread(id)", "$('thread').value=id",
+		`id="mFirstByRecipient"`, `id="mPending"`, `id="mThreads"`, `id="mStates"`, `id="mCurrent"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("metrics tab missing %q", want)
 		}
 	}
 }
