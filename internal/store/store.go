@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"log"
 	"os"
 	"path/filepath"
@@ -64,6 +65,11 @@ func Init(db *sql.DB) error {
 		return e
 	}
 	if e = migrateAlerts(db); e != nil {
+		return e
+	}
+	// Before the hash migration, so a backup it writes on this start (after a
+	// rollback to a binary from before hashing) survives until the next one.
+	if e = dropPlainBackup(db); e != nil {
 		return e
 	}
 	if e = migrateRoleTokens(db); e != nil {
@@ -123,8 +129,8 @@ func TokenHash(token string) string {
 // a failure part way leaves the table as it was. Rows that already carry the
 // prefix are left alone, so running it again changes nothing.
 //
-// roles_plain_backup holds plain tokens; drop it in a later release once the
-// hashed tokens are known to work.
+// roles_plain_backup holds plain tokens. dropPlainBackup removes it on the
+// next start, after copying the database file aside.
 func migrateRoleTokens(db *sql.DB) error {
 	has, err := HasColumn(db, "roles", "revoked_at")
 	if err != nil {
@@ -177,6 +183,66 @@ func migrateRoleTokens(db *sql.DB) error {
 	}
 	log.Printf("role tokens: hashed %d plain rows; plain copies kept in roles_plain_backup", len(plain))
 	return nil
+}
+
+// now is the clock for names of copies made before a drop; tests replace it.
+var now = time.Now
+
+// dropPlainBackup removes roles_plain_backup, the plain tokens kept by
+// migrateRoleTokens. It first copies the whole database next to its file as
+// <file>.pre-drop-plain-backup-<UTC time>, mode 0600, never overwriting a file
+// already there. When the copy cannot be made it logs a line, keeps the table
+// and lets the start go on; the next start tries again. A database without
+// the table is left alone.
+func dropPlainBackup(db *sql.DB) error {
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='roles_plain_backup'`).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		return nil
+	}
+	var rowCount int
+	if err := db.QueryRow(`SELECT count(*) FROM roles_plain_backup`).Scan(&rowCount); err != nil {
+		return err
+	}
+	copyPath, err := copyBeforeDrop(db)
+	if err != nil {
+		log.Printf("role tokens: kept roles_plain_backup; copy before drop failed: %v", err)
+		return nil
+	}
+	if _, err = db.Exec(`DROP TABLE roles_plain_backup`); err != nil {
+		return err
+	}
+	log.Printf("role tokens: dropped roles_plain_backup (%d rows); copy before drop at %s", rowCount, copyPath)
+	return nil
+}
+
+func copyBeforeDrop(db *sql.DB) (string, error) {
+	var seq int
+	var name, file string
+	if err := db.QueryRow(`SELECT seq,name,file FROM pragma_database_list WHERE name='main'`).Scan(&seq, &name, &file); err != nil {
+		return "", err
+	}
+	if file == "" {
+		return "", errors.New("the database has no file")
+	}
+	path := file + ".pre-drop-plain-backup-" + now().UTC().Format("20060102T150405Z")
+	// Create the file first, so it never exists with a wider mode and an
+	// existing one is never overwritten; VACUUM INTO accepts an empty file.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return "", err
+	}
+	f.Close()
+	if _, err = db.Exec(`VACUUM INTO ?`, path); err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	if err = os.Chmod(path, 0600); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 // LabelColumns are added to messages in place; see migrateLabels.

@@ -57,7 +57,6 @@ func tableExists(db *sql.DB, name string) bool {
 
 func TestRoleTokenMigrationHashesBacksUpAndKeepsClients(t *testing.T) {
 	db := legacyRolesDB(t)
-	var backedUp string
 	// Every start runs the migration; the second run must change nothing.
 	for run := 0; run < 2; run++ {
 		if err := store.Init(db); err != nil {
@@ -73,16 +72,16 @@ func TestRoleTokenMigrationHashesBacksUpAndKeepsClients(t *testing.T) {
 				t.Fatalf("run %d %s=%q want %q", run, role, got[role], hash)
 			}
 		}
+		if run == 1 {
+			// The next start copies the database aside and drops the backup.
+			if tableExists(db, "roles_plain_backup") {
+				t.Fatal("second run kept roles_plain_backup")
+			}
+			continue
+		}
 		backup := roleTokens(t, db, "roles_plain_backup")
 		if len(backup) != 2 || backup["a"] != "secret-a" || backup["b"] != "secret-b" {
 			t.Fatalf("run %d backup=%v", run, backup)
-		}
-		var at string
-		_ = db.QueryRow(`SELECT backed_up_at FROM roles_plain_backup WHERE role='a'`).Scan(&at)
-		if run == 0 {
-			backedUp = at
-		} else if at != backedUp {
-			t.Fatalf("second run rewrote the backup: %q then %q", backedUp, at)
 		}
 	}
 	s := &Server{db: db}
