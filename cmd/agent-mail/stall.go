@@ -30,7 +30,7 @@ import (
 
 // systemSender is the sender of notices. Nobody can authenticate as it or as
 // a numbered form of it (see reservedRole), and mail to it is refused.
-const systemSender = "agent-mail/system"
+const systemSender = "switchboard/system"
 
 const (
 	defaultSweepInterval = 30 * time.Second
@@ -42,11 +42,11 @@ const (
 // of it. Such names never authenticate and never receive mail, even when an
 // old database or AGENT_MAIL_TOKENS holds a role row by that name.
 func reservedRole(name string) bool {
-	if name == systemSender {
+	if isSystemSender(name) {
 		return true
 	}
 	base, _, ok := splitSlot(name)
-	return ok && base == systemSender
+	return ok && isSystemSender(base)
 }
 
 func (s *Server) sweepInterval() time.Duration {
@@ -71,28 +71,29 @@ func configureStall(s *Server, getenv func(string) string) error {
 		min  time.Duration
 		hint string
 	}{
-		{"AGENT_MAIL_SWEEP_INTERVAL", &s.sweepEvery, time.Second, "30s"},
-		{"AGENT_MAIL_LABEL_STALL", &s.labelStall, time.Second, "10m"},
-		{"AGENT_MAIL_PERMISSION_TTL", &s.permissionTTL, time.Second, "10m"},
+		{"SWEEP_INTERVAL", &s.sweepEvery, time.Second, "30s"},
+		{"LABEL_STALL", &s.labelStall, time.Second, "10m"},
+		{"PERMISSION_TTL", &s.permissionTTL, time.Second, "10m"},
 	} {
-		v := getenv(d.name)
+		v, from := envAliasFrom(getenv, d.name)
 		if v == "" {
 			continue
 		}
 		t, err := time.ParseDuration(v)
 		if err != nil || t < d.min {
-			return fmt.Errorf("%s must be a duration of at least %s such as %s", d.name, d.min, d.hint)
+			return fmt.Errorf("%s must be a duration of at least %s such as %s", from, d.min, d.hint)
 		}
 		*d.dst = t
 	}
 	s.bossRoles = map[string]bool{}
-	for _, r := range strings.Split(getenv("AGENT_MAIL_BOSS_ROLES"), ",") {
+	roles, from := envAliasFrom(getenv, "BOSS_ROLES")
+	for _, r := range strings.Split(roles, ",") {
 		r = strings.TrimSpace(r)
 		if r == "" {
 			continue
 		}
 		if !validRole(r) || reservedRole(r) {
-			return fmt.Errorf("AGENT_MAIL_BOSS_ROLES: invalid role %q", r)
+			return fmt.Errorf("%s: invalid role %q", from, r)
 		}
 		s.bossRoles[r] = true
 	}

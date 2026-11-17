@@ -57,7 +57,8 @@ type Server struct {
 	permissionTTL    time.Duration    // AGENT_MAIL_PERMISSION_TTL; 0 means defaultPermissionTTL
 	bossRoles        map[string]bool  // AGENT_MAIL_BOSS_ROLES; may answer any permission request
 	discord          *discordNotifier // AGENT_MAIL_DISCORD_WEBHOOK; nil sends no question notices
-	alerts           *alertThresholds // AGENT_MAIL_ALERT_*; nil means defaultAlertThresholds
+	alerts           *alertThresholds // SWITCHBOARD_ALERT_*; nil means defaultAlertThresholds
+	oldHeaders       aliasCounter     // requests that used an X-Agent-Mail-* header
 }
 
 var version = "dev"
@@ -73,25 +74,25 @@ func runServer() {
 	if e = initSchema(db); e != nil {
 		log.Fatal(e)
 	}
-	s := &Server{db: db, tokens: map[string]string{}, adminProxyToken: os.Getenv("AGENT_MAIL_ADMIN_PROXY_TOKEN"), done: make(chan struct{})}
-	if v := os.Getenv("AGENT_MAIL_SSE_KEEPALIVE"); v != "" {
+	s := &Server{db: db, tokens: map[string]string{}, adminProxyToken: envAlias("ADMIN_PROXY_TOKEN"), done: make(chan struct{})}
+	if v, from := envAliasFrom(os.Getenv, "SSE_KEEPALIVE"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil || d <= 0 {
-			log.Fatal("AGENT_MAIL_SSE_KEEPALIVE must be a positive duration such as 20s")
+			log.Fatal(from + " must be a positive duration such as 20s")
 		}
 		s.eventKeepAlive = d
 	}
-	if v := os.Getenv("AGENT_MAIL_POLL_MAX"); v != "" {
+	if v, from := envAliasFrom(os.Getenv, "POLL_MAX"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n <= 0 {
-			log.Fatal("AGENT_MAIL_POLL_MAX must be a positive whole number of seconds such as 55")
+			log.Fatal(from + " must be a positive whole number of seconds such as 55")
 		}
 		s.pollMax = time.Duration(n) * time.Second
 	}
-	if v := os.Getenv("AGENT_MAIL_SLOT_LEASE"); v != "" {
+	if v, from := envAliasFrom(os.Getenv, "SLOT_LEASE"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil || d < time.Second {
-			log.Fatal("AGENT_MAIL_SLOT_LEASE must be a duration of at least 1s such as 3m")
+			log.Fatal(from + " must be a duration of at least 1s such as 3m")
 		}
 		s.slotLease = d
 	}
@@ -105,7 +106,7 @@ func runServer() {
 		log.Fatal(e)
 	}
 	configureDiscord(s, os.Getenv)
-	for _, pair := range strings.Split(os.Getenv("AGENT_MAIL_TOKENS"), ",") {
+	for _, pair := range strings.Split(envAlias("TOKENS"), ",") {
 		p := strings.SplitN(strings.TrimSpace(pair), "=", 2)
 		if len(p) == 2 && p[0] != "" && p[1] != "" {
 			s.tokens[p[0]] = p[1]
@@ -113,6 +114,9 @@ func runServer() {
 	}
 	if e = migrateConfiguredRoles(s); e != nil {
 		log.Fatal("cannot migrate configured roles")
+	}
+	if old := oldEnvNames(); len(old) > 0 {
+		log.Printf("old environment names in use (rename AGENT_MAIL_* to SWITCHBOARD_*): %s", strings.Join(old, ", "))
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", health)
@@ -213,7 +217,7 @@ func normalizePriority(p string) (string, bool) {
 func migrateConfiguredRoles(s *Server) error {
 	for role, token := range s.tokens {
 		if reservedRole(role) {
-			log.Printf("AGENT_MAIL_TOKENS: %s is reserved for system notices; ignored", role)
+			log.Printf("SWITCHBOARD_TOKENS: %s is reserved for system notices; ignored", role)
 			continue
 		}
 		if _, err := s.db.Exec(`INSERT OR IGNORE INTO roles(role,token,created_at) VALUES(?,?,?)`, role, token, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
@@ -276,7 +280,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if path == "metrics" {
-		s.metricsAPI(w, r, s.isBoss(who))
+		s.metricsAPI(w, r, s.isBoss(who), false)
 		return
 	}
 	if path == "progress" {
@@ -318,7 +322,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if box, other := s.otherSlotMailbox(who, id); other {
-			http.Error(w, "message belongs to "+box+"; send X-Agent-Mail-Role: "+box+" (CLI: agent-mail --role "+box+" or AGENT_MAIL_ROLE)", 403)
+			http.Error(w, "message belongs to "+box+"; send X-Switchboard-Role: "+box+" (CLI: switchboard --role "+box+" or SWITCHBOARD_ROLE)", 403)
 			return
 		}
 		if len(parts) == 2 && r.Method == "GET" {
@@ -344,7 +348,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 // must remain private; caller-supplied identity headers are never trusted.
 // Writes (PUT, POST, DELETE) also need the dashboard CSRF guard.
 func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
-	provided := r.Header.Get("X-Agent-Mail-Admin")
+	provided := s.header(r, "Admin")
 	if s.adminProxyToken == "" || len(provided) != len(s.adminProxyToken) || subtle.ConstantTimeCompare([]byte(provided), []byte(s.adminProxyToken)) != 1 {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -352,7 +356,7 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 	case http.MethodPut, http.MethodPost, http.MethodDelete:
-		if !adminWriteAllowed(r) {
+		if !adminWriteAllowed(r, s.header(r, "Dashboard")) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -401,7 +405,7 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 	case "presence":
 		s.presenceAPI(w, r)
 	case "metrics":
-		s.metricsAPI(w, r, true)
+		s.metricsAPI(w, r, true, true)
 	case "progress":
 		s.progressAPI(w, r, true)
 	case "messages":
@@ -509,7 +513,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "registration failed", 500)
 		return
 	}
-	enrollment := os.Getenv("AGENT_MAIL_ENROLLMENT_TOKEN")
+	enrollment := envAlias("ENROLLMENT_TOKEN")
 	provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if len(req.Credential) < 24 || enrollment == "" || len(enrollment) != len(provided) || subtle.ConstantTimeCompare([]byte(enrollment), []byte(provided)) != 1 {
 		http.Error(w, "enrollment authorization required", 401)

@@ -230,7 +230,7 @@ func (s *Server) progress() (progressReport, error) {
 	}
 
 	// Last activity: the newest mail of every sender.
-	last, err := s.progressMailQuery(`m.id IN (SELECT MAX(id) FROM messages WHERE sender<>? GROUP BY sender)`, systemSender)
+	last, err := s.progressMailQuery(`m.id IN (SELECT MAX(id) FROM messages WHERE sender NOT IN (?,?) GROUP BY sender)`, systemSender, legacySystemSender)
 	if err != nil {
 		return out, err
 	}
@@ -254,7 +254,7 @@ func (s *Server) progress() (progressReport, error) {
 		}
 	}
 	if len(bossBoxes) > 0 {
-		reports, err := s.progressMailQuery(`m.id IN (SELECT MAX(id) FROM messages WHERE sender<>? AND recipient IN (`+placeholders(len(bossBoxes))+`) GROUP BY sender)`, append([]any{systemSender}, anySlice(bossBoxes)...)...)
+		reports, err := s.progressMailQuery(`m.id IN (SELECT MAX(id) FROM messages WHERE sender NOT IN (?,?) AND recipient IN (`+placeholders(len(bossBoxes))+`) GROUP BY sender)`, append([]any{systemSender, legacySystemSender}, anySlice(bossBoxes)...)...)
 		if err != nil {
 			return out, err
 		}
@@ -274,7 +274,7 @@ func (s *Server) progress() (progressReport, error) {
 	}
 	var bossSenders []string
 	for _, r := range senders {
-		if r != systemSender && isBossName(r) {
+		if !isSystemSender(r) && isBossName(r) {
 			bossSenders = append(bossSenders, r)
 		}
 	}

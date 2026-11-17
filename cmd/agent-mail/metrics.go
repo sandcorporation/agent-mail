@@ -52,17 +52,18 @@ func parseAlertThresholds(getenv func(string) string) (alertThresholds, error) {
 		name string
 		dst  *time.Duration
 	}{
-		{"AGENT_MAIL_ALERT_PENDING", &t.Pending},
-		{"AGENT_MAIL_ALERT_ERROR", &t.Error},
-		{"AGENT_MAIL_ALERT_BLOCKED", &t.Blocked},
+		{"ALERT_PENDING", &t.Pending},
+		{"ALERT_ERROR", &t.Error},
+		{"ALERT_BLOCKED", &t.Blocked},
 	} {
-		v := strings.TrimSpace(getenv(d.name))
+		v, from := envAliasFrom(getenv, d.name)
+		v = strings.TrimSpace(v)
 		if v == "" {
 			continue
 		}
 		p, err := time.ParseDuration(v)
 		if err != nil || p < 0 {
-			return t, fmt.Errorf("%s must be a duration such as 2h, or 0 to disable", d.name)
+			return t, fmt.Errorf("%s must be a duration such as 2h, or 0 to disable", from)
 		}
 		*d.dst = p
 	}
@@ -105,6 +106,7 @@ type metricsReport struct {
 	Threads    threadMetrics     `json:"threads"`
 	Sessions   sessionMetrics    `json:"sessions"`
 	Thresholds thresholdSeconds  `json:"thresholds"`
+	Aliases    *aliasUse         `json:"aliases,omitempty"` // admin view only
 }
 
 type metricsWindow struct {
@@ -194,14 +196,14 @@ type thresholdSeconds struct {
 }
 
 // metricsAPI serves GET /api/metrics (boss roles) and, with boss checked by
-// the caller as true, GET /api/admin/metrics.
-func (s *Server) metricsAPI(w http.ResponseWriter, r *http.Request, allowed bool) {
+// the caller as true, GET /api/admin/metrics. admin adds the alias-use block.
+func (s *Server) metricsAPI(w http.ResponseWriter, r *http.Request, allowed, admin bool) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	if !allowed {
-		http.Error(w, "metrics are for boss roles (AGENT_MAIL_BOSS_ROLES)", http.StatusForbidden)
+		http.Error(w, "metrics are for boss roles (SWITCHBOARD_BOSS_ROLES)", http.StatusForbidden)
 		return
 	}
 	days, err := parseMetricsDays(r.URL.Query().Get("days"))
@@ -213,6 +215,10 @@ func (s *Server) metricsAPI(w http.ResponseWriter, r *http.Request, allowed bool
 	if err != nil {
 		http.Error(w, "query failed", 500)
 		return
+	}
+	if admin {
+		a := s.aliasUse()
+		out.Aliases = &a
 	}
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, out)
@@ -349,7 +355,7 @@ func firstReplies(msgs []flowMail, base func(string) string, isBoss func(string)
 		if root.TaskID != "" {
 			taskSeen[root.TaskID] = true
 		}
-		if root.Sender == systemSender || root.ThreadID != 0 || root.ReplyTo != 0 || continued {
+		if isSystemSender(root.Sender) || root.ThreadID != 0 || root.ReplyTo != 0 || continued {
 			continue
 		}
 		to := base(root.Recipient)
@@ -430,7 +436,7 @@ func threadRoundTrips(msgs []flowMail, base func(string) string) threadMetrics {
 	byThread := map[int64][]flowMail{}
 	var order []int64
 	for _, m := range msgs {
-		if m.Sender == systemSender || m.Recipient == systemSender {
+		if isSystemSender(m.Sender) || isSystemSender(m.Recipient) {
 			continue
 		}
 		if _, ok := byThread[m.thread()]; !ok {
@@ -493,7 +499,7 @@ func threadRoundTrips(msgs []flowMail, base func(string) string) threadMetrics {
 // pendingAges lists, per recipient role, the pending mail not sent by the
 // system as of now, oldest first. over is the pending threshold (0: never).
 func (s *Server) pendingAges(now time.Time, over time.Duration) ([]pendingAge, error) {
-	rows, err := s.db.Query(`SELECT m.recipient,m.created_at FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=m.recipient WHERE m.sender<>? AND COALESCE(rs.status,m.status,'pending')='pending'`, systemSender)
+	rows, err := s.db.Query(`SELECT m.recipient,m.created_at FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=m.recipient WHERE m.sender NOT IN (?,?) AND COALESCE(rs.status,m.status,'pending')='pending'`, systemSender, legacySystemSender)
 	if err != nil {
 		return nil, err
 	}

@@ -101,9 +101,10 @@ func resolveQuestionSettingsIn(q queryer, role string) (questionSettings, error)
 
 // adminWriteAllowed is the CSRF guard for every non-GET admin request. The
 // custom header forces a CORS preflight, which a cross-site page cannot pass.
-func adminWriteAllowed(r *http.Request) bool {
+// dashboard is the X-Switchboard-Dashboard (or old X-Agent-Mail-Dashboard) value.
+func adminWriteAllowed(r *http.Request, dashboard string) bool {
 	ct := strings.TrimSpace(strings.SplitN(r.Header.Get("Content-Type"), ";", 2)[0])
-	if !strings.EqualFold(ct, "application/json") || r.Header.Get("X-Agent-Mail-Dashboard") != "1" {
+	if !strings.EqualFold(ct, "application/json") || dashboard != "1" {
 		return false
 	}
 	site := r.Header.Get("Sec-Fetch-Site")

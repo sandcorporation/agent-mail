@@ -84,7 +84,7 @@ func TestProgressCommandText(t *testing.T) {
 		t.Fatalf("text output:\n%s\nwant:\n%s", out, want)
 	}
 	f := func() *http.Request { api.mu.Lock(); defer api.mu.Unlock(); return api.reqs[len(api.reqs)-1] }
-	if r := f(); r.Header.Get("Authorization") != "Bearer secret-a" || r.Header.Get("X-Agent-Mail-Role") != "a" || r.URL.RawQuery != "" {
+	if r := f(); r.Header.Get("Authorization") != "Bearer secret-a" || r.Header.Get("X-Switchboard-Role") != "a" || r.URL.RawQuery != "" {
 		t.Fatalf("request: %q %v", r.URL.RawQuery, r.Header)
 	}
 	if out := h.mustRun(nil, "help"); !strings.Contains(out, "progress") {

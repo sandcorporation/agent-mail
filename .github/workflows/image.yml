@@ -1,5 +1,9 @@
 # Deployment image: built for linux/amd64 on a GitHub-hosted runner and pushed to GHCR as
 #   ghcr.io/sandcorporation/agent-mail:<40-character commit sha>
+# and copied to the new name with the same tag:
+#   ghcr.io/sandcorporation/switchboard:<40-character commit sha>
+# Jenkins keeps pulling the old name until the host move (#71 §5-6). The copy may fail
+# (for example before the new package exists) without failing the deployment image.
 # promote.yml calls this on every main push. Jenkins later pulls the image of the production head; it never builds.
 #
 # Security (public repository):
@@ -26,6 +30,7 @@ jobs:
     timeout-minutes: 20
     env:
       IMAGE_REPO: ghcr.io/sandcorporation/agent-mail
+      NEW_IMAGE_REPO: ghcr.io/sandcorporation/switchboard
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -56,3 +61,6 @@ jobs:
             VERSION=${{ steps.ver.outputs.short }}
           cache-from: type=registry,ref=${{ env.IMAGE_REPO }}:buildcache
           cache-to: type=registry,ref=${{ env.IMAGE_REPO }}:buildcache,mode=max
+      - name: Copy to the new image name
+        continue-on-error: true
+        run: docker buildx imagetools create --tag "$NEW_IMAGE_REPO:$GITHUB_SHA" "$IMAGE_REPO:$GITHUB_SHA"

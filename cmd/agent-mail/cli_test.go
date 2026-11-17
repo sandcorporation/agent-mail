@@ -55,6 +55,7 @@ func (h *cliHarness) run(env []string, args ...string) cliResult {
 	cmd := exec.Command(os.Args[0], "-test.run=^TestCLIHelperProcess$")
 	argJSON, _ := json.Marshal(args)
 	cmd.Env = append(os.Environ(), "AGENT_MAIL_TEST_CLI=1", "AGENT_MAIL_CONFIG_DIR="+h.dir, "AGENT_MAIL_PROFILE=", "AGENT_MAIL_TEST_ARGS="+string(argJSON))
+	cmd.Env = append(cmd.Env, clearNewEnv...)
 	cmd.Env = append(cmd.Env, env...)
 	var out, errOut strings.Builder
 	cmd.Stdout, cmd.Stderr = &out, &errOut
