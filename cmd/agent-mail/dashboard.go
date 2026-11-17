@@ -298,7 +298,7 @@ table.stack tbody tr:hover td{background:none}
 </form>
 <div class="toolbar"><h2>역할</h2><button id="reloadRoles">새로 고침</button><span id="rolesNote" class="muted"></span></div>
 <div id="rolesMsg" class="msg" role="status" aria-live="polite"></div>
-<div class="wide"><table id="rolesTbl" class="stack"><thead><tr><th>역할</th><th>등록</th><th>끊은 때</th><th></th></tr></thead><tbody id="rolesTable"></tbody></table></div>
+<div class="wide"><table id="rolesTbl" class="stack"><thead><tr><th>역할</th><th>묶음</th><th>등록</th><th>끊은 때</th><th></th></tr></thead><tbody id="rolesTable"></tbody></table></div>
 </section>
 <script>
 const sessionLabel={idle:'유휴',busy:'바쁨',compacting:'compact 중',unknown:'모름',offline:'오프라인'};
@@ -843,7 +843,7 @@ async function loadRoles(){
     const body=$('rolesTable');body.replaceChildren();
     for(const v of rows){
       const tr=node('tr','');
-      for(const [label,text] of [['역할',v.role],['등록',when(v.created_at)],['끊은 때',v.revoked_at?when(v.revoked_at):'-']]){const td=node('td',text,label==='끊은 때'&&v.revoked_at?'revoked':'');td.dataset.label=label;tr.append(td)}
+      for(const [label,text] of [['역할',v.role],['묶음',v.group||'-'],['등록',when(v.created_at)],['끊은 때',v.revoked_at?when(v.revoked_at):'-']]){const td=node('td',text,label==='끊은 때'&&v.revoked_at?'revoked':'');td.dataset.label=label;tr.append(td)}
       const act=node('td','');
       const revoke=!v.revoked_at;
       const b=node('button',revoke?'끊기':'되살리기');b.type='button';
@@ -854,7 +854,7 @@ async function loadRoles(){
       };
       act.append(b);tr.append(act);body.append(tr);
     }
-    if(!rows.length)emptyRow(body,4,'역할 없음');
+    if(!rows.length)emptyRow(body,5,'역할 없음');
     const off=rows.filter(v=>v.revoked_at).length;
     $('rolesNote').textContent=rows.length+'개'+(off?' · 끊김 '+off:'');
   }catch(e){$('rolesNote').textContent=e.message}

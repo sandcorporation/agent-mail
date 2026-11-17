@@ -158,14 +158,14 @@ func loadQuestion(q queryer, id string) (questionView, error) {
 	return v, err
 }
 
-// mayAnswerQuestion: a boss, never the asker's own base.
+// mayAnswerQuestion: the asker's boss (bossesFor), never its own base.
 func (s *Server) mayAnswerQuestion(p principal, v questionView) bool {
-	return p.Base != v.askerBase && s.isBoss(p)
+	return p.Base != v.askerBase && s.isBossFor(p, v.askerBase)
 }
 
-// mayReadQuestion: the asker's base or a boss.
+// mayReadQuestion: the asker's base or the asker's boss.
 func (s *Server) mayReadQuestion(p principal, v questionView) bool {
-	return p.Base == v.askerBase || s.isBoss(p)
+	return p.Base == v.askerBase || s.isBossFor(p, v.askerBase)
 }
 
 func (s *Server) forCaller(p principal, v questionView) questionView {
@@ -363,7 +363,7 @@ func (s *Server) askQuestion(w http.ResponseWriter, r *http.Request, p principal
 	errNobody := errors.New("nobody")
 	err = s.inTx(r.Context(), func(tx *sql.Tx) error {
 		nobody := true
-		for _, boss := range sortedKeys(s.bossRoles) {
+		for _, boss := range s.bossesFor(p.Base) {
 			if b := baseOf(tx, boss); b != "" && b != p.Base {
 				nobody = false
 				break
@@ -386,7 +386,7 @@ func (s *Server) askQuestion(w http.ResponseWriter, r *http.Request, p principal
 		if told, e = questionWatchers(tx, p.Role, p.Base); e != nil {
 			return e
 		}
-		if related, e = relatedDecisions(tx, p.Base, settings.Target, v.Questions[0].Header); e != nil {
+		if related, e = relatedDecisions(tx, p.Base, settings.Target, v.Questions[0].Header, s.scopeGroup(p)); e != nil {
 			return e
 		}
 		subject := fmt.Sprintf("[질문] %s %s %s", id, p.Role, v.Questions[0].Header)
@@ -593,13 +593,15 @@ func (s *Server) withdrawQuestion(w http.ResponseWriter, r *http.Request, p prin
 	writeJSON(w, s.forCaller(p, v))
 }
 
-// visibleQuestions is the query for questions p may see: all for a boss,
-// else the caller's own base.
+// visibleQuestions is the query for questions p may see: the caller's own
+// base, and those of the askers p is boss for (answerableSQL).
 func (s *Server) visibleQuestions(p principal) (string, []any) {
-	if s.isBoss(p) {
-		return `SELECT ` + questionColumns + ` FROM questions WHERE 1=1`, nil
+	where, args := `asker_base=?`, []any{p.Base}
+	if cond, more := s.answerableSQL(p, "questions.asker_base"); cond != "" {
+		where += ` OR ` + cond
+		args = append(args, more...)
 	}
-	return `SELECT ` + questionColumns + ` FROM questions WHERE asker_base=?`, []any{p.Base}
+	return `SELECT ` + questionColumns + ` FROM questions WHERE (` + where + `)`, args
 }
 
 func (s *Server) queryQuestions(p principal, q string, args ...any) ([]questionView, error) {

@@ -298,9 +298,10 @@ func (s *Server) presence(filter string) (presenceList, error) {
 	return out, rows.Err()
 }
 
-// presenceAPI serves GET /api/presence. Any authenticated role may read every
-// session: the table holds no secrets, and a lead needs to see all sessions.
-func (s *Server) presenceAPI(w http.ResponseWriter, r *http.Request) {
+// presenceAPI serves GET /api/presence. Internal roles and global bosses read
+// every session; a group role reads its own group's (groups.go). p is nil
+// for the admin API, which sees all.
+func (s *Server) presenceAPI(w http.ResponseWriter, r *http.Request, p *principal) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", 405)
 		return
@@ -309,6 +310,9 @@ func (s *Server) presenceAPI(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "query failed", 500)
 		return
+	}
+	if p != nil {
+		out.Sessions = s.visibleSessions(*p, out.Sessions)
 	}
 	writeJSON(w, out)
 }
