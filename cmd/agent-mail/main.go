@@ -282,6 +282,10 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		s.metricsAPI(w, r, s.isBoss(who))
 		return
 	}
+	if path == "progress" {
+		s.progressAPI(w, r, s.isBoss(who))
+		return
+	}
 	if path == "slots" || strings.HasPrefix(path, "slots/") {
 		s.slotAPI(w, r, who, strings.TrimPrefix(strings.TrimPrefix(path, "slots"), "/"))
 		return
@@ -401,6 +405,8 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 		s.presenceAPI(w, r)
 	case "metrics":
 		s.metricsAPI(w, r, true)
+	case "progress":
+		s.progressAPI(w, r, true)
 	case "messages":
 		adminList(w, r, s.db)
 	case "decisions":
@@ -413,6 +419,8 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 func adminList(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	q, status, role, box := strings.TrimSpace(r.URL.Query().Get("q")), r.URL.Query().Get("status"), r.URL.Query().Get("role"), r.URL.Query().Get("box")
 	thread := strings.TrimSpace(r.URL.Query().Get("thread"))
+	task := strings.TrimSpace(r.URL.Query().Get("task"))
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	if mb, ok := mailbox(db, role); ok {
 		role = mb
 	}
@@ -449,6 +457,14 @@ func adminList(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	if thread != "" {
 		query += ` AND (m.thread_id=? OR m.id=?)`
 		args = append(args, thread, thread)
+	}
+	if task != "" {
+		query += ` AND m.task_id=?`
+		args = append(args, task)
+	}
+	if id != "" {
+		query += ` AND m.id=?`
+		args = append(args, id)
 	}
 	query += ` ORDER BY m.id DESC LIMIT 500`
 	rows, err := db.Query(query, args...)
