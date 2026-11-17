@@ -12,6 +12,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/cli"
+	"github.com/sandcorporation/agent-mail/internal/store"
 )
 
 // fakeClock is a settable clock for lease tests.
@@ -423,7 +426,7 @@ func TestSlotSchemaOnLegacyDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
-		if err = initSchema(db); err != nil {
+		if err = store.Init(db); err != nil {
 			t.Fatalf("schema run %d: %v", i, err)
 		}
 	}
@@ -463,7 +466,7 @@ func TestSlotCommands(t *testing.T) {
 	if out = h.mustRun(nil, "slots"); strings.Contains(out, "b-2") {
 		t.Fatalf("after release: %q", out)
 	}
-	if r := h.run(nil, "slot", "steal"); r.code != exitUsage {
+	if r := h.run(nil, "slot", "steal"); r.code != cli.ExitUsage {
 		t.Fatalf("unknown action: %d %s", r.code, r.stderr)
 	}
 }

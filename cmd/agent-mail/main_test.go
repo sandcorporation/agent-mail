@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
-	_ "modernc.org/sqlite"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -14,6 +13,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sandcorporation/agent-mail/internal/store"
+	"github.com/sandcorporation/agent-mail/internal/wire"
+	_ "modernc.org/sqlite"
 )
 
 func testServer(t *testing.T) *Server {
@@ -23,7 +26,7 @@ func testServer(t *testing.T) *Server {
 		t.Fatal(e)
 	}
 	db.SetMaxOpenConns(1)
-	if e = initSchema(db); e != nil {
+	if e = store.Init(db); e != nil {
 		t.Fatal(e)
 	}
 	_, e = seedRoles(db, `INSERT INTO roles(role,token,created_at) VALUES('a','secret-a','now'),('b','secret-b','now');`)
@@ -91,13 +94,13 @@ func TestDynamicRegistrationResumeAndMigration(t *testing.T) {
 	}
 	defer db.Close()
 	var token string
-	if err = db.QueryRow(`SELECT token FROM roles WHERE role='team/worker'`).Scan(&token); err != nil || token != tokenHash(payload["credential"]) {
+	if err = db.QueryRow(`SELECT token FROM roles WHERE role='team/worker'`).Scan(&token); err != nil || token != store.TokenHash(payload["credential"]) {
 		t.Fatalf("dynamic role lost after restart: %v", err)
 	}
 	if err = migrateConfiguredRoles(&Server{db: db, tokens: map[string]string{"legacy": "legacy-token"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err = db.QueryRow(`SELECT token FROM roles WHERE role='legacy'`).Scan(&token); err != nil || token != tokenHash("legacy-token") {
+	if err = db.QueryRow(`SELECT token FROM roles WHERE role='legacy'`).Scan(&token); err != nil || token != store.TokenHash("legacy-token") {
 		t.Fatalf("static migration failed: %v", err)
 	}
 }
@@ -218,36 +221,6 @@ func mustURL(t *testing.T, raw string) *url.URL {
 	return u
 }
 
-func TestHelpDoesNotReadConfigOrConnect(t *testing.T) {
-	old := os.Args
-	defer func() { os.Args = old }()
-	os.Args = []string{"agent-mail", "send", "--help"}
-	if !hasHelp(os.Args[2:]) {
-		t.Fatal("subcommand help was not recognized")
-	}
-	os.Args = []string{"agent-mail", "--help"}
-	if profileName() != "default" {
-		t.Fatal("help profile setup unexpectedly required config")
-	}
-}
-
-func TestDefaultProfileKeepsExistingConfigPath(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("AGENT_MAIL_CONFIG_DIR", dir)
-	t.Setenv("AGENT_MAIL_PROFILE", "")
-	old := os.Args
-	defer func() { os.Args = old }()
-	os.Args = []string{"agent-mail"}
-	if got, want := configPath(), filepath.Join(dir, "config.json"); got != want {
-		t.Fatalf("configPath()=%q, want %q", got, want)
-	}
-	profileFlag = "worker-a"
-	defer func() { profileFlag = "" }()
-	if got, want := configPath(), filepath.Join(dir, "worker-a.json"); got != want {
-		t.Fatalf("profile configPath()=%q, want %q", got, want)
-	}
-}
-
 func TestActualCLILifecycle(t *testing.T) {
 	s := testServer(t)
 	t.Setenv("AGENT_MAIL_ENROLLMENT_TOKEN", "enrollment-secret")
@@ -320,7 +293,7 @@ func call(s *Server, method, path, token string, body any, idem string) *httptes
 	r := httptest.NewRequest(method, path, &b)
 	r.Header.Set("Authorization", "Bearer "+token)
 	var role string
-	_ = s.db.QueryRow(`SELECT role FROM roles WHERE token=?`, tokenHash(token)).Scan(&role)
+	_ = s.db.QueryRow(`SELECT role FROM roles WHERE token=?`, store.TokenHash(token)).Scan(&role)
 	r.Header.Set("X-Agent-Mail-Role", role)
 	if idem != "" {
 		r.Header.Set("Idempotency-Key", idem)
@@ -425,10 +398,10 @@ func TestAuthorizationAndWatchCursor(t *testing.T) {
 }
 
 func TestParseIDRejectsTrailingJunk(t *testing.T) {
-	if _, err := parseID("12junk"); err == nil {
+	if _, err := wire.ParseID("12junk"); err == nil {
 		t.Fatal("expected malformed ID to be rejected")
 	}
-	if id, err := parseID("12"); err != nil || id != 12 {
+	if id, err := wire.ParseID("12"); err != nil || id != 12 {
 		t.Fatalf("parseID(12) = %d, %v", id, err)
 	}
 }

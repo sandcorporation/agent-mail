@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 // Permission requests.
@@ -56,37 +58,6 @@ func (s *Server) permissionTTLValue() time.Duration {
 	return defaultPermissionTTL
 }
 
-func migratePermissions(db *sql.DB) error {
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS permissions(id TEXT PRIMARY KEY,requester TEXT NOT NULL,requester_base TEXT NOT NULL,tool TEXT NOT NULL,summary TEXT NOT NULL,declared_parent TEXT NOT NULL DEFAULT '',parent TEXT NOT NULL DEFAULT '',parent_base TEXT NOT NULL DEFAULT '',created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,decision TEXT NOT NULL DEFAULT '',note TEXT NOT NULL DEFAULT '',answered_by TEXT NOT NULL DEFAULT '',answered_at INTEGER NOT NULL DEFAULT 0);
-CREATE INDEX IF NOT EXISTS idx_permissions_requester ON permissions(requester_base,created_at);
-CREATE INDEX IF NOT EXISTS idx_permissions_parent ON permissions(parent_base,created_at);`)
-	return err
-}
-
-// permissionView is the JSON of one request.
-type permissionView struct {
-	ID            string     `json:"id"`
-	Requester     string     `json:"requester"`
-	Tool          string     `json:"tool"`
-	Summary       string     `json:"summary"`
-	Parent        string     `json:"parent,omitempty"`         // trusted parent fixed at request time
-	IgnoredParent string     `json:"ignored_parent,omitempty"` // reported parent that was not trusted
-	Status        string     `json:"status"`                   // pending | allowed | denied | expired
-	Decision      string     `json:"decision,omitempty"`       // allow | deny
-	Note          string     `json:"note,omitempty"`
-	AnsweredBy    string     `json:"answered_by,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	ExpiresAt     time.Time  `json:"expires_at"`
-	AnsweredAt    *time.Time `json:"answered_at,omitempty"`
-	CanAnswer     bool       `json:"can_answer"` // the caller may answer it now
-
-	requesterBase, parentBase string
-}
-
-type permissionList struct {
-	Permissions []permissionView `json:"permissions"`
-}
-
 func permissionCols() string {
 	return `id,requester,requester_base,tool,summary,declared_parent,parent,parent_base,created_at,expires_at,decision,note,answered_by,answered_at`
 }
@@ -95,7 +66,7 @@ func scanPermission(sc interface{ Scan(...any) error }, now time.Time) (permissi
 	var v permissionView
 	var declared string
 	var created, expires, answered int64
-	err := sc.Scan(&v.ID, &v.Requester, &v.requesterBase, &v.Tool, &v.Summary, &declared, &v.Parent, &v.parentBase, &created, &expires, &v.Decision, &v.Note, &v.AnsweredBy, &answered)
+	err := sc.Scan(&v.ID, &v.Requester, &v.RequesterBase, &v.Tool, &v.Summary, &declared, &v.Parent, &v.ParentBase, &created, &expires, &v.Decision, &v.Note, &v.AnsweredBy, &answered)
 	if declared != "" && v.Parent == "" {
 		v.IgnoredParent = declared
 	}
@@ -126,7 +97,7 @@ func baseOf(q queryer, name string) string {
 	if roleExists(q, name) {
 		return name
 	}
-	if base, _, ok := splitSlot(name); ok && roleExists(q, base) {
+	if base, _, ok := wire.SplitSlot(name); ok && roleExists(q, base) {
 		return base
 	}
 	return ""
@@ -134,12 +105,12 @@ func baseOf(q queryer, name string) string {
 
 // mayAnswer: the requester's boss (bossesFor), never its own base.
 func (s *Server) mayAnswer(p principal, v permissionView) bool {
-	return p.Base != v.requesterBase && s.isBossFor(p, v.requesterBase)
+	return p.Base != v.RequesterBase && s.isBossFor(p, v.RequesterBase)
 }
 
 // mayRead: the requester's base, the recorded parent base, or a boss.
 func (s *Server) mayRead(p principal, v permissionView) bool {
-	return p.Base == v.requesterBase || (v.parentBase != "" && p.Base == v.parentBase) || s.mayAnswer(p, v)
+	return p.Base == v.RequesterBase || (v.ParentBase != "" && p.Base == v.ParentBase) || s.mayAnswer(p, v)
 }
 
 // permissionAPI serves /api/permissions and /api/permissions/{id}[/answer].

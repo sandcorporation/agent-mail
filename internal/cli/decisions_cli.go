@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"encoding/json"
@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"os"
 	"strings"
+
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 // decisionQueryOptions maps CLI options to GET /api/decisions parameters.
@@ -37,27 +39,27 @@ func cliDecisions(c Config, p parsedArgs) (int, error) {
 		path += "?" + q.Encode()
 	}
 	if ndjson {
-		return exitOK, streamCall(c, path, os.Stdout)
+		return ExitOK, streamCall(c, path, os.Stdout)
 	}
 	b, err := slotCall(c, "GET", path, nil)
 	if err != nil {
 		return 0, err
 	}
-	var list decisionList
+	var list wire.DecisionList
 	if err = json.Unmarshal(b, &list); err != nil {
 		return 0, fmt.Errorf("unexpected response from server: %v", err)
 	}
 	if p.bool("--json") {
 		fmt.Println(strings.TrimSpace(string(b)))
-		return exitOK, nil
+		return ExitOK, nil
 	}
 	_, err = io.WriteString(os.Stdout, formatDecisions(list.Decisions))
-	return exitOK, err
+	return ExitOK, err
 }
 
 // formatDecisions renders decisions in the order given (the server sends
 // newest first), a blank line between blocks.
-func formatDecisions(ds []decision) string {
+func formatDecisions(ds []wire.Decision) string {
 	var b strings.Builder
 	for i, d := range ds {
 		if i > 0 {

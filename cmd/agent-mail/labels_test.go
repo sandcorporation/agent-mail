@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/store"
 )
 
 const (
@@ -368,13 +370,13 @@ func TestLabelSchemaOnLegacyDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
-		if err = initSchema(db); err != nil {
+		if err = store.Init(db); err != nil {
 			t.Fatalf("schema run %d: %v", i, err)
 		}
 	}
-	for _, c := range labelColumns {
-		if has, _ := hasColumn(db, "messages", c.name); !has {
-			t.Fatalf("missing column %s", c.name)
+	for _, c := range store.LabelColumns {
+		if has, _ := store.HasColumn(db, "messages", c.Name); !has {
+			t.Fatalf("missing column %s", c.Name)
 		}
 	}
 	s := &Server{db: db, tokens: map[string]string{}}

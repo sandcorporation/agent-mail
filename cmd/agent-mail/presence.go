@@ -3,11 +3,12 @@ package main
 import (
 	"database/sql"
 	"errors"
-	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/config"
 )
 
 // Session presence.
@@ -28,87 +29,23 @@ const (
 	defaultPresenceRetain   = 24 * time.Hour
 )
 
-var presenceStates = map[string]bool{"idle": true, "busy": true, "compacting": true}
-
-// presenceKindPrefixes are the states that carry a kind: error:<kind> (the
-// turn failed) and blocked:<kind> (the session waits on a person).
-var presenceKindPrefixes = []string{"error:", "blocked:"}
-
-const maxPresenceKind = 64
-
-// validPresenceState reports whether state is idle, busy, compacting, or
-// error:<kind> / blocked:<kind> with a kind of 1-64 characters from
-// A-Z a-z 0-9 . _ -.
-func validPresenceState(state string) bool {
-	if presenceStates[state] {
-		return true
-	}
-	for _, prefix := range presenceKindPrefixes {
-		if kind, ok := strings.CutPrefix(state, prefix); ok {
-			return validPresenceKind(kind)
-		}
-	}
-	return false
-}
-
-func validPresenceKind(kind string) bool {
-	if kind == "" || len(kind) > maxPresenceKind {
-		return false
-	}
-	for _, c := range kind {
-		switch {
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '.', c == '_', c == '-':
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-// presenceColumns are added to slots in place; see migratePresence.
-var presenceColumns = []struct{ name, def string }{
-	{"state", `TEXT NOT NULL DEFAULT ''`},
-	{"context_tokens", `INTEGER NOT NULL DEFAULT -1`}, // -1: never reported
-	{"last_turn_at", `INTEGER NOT NULL DEFAULT 0`},    // Unix ms, 0: never reported
-	{"reported_at", `INTEGER NOT NULL DEFAULT 0`},     // Unix ms of the last register/heartbeat/takeover
-	// offline_noticed_at is the place to remember that an offline transition
-	// has been handled (for example, a parent notified). Every report resets
-	// it to 0. See offlineUnnoticed and markOfflineNoticed.
-	{"offline_noticed_at", `INTEGER NOT NULL DEFAULT 0`},
-}
-
-func migratePresence(db *sql.DB) error {
-	for _, c := range presenceColumns {
-		has, err := hasColumn(db, "slots", c.name)
-		if err != nil {
-			return err
-		}
-		if !has {
-			if _, err = db.Exec(`ALTER TABLE slots ADD COLUMN ` + c.name + ` ` + c.def); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
 // configurePresence reads the presence settings from the environment.
 func configurePresence(s *Server, getenv func(string) string) error {
-	if v, from := envAliasFrom(getenv, "PRESENCE_INTERVAL"); v != "" {
+	if v, from := config.EnvAliasFrom(getenv, "PRESENCE_INTERVAL"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil || d < time.Second {
 			return errors.New(from + " must be a duration of at least 1s such as 60s")
 		}
 		s.presenceInterval = d
 	}
-	if v, from := envAliasFrom(getenv, "PRESENCE_MISSED"); v != "" {
+	if v, from := config.EnvAliasFrom(getenv, "PRESENCE_MISSED"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 {
 			return errors.New(from + " must be a whole number of at least 1 such as 3")
 		}
 		s.presenceMissed = n
 	}
-	if v, from := envAliasFrom(getenv, "PRESENCE_RETAIN"); v != "" {
+	if v, from := config.EnvAliasFrom(getenv, "PRESENCE_RETAIN"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil || d < 0 {
 			return errors.New(from + " must be a duration such as 24h (0 hides offline sessions)")
@@ -139,33 +76,11 @@ func (s *Server) offlineRetention() time.Duration {
 	return defaultPresenceRetain
 }
 
-// presenceError reports a malformed presence field; it maps to 400.
-type presenceError string
-
-func (e presenceError) Error() string { return string(e) }
-
-// presence parses the presence fields of a slot request. last is the zero
-// time when last_turn_at was not given.
-func (q slotRequest) presence() (last time.Time, err error) {
-	if q.State != "" && !validPresenceState(q.State) {
-		return last, presenceError(fmt.Sprintf("state must be idle, busy, compacting, error:<kind> or blocked:<kind> (kind: 1-64 of A-Z a-z 0-9 . _ -), not %q", q.State))
-	}
-	if q.ContextTokens != nil && *q.ContextTokens < 0 {
-		return last, presenceError("context_tokens must be a whole number of at least 0")
-	}
-	if q.LastTurnAt != "" {
-		if last, err = time.Parse(time.RFC3339, q.LastTurnAt); err != nil {
-			return last, presenceError("last_turn_at must be an RFC 3339 time such as 2026-11-17T09:00:00Z")
-		}
-	}
-	return last, nil
-}
-
 // applyPresence records a report on a slot row. A fresh claim (register or
 // takeover) starts from the given fields only; a heartbeat keeps fields it
 // does not send. A change of state is written to presence_log.
 func applyPresence(tx *sql.Tx, base string, number int, req slotRequest, now time.Time, fresh bool) error {
-	last, err := req.presence()
+	last, err := req.Presence()
 	if err != nil {
 		return err
 	}
@@ -189,37 +104,6 @@ func applyPresence(tx *sql.Tx, base string, number int, req slotRequest, now tim
 		return err
 	}
 	return logPresenceReport(tx, base, number, now)
-}
-
-// presenceView is one session in GET /api/presence. It never carries tokens.
-type presenceView struct {
-	Role           string     `json:"role"`
-	Base           string     `json:"base"`
-	Number         int        `json:"number"`
-	Online         bool       `json:"online"`
-	Status         string     `json:"status"`          // offline when !online, else state or unknown
-	State          string     `json:"state,omitempty"` // last reported state, kept while offline
-	ContextTokens  *int64     `json:"context_tokens"`  // null until reported
-	LastTurnAt     *time.Time `json:"last_turn_at,omitempty"`
-	Machine        string     `json:"machine"`
-	Directory      string     `json:"directory"`
-	SessionID      string     `json:"session_id,omitempty"`
-	Label          string     `json:"label,omitempty"`
-	Parent         string     `json:"parent,omitempty"`
-	RegisteredAt   time.Time  `json:"registered_at"`
-	ReportedAt     *time.Time `json:"reported_at,omitempty"` // absent for rows from before presence
-	LeaseExpiresAt time.Time  `json:"lease_expires_at"`
-	OfflineSince   *time.Time `json:"offline_since,omitempty"` // = lease_expires_at when offline
-}
-
-// presenceList answers GET /api/presence and GET /api/admin/presence.
-type presenceList struct {
-	Now             time.Time      `json:"now"`
-	IntervalSeconds int            `json:"interval_seconds"`
-	Missed          int            `json:"missed"`
-	LeaseSeconds    int            `json:"lease_seconds"`
-	RetainSeconds   int            `json:"retain_seconds"`
-	Sessions        []presenceView `json:"sessions"`
 }
 
 func presenceCols() string {

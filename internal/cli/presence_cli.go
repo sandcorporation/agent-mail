@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"encoding/json"
@@ -9,6 +9,8 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 // cliStatus prints GET /api/presence as a table.
@@ -21,17 +23,17 @@ func cliStatus(c Config, p parsedArgs) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	var out presenceList
+	var out wire.PresenceList
 	if err = json.Unmarshal(b, &out); err != nil {
 		return 0, fmt.Errorf("unexpected response from server: %v", err)
 	}
 	if p.bool("--json") {
 		fmt.Println(strings.TrimSpace(string(b)))
-		return exitOK, nil
+		return ExitOK, nil
 	}
 	if len(out.Sessions) == 0 {
 		fmt.Println("no sessions")
-		return exitOK, nil
+		return ExitOK, nil
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "ROLE\tSTATUS\tCONTEXT\tLAST TURN\tMACHINE\tDIRECTORY\tLABEL\tPARENT\tREPORTED")
@@ -39,7 +41,7 @@ func cliStatus(c Config, p parsedArgs) (int, error) {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", v.Role, v.Status, kTokens(v.ContextTokens),
 			clockTime(v.LastTurnAt), v.Machine, v.Directory, dash(v.Label), dash(v.Parent), ago(out.Now, v.ReportedAt))
 	}
-	return exitOK, tw.Flush()
+	return ExitOK, tw.Flush()
 }
 
 // kTokens shows a token count in thousands: 950 -> 0.9k, 12345 -> 12k.

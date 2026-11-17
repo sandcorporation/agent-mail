@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/cli"
+	"github.com/sandcorporation/agent-mail/internal/store"
 )
 
 const joinSecret = "joined-token-0123456789abcdef"
@@ -55,7 +58,7 @@ func TestInviteJoinSendWithinGroup(t *testing.T) {
 	// Case and dashes do not matter.
 	mustJoin(t, s, strings.ToLower(strings.ReplaceAll(inv.Code, "-", "")), "partner-c/dev", joinSecret)
 	var stored string
-	if err := s.db.QueryRow(`SELECT token FROM roles WHERE role='partner-c/dev'`).Scan(&stored); err != nil || stored != tokenHash(joinSecret) {
+	if err := s.db.QueryRow(`SELECT token FROM roles WHERE role='partner-c/dev'`).Scan(&stored); err != nil || stored != store.TokenHash(joinSecret) {
 		t.Fatalf("stored token = %q %v", stored, err)
 	}
 	boss := inviteAs(t, s, bossToken, internalBossRole, map[string]string{"prefix": "partner-c", "role": "partner-c/boss", "ttl": "7d"}, 201)
@@ -276,7 +279,7 @@ func TestCLIInviteJoin(t *testing.T) {
 	if r.code != 0 {
 		t.Fatalf("join: %+v", r)
 	}
-	host := hostProfile("127.0.0.1")
+	host := cli.HostProfile("127.0.0.1")
 	path := filepath.Join(theirs, host+".json")
 	if !strings.Contains(r.stdout, "partner-a/dev") || !strings.Contains(r.stdout, "SWITCHBOARD_PROFILE="+host) || !strings.Contains(r.stdout, path) {
 		t.Fatalf("join output:\n%s", r.stdout)
@@ -286,7 +289,7 @@ func TestCLIInviteJoin(t *testing.T) {
 		t.Fatalf("profile %s: %v %v", path, st, err)
 	}
 	b, _ := os.ReadFile(path)
-	var c Config
+	var c cli.Config
 	if err = json.Unmarshal(b, &c); err != nil || c.Endpoint != h.url || c.Role != "partner-a/dev" || len(c.Token) < 24 {
 		t.Fatalf("profile = %s", b)
 	}
@@ -294,7 +297,7 @@ func TestCLIInviteJoin(t *testing.T) {
 		t.Fatal("join printed the token")
 	}
 	var stored string
-	if err = h.s.db.QueryRow(`SELECT token FROM roles WHERE role='partner-a/dev'`).Scan(&stored); err != nil || stored != tokenHash(c.Token) {
+	if err = h.s.db.QueryRow(`SELECT token FROM roles WHERE role='partner-a/dev'`).Scan(&stored); err != nil || stored != store.TokenHash(c.Token) {
 		t.Fatalf("server stores %q", stored)
 	}
 	// The profile works for other commands; group scope applies.

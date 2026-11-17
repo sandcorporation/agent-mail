@@ -9,9 +9,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/cli"
+	"github.com/sandcorporation/agent-mail/internal/store"
 )
 
 // authHandler is the server's real routing for admin pages and endpoints.
@@ -223,7 +227,7 @@ func TestBuiltinLoginSessionAndLogout(t *testing.T) {
 		t.Fatalf("cookie flags %+v", c)
 	}
 	var stored string
-	if err := s.db.QueryRow(`SELECT id_hash FROM admin_sessions WHERE user='alice'`).Scan(&stored); err != nil || stored == c.Value || stored != tokenHash(c.Value) {
+	if err := s.db.QueryRow(`SELECT id_hash FROM admin_sessions WHERE user='alice'`).Scan(&stored); err != nil || stored == c.Value || stored != store.TokenHash(c.Value) {
 		t.Fatalf("stored session id %q %v", stored, err)
 	}
 	if w := doAuth(s, authReq{method: "GET", path: "/api/admin/me", cookie: c}); w.Code != 200 || !strings.Contains(w.Body.String(), `"user":"alice"`) {
@@ -368,13 +372,8 @@ func TestBuiltinLoginRateLimit(t *testing.T) {
 
 func adminCLI(t *testing.T, stdin string, args ...string) (string, error) {
 	t.Helper()
-	cmd, _ := findCommand("admin")
-	p, err := parseCommandArgs(cmd, args)
-	if err != nil {
-		return "", err
-	}
 	var out, errOut bytes.Buffer
-	_, err = cliAdmin(p, strings.NewReader(stdin), &out, &errOut)
+	_, err := cliAdmin(args[0], args[1], slices.Contains(args[2:], "--json"), strings.NewReader(stdin), &out, &errOut)
 	return out.String(), err
 }
 
@@ -396,7 +395,7 @@ func TestAdminCLI(t *testing.T) {
 	if err != nil || json.Unmarshal([]byte(out), &created) != nil || created["name"] != "bob" || created["secret"] == "" || !strings.HasPrefix(created["otpauth_uri"], "otpauth://totp/") {
 		t.Fatalf("create --json: %v %s", err, out)
 	}
-	var ue usageError
+	var ue cli.UsageError
 	if _, err = adminCLI(t, "", "rename", "bob"); !errors.As(err, &ue) {
 		t.Fatalf("unknown action: %v", err)
 	}
@@ -408,7 +407,7 @@ func TestAdminCLI(t *testing.T) {
 	}
 
 	// A server on the same database signs bob in; each CLI change ends his sessions.
-	db, err := openDB(path)
+	db, err := store.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -467,11 +466,10 @@ func TestAdminCLI(t *testing.T) {
 // TestAdminCommandNeedsNoClientConfig: admin runs without a profile or
 // endpoint, and its usage errors go through the usual CLI path.
 func TestAdminCommandNeedsNoClientConfig(t *testing.T) {
-	var ue usageError
-	if _, err := dispatch([]string{"admin", "create"}); !errors.As(err, &ue) {
-		t.Fatalf("missing name: %v", err)
+	if code := cli.Run([]string{"admin", "create"}, version, cliAdmin); code != cli.ExitUsage {
+		t.Fatalf("missing name: %v", code)
 	}
-	if _, err := dispatch([]string{"admin", "frobnicate", "alice"}); !errors.As(err, &ue) {
-		t.Fatalf("bad action: %v", err)
+	if code := cli.Run([]string{"admin", "frobnicate", "alice"}, version, cliAdmin); code != cli.ExitUsage {
+		t.Fatalf("bad action: %v", code)
 	}
 }

@@ -19,7 +19,6 @@ package main
 import (
 	"crypto/rand"
 	"crypto/subtle"
-	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -30,6 +29,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/config"
+	"github.com/sandcorporation/agent-mail/internal/store"
 )
 
 const (
@@ -60,9 +62,9 @@ type adminIdentity struct {
 // configureAdminAuth reads SWITCHBOARD_ADMIN_AUTH, SWITCHBOARD_INSECURE_COOKIE
 // and SWITCHBOARD_TRUST_FORWARDED, and logs which admin access is in force.
 func configureAdminAuth(s *Server, getenv func(string) string) error {
-	mode := strings.TrimSpace(getenv(envPrefix + "ADMIN_AUTH"))
+	mode := strings.TrimSpace(getenv(config.EnvPrefix + "ADMIN_AUTH"))
 	if mode != "" && !adminModes[mode] {
-		return errors.New(envPrefix + "ADMIN_AUTH must be builtin or oidc (proxy is not available in this version)")
+		return errors.New(config.EnvPrefix + "ADMIN_AUTH must be builtin or oidc (proxy is not available in this version)")
 	}
 	if mode == adminModeOIDC {
 		o, err := configureOIDC(getenv)
@@ -72,15 +74,15 @@ func configureAdminAuth(s *Server, getenv func(string) string) error {
 		s.oidc = o
 	}
 	s.adminMode = mode
-	s.insecureCookie = getenv(envPrefix+"INSECURE_COOKIE") == "1"
-	s.trustForwarded = getenv(envPrefix+"TRUST_FORWARDED") == "1"
+	s.insecureCookie = getenv(config.EnvPrefix+"INSECURE_COOKIE") == "1"
+	s.trustForwarded = getenv(config.EnvPrefix+"TRUST_FORWARDED") == "1"
 	switch {
 	case mode == "" && s.adminProxyToken != "":
-		log.Printf("deprecated: admin access through the proxy secret (ADMIN_PROXY_TOKEN) without %sADMIN_AUTH; set %sADMIN_AUTH to move to admin login", envPrefix, envPrefix)
+		log.Printf("deprecated: admin access through the proxy secret (ADMIN_PROXY_TOKEN) without %sADMIN_AUTH; set %sADMIN_AUTH to move to admin login", config.EnvPrefix, config.EnvPrefix)
 	case mode == "":
-		log.Printf("admin access denied: %sADMIN_AUTH is not set", envPrefix)
+		log.Printf("admin access denied: %sADMIN_AUTH is not set", config.EnvPrefix)
 	case s.adminProxyToken != "":
-		log.Printf("%sADMIN_AUTH=%s: the proxy secret (ADMIN_PROXY_TOKEN) is ignored", envPrefix, mode)
+		log.Printf("%sADMIN_AUTH=%s: the proxy secret (ADMIN_PROXY_TOKEN) is ignored", config.EnvPrefix, mode)
 	}
 	return nil
 }
@@ -121,13 +123,6 @@ func (s *Server) sessionTTL() time.Duration {
 	return defaultSessionTTL
 }
 
-func migrateAdminAuth(db *sql.DB) error {
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS admin_users(name TEXT PRIMARY KEY, password_hash TEXT NOT NULL, totp_secret TEXT NOT NULL, totp_last_step INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, disabled_at TEXT);
-CREATE TABLE IF NOT EXISTS admin_sessions(id_hash TEXT PRIMARY KEY, user TEXT NOT NULL, mode TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, ip TEXT NOT NULL DEFAULT '', user_agent TEXT NOT NULL DEFAULT '');
-CREATE INDEX IF NOT EXISTS idx_admin_sessions_user ON admin_sessions(user);`)
-	return err
-}
-
 // startSession stores a new session for user and sets the cookie. Only the
 // SHA-256 of the cookie value is kept.
 func (s *Server) startSession(w http.ResponseWriter, r *http.Request, user, mode string) error {
@@ -145,7 +140,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, user, mode
 		return err
 	}
 	if _, err := s.db.Exec(`INSERT INTO admin_sessions(id_hash,user,mode,created_at,expires_at,ip,user_agent) VALUES(?,?,?,?,?,?,?)`,
-		tokenHash(id), user, mode, now.Unix(), now.Add(s.sessionTTL()).Unix(), s.clientIP(r), ua); err != nil {
+		store.TokenHash(id), user, mode, now.Unix(), now.Add(s.sessionTTL()).Unix(), s.clientIP(r), ua); err != nil {
 		return err
 	}
 	http.SetCookie(w, s.sessionCookie(id, 0))
@@ -159,7 +154,7 @@ func (s *Server) sessionCookie(value string, maxAge int) *http.Cookie {
 // lookupSession finds a live session for the cookie value. A session of a
 // built-in user ends when that user is disabled or gone.
 func (s *Server) lookupSession(id string) (adminIdentity, bool) {
-	h := tokenHash(id)
+	h := store.TokenHash(id)
 	now := s.now()
 	var who adminIdentity
 	var expires int64
@@ -270,7 +265,7 @@ func (s *Server) authAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/auth/logout" {
 		if c, err := r.Cookie(sessionCookie); err == nil && c.Value != "" {
-			_, _ = s.db.Exec(`DELETE FROM admin_sessions WHERE id_hash=?`, tokenHash(c.Value))
+			_, _ = s.db.Exec(`DELETE FROM admin_sessions WHERE id_hash=?`, store.TokenHash(c.Value))
 		}
 		http.SetCookie(w, s.sessionCookie("", -1))
 		w.WriteHeader(http.StatusNoContent)

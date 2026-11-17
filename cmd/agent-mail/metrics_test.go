@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/cli"
 )
 
 // flowRow is a message for mailAt.
@@ -74,7 +76,7 @@ func TestMetricsFirstReplyMatchesThreadAndTask(t *testing.T) {
 
 	fr := mustMetrics(t, s, 7).FirstReply
 	if fr.Count != 4 || fr.Answered != 3 || fr.Unanswered != 1 {
-		t.Fatalf("counts: %+v", fr.latencyStats)
+		t.Fatalf("counts: %+v", fr.LatencyStats)
 	}
 	if i64(fr.P50) != int64(300) || i64(fr.P90) != int64(7200) || i64(fr.Max) != int64(7200) {
 		t.Fatalf("percentiles: p50=%v p90=%v max=%v (unanswered must not be a latency)", i64(fr.P50), i64(fr.P90), i64(fr.Max))
@@ -283,8 +285,8 @@ func TestMetricsSessionStatesClippedToWindow(t *testing.T) {
 
 	m := mustMetrics(t, s, 7)
 	want := []roleStateTime{
-		{Role: "team/worker-1", ErrorS: 3600, BlockedS: 7200, TopKinds: []kindTime{{"blocked:permission_prompt", 7200}, {"error:StopFailure", 3600}}},
-		{Role: "team/worker-3", ErrorS: 60, TopKinds: []kindTime{{"error:StopFailure", 60}}},
+		{Role: "team/worker-1", ErrorS: 3600, BlockedS: 7200, TopKinds: []kindTime{{State: "blocked:permission_prompt", Seconds: 7200}, {State: "error:StopFailure", Seconds: 3600}}},
+		{Role: "team/worker-3", ErrorS: 60, TopKinds: []kindTime{{State: "error:StopFailure", Seconds: 60}}},
 	}
 	if !reflect.DeepEqual(m.Sessions.ByRole, want) {
 		t.Fatalf("by role (7d): %+v", m.Sessions.ByRole)
@@ -392,7 +394,7 @@ func TestMetricsCommand(t *testing.T) {
 		t.Fatalf("--json: %s", out)
 	}
 	for _, bad := range []string{"0", "91", "x"} {
-		if res := h.run(nil, "metrics", "--days", bad); res.code != exitUsage {
+		if res := h.run(nil, "metrics", "--days", bad); res.code != cli.ExitUsage {
 			t.Fatalf("--days %s: %d %s", bad, res.code, res.stderr)
 		}
 	}

@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"bytes"
@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"os"
 	"strings"
+
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 // cliQuestion serves agent-mail question ask|show|list|answer|withdraw.
@@ -59,10 +61,10 @@ func cliQuestion(c Config, p parsedArgs) (int, error) {
 	}
 	if p.bool("--json") {
 		fmt.Println(strings.TrimSpace(string(b)))
-		return exitOK, nil
+		return ExitOK, nil
 	}
 	if action == "list" {
-		var out questionList
+		var out wire.QuestionList
 		if err = json.Unmarshal(b, &out); err != nil {
 			return 0, fmt.Errorf("unexpected response from server: %v", err)
 		}
@@ -72,9 +74,9 @@ func cliQuestion(c Config, p parsedArgs) (int, error) {
 		for _, v := range out.Questions {
 			fmt.Println(questionLine(v))
 		}
-		return exitOK, nil
+		return ExitOK, nil
 	}
-	var v questionView
+	var v wire.QuestionView
 	if err = json.Unmarshal(b, &v); err != nil {
 		return 0, fmt.Errorf("unexpected response from server: %v", err)
 	}
@@ -82,7 +84,7 @@ func cliQuestion(c Config, p parsedArgs) (int, error) {
 	if action == "show" {
 		fmt.Println(questionDetail(v))
 	}
-	return exitOK, nil
+	return ExitOK, nil
 }
 
 // questionFile reads --file (JSON): either {"<key>":[...]} or a bare array.
@@ -106,7 +108,7 @@ func questionFile(p parsedArgs, action, key string) (json.RawMessage, error) {
 }
 
 // questionLine: "<id>  <status>  <asker>  <first header> | <first question>[ | by X]".
-func questionLine(v questionView) string {
+func questionLine(v wire.QuestionView) string {
 	header, text := "", ""
 	if len(v.Questions) > 0 {
 		header, text = v.Questions[0].Header, v.Questions[0].Question
@@ -123,10 +125,10 @@ func questionLine(v questionView) string {
 
 // questionDetail is the question text and options, then the answer when
 // there is one.
-func questionDetail(v questionView) string {
-	out := questionText(v)
+func questionDetail(v wire.QuestionView) string {
+	out := wire.QuestionText(v)
 	if len(v.Answers) == len(v.Questions) && len(v.Answers) > 0 {
-		out += "\n\n" + answerText(v)
+		out += "\n\n" + wire.AnswerText(v)
 	}
 	return out
 }

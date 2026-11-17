@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sandcorporation/agent-mail/internal/cli"
 )
 
 type cliResult struct {
@@ -127,11 +129,11 @@ func TestMissingProfileIsAnError(t *testing.T) {
 		{[]string{"AGENT_MAIL_PROFILE=nonexist"}, []string{"inbox"}},
 	} {
 		r := h.run(tc.env, tc.args...)
-		if r.code != exitError || !strings.Contains(r.stderr, `profile "nonexist" not found`) {
+		if r.code != cli.ExitError || !strings.Contains(r.stderr, `profile "nonexist" not found`) {
 			t.Fatalf("%v %v: code=%d stderr=%s", tc.env, tc.args, r.code, r.stderr)
 		}
 	}
-	if r := h.run(nil, "--profile", "bad/name", "inbox"); r.code != exitUsage {
+	if r := h.run(nil, "--profile", "bad/name", "inbox"); r.code != cli.ExitUsage {
 		t.Fatalf("invalid profile name: code=%d", r.code)
 	}
 }
@@ -154,7 +156,7 @@ func TestUnknownOptionsAndCommandsAreUsageErrors(t *testing.T) {
 		{"--profile"},
 	} {
 		r := h.run(nil, args...)
-		if r.code != exitUsage || !strings.Contains(r.stderr, "agent-mail:") {
+		if r.code != cli.ExitUsage || !strings.Contains(r.stderr, "agent-mail:") {
 			t.Fatalf("%v: code=%d stderr=%s", args, r.code, r.stderr)
 		}
 	}
@@ -193,10 +195,10 @@ func TestWaitCommand(t *testing.T) {
 	h := newCLIHarness(t)
 	h.configure(nil, "b")
 	r := h.run(nil, "wait", "--timeout", "1", "--interval", "1")
-	if r.code != exitTimeout || r.stdout != "" {
+	if r.code != cli.ExitTimeout || r.stdout != "" {
 		t.Fatalf("empty inbox wait: code=%d stdout=%q stderr=%s", r.code, r.stdout, r.stderr)
 	}
-	if r := h.run(nil, "wait", "--timeout", "1", "--json"); r.code != exitTimeout || strings.TrimSpace(r.stdout) != "[]" {
+	if r := h.run(nil, "wait", "--timeout", "1", "--json"); r.code != cli.ExitTimeout || strings.TrimSpace(r.stdout) != "[]" {
 		t.Fatalf("json timeout: code=%d stdout=%q", r.code, r.stdout)
 	}
 	if w := call(h.s, "POST", "/api/messages", "secret-a", map[string]any{"recipient": "b", "subject": "wake\nup", "body": "x", "task_id": "t-1"}, ""); w.Code != 201 {
@@ -218,7 +220,7 @@ func TestWaitCommand(t *testing.T) {
 	cfg := filepath.Join(h.dir, "wrong.json")
 	b, _ := os.ReadFile(cfg)
 	_ = os.WriteFile(cfg, []byte(strings.Replace(string(b), "secret-b", "bad-token", 1)), 0600)
-	if r := h.run(nil, "--profile", "wrong", "wait", "--timeout", "30"); r.code != exitError {
+	if r := h.run(nil, "--profile", "wrong", "wait", "--timeout", "30"); r.code != cli.ExitError {
 		t.Fatalf("bad credential must fail fast: code=%d stderr=%s", r.code, r.stderr)
 	}
 }

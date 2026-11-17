@@ -7,13 +7,16 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/store"
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 // Per-role question settings. A target is "default", an exact role name
 // (which also covers its numbered slots <role>-N) or a role prefix "<p>/*".
 
 const (
-	defaultQuestionTarget = "default"
+	defaultQuestionTarget = store.DefaultQuestionTarget
 	maxQuestionWatchers   = 20
 )
 
@@ -25,23 +28,15 @@ type questionSettings struct {
 	UpdatedAt string   `json:"updated_at"`
 }
 
-func migrateQuestionSettings(db *sql.DB) error {
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS question_settings(target TEXT PRIMARY KEY,can_ask INTEGER NOT NULL DEFAULT 0,watchers TEXT NOT NULL DEFAULT '[]',discord INTEGER NOT NULL DEFAULT 0,updated_at TEXT NOT NULL)`); err != nil {
-		return err
-	}
-	_, err := db.Exec(`INSERT OR IGNORE INTO question_settings(target,can_ask,watchers,discord,updated_at) VALUES(?,0,'[]',0,?)`, defaultQuestionTarget, time.Now().UTC().Format(time.RFC3339Nano))
-	return err
-}
-
 // validQuestionTarget accepts "default", a role name, or "<role prefix>/*".
 func validQuestionTarget(t string) bool {
 	if t == defaultQuestionTarget {
 		return true
 	}
 	if p, ok := strings.CutSuffix(t, "/*"); ok {
-		return validRole(p)
+		return wire.ValidRole(p)
 	}
-	return validRole(t)
+	return wire.ValidRole(t)
 }
 
 const questionCols = `target,can_ask,watchers,discord,updated_at`
@@ -74,7 +69,7 @@ func (s *Server) resolveQuestionSettings(role string) (questionSettings, error) 
 func resolveQuestionSettingsIn(q queryer, role string) (questionSettings, error) {
 	candidates := []string{role}
 	base := role
-	if b, _, ok := splitSlot(role); ok {
+	if b, _, ok := wire.SplitSlot(role); ok {
 		base = b
 		candidates = append(candidates, base)
 	}
@@ -171,7 +166,7 @@ func (s *Server) putQuestionSettings(w http.ResponseWriter, r *http.Request, tar
 	}
 	watchers, seen := []string{}, map[string]bool{}
 	for _, role := range req.Watchers {
-		if !validRole(role) {
+		if !wire.ValidRole(role) {
 			http.Error(w, "invalid watcher role", 400)
 			return
 		}

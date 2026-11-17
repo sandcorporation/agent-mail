@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"encoding/json"
@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 // cliProgress reads GET /api/progress (boss roles only; the server answers
@@ -19,13 +21,13 @@ func cliProgress(c Config, p parsedArgs) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	var r progressReport
+	var r wire.ProgressReport
 	if err = json.Unmarshal(b, &r); err != nil {
 		return 0, fmt.Errorf("unexpected response from server: %v", err)
 	}
 	if p.bool("--json") {
 		fmt.Println(strings.TrimSpace(string(b)))
-		return exitOK, nil
+		return ExitOK, nil
 	}
 	services := r.Services
 	if len(p.pos) == 1 {
@@ -40,13 +42,13 @@ func cliProgress(c Config, p parsedArgs) (int, error) {
 		}
 	}
 	_, err = io.WriteString(os.Stdout, formatProgress(services, r.GeneratedAt))
-	return exitOK, err
+	return ExitOK, err
 }
 
 // formatProgress renders services in the order given (the server sends the
 // most recently active first), a blank line between blocks. Relative times
 // count from now, the report's generated_at.
-func formatProgress(ss []serviceProgress, now time.Time) string {
+func formatProgress(ss []wire.ServiceProgress, now time.Time) string {
 	var b strings.Builder
 	for i, s := range ss {
 		if i > 0 {

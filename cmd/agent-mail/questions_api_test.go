@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/cli"
 )
 
 // questionServer: permissionServer (roles a, b, team/worker, boss
@@ -449,7 +451,7 @@ func TestQuestionCommand(t *testing.T) {
 		{"question", "ask"},
 		{"question", "list", "--status", "open"},
 	} {
-		if r := h.run(boss, args...); r.code != exitUsage {
+		if r := h.run(boss, args...); r.code != cli.ExitUsage {
 			t.Fatalf("%v: %d %s", args, r.code, r.stderr)
 		}
 	}

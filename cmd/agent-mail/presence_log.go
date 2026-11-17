@@ -25,13 +25,6 @@ const (
 	presenceUnknown   = "unknown"
 )
 
-func migratePresenceLog(db *sql.DB) error {
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS presence_log(id INTEGER PRIMARY KEY AUTOINCREMENT,base TEXT NOT NULL,number INTEGER NOT NULL,role TEXT NOT NULL,state TEXT NOT NULL,started_at INTEGER NOT NULL,ended_at INTEGER);
-CREATE INDEX IF NOT EXISTS idx_presence_log_slot ON presence_log(base,number,ended_at);
-CREATE INDEX IF NOT EXISTS idx_presence_log_started ON presence_log(started_at);`)
-	return err
-}
-
 // openPresenceState is the state of (base, number)'s open presence_log row;
 // ok is false when there is none.
 func openPresenceState(q queryer, base string, number int) (state string, ok bool, err error) {

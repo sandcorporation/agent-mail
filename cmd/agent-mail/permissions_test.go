@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/cli"
+	"github.com/sandcorporation/agent-mail/internal/store"
 )
 
 const bossToken = "secret-boss"
@@ -328,7 +331,7 @@ func TestPermissionSchemaOnLegacyDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
-		if err = initSchema(db); err != nil {
+		if err = store.Init(db); err != nil {
 			t.Fatalf("schema run %d: %v", i, err)
 		}
 	}
@@ -373,7 +376,7 @@ func TestPermissionCommand(t *testing.T) {
 		{"permission", "request", "--tool", "Bash"},
 		{"permission", "answer", id, "--decision", "maybe"},
 	} {
-		if r := h.run(boss, args...); r.code != exitUsage {
+		if r := h.run(boss, args...); r.code != cli.ExitUsage {
 			t.Fatalf("%v: %d %s", args, r.code, r.stderr)
 		}
 	}
@@ -469,7 +472,7 @@ func TestGlobalRoleOptionActsAsNumberedRole(t *testing.T) {
 		{[]string{"AGENT_MAIL_ROLE=b"}, []string{"inbox"}},
 		{nil, []string{"--role"}},
 	} {
-		if r := h.run(c.env, c.args...); r.code != exitUsage {
+		if r := h.run(c.env, c.args...); r.code != cli.ExitUsage {
 			t.Fatalf("%v %v: %d %s", c.env, c.args, r.code, r.stderr)
 		}
 	}

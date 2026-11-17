@@ -1,4 +1,6 @@
-package main
+// Package cli is the client: every agent-mail / switchboard command, the
+// credential profiles and the HTTP calls. It talks to the server over HTTP only.
+package cli
 
 import (
 	"bytes"
@@ -13,14 +15,17 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/config"
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 // Exit codes shared by every CLI command.
 const (
-	exitOK      = 0
-	exitError   = 1
-	exitUsage   = 2
-	exitTimeout = 3
+	ExitOK      = 0
+	ExitError   = 1
+	ExitUsage   = 2
+	ExitTimeout = 3
 )
 
 type Config struct {
@@ -200,11 +205,12 @@ var validStatuses = map[string]bool{"pending": true, "read": true, "acknowledged
 // profileFlag holds the --profile value given on the command line. It wins over SWITCHBOARD_PROFILE.
 var profileFlag string
 
-type usageError struct{ msg string }
+// UsageError is a mistake on the command line; it exits with ExitUsage.
+type UsageError struct{ msg string }
 
-func (e usageError) Error() string { return e.msg }
+func (e UsageError) Error() string { return e.msg }
 
-func usagef(format string, a ...any) error { return usageError{fmt.Sprintf(format, a...)} }
+func usagef(format string, a ...any) error { return UsageError{fmt.Sprintf(format, a...)} }
 
 func findCommand(name string) (command, bool) {
 	for _, c := range commands {
@@ -215,27 +221,36 @@ func findCommand(name string) (command, bool) {
 	return command{}, false
 }
 
-func main() {
-	// Copy the arguments so parsing never rewrites os.Args.
-	args := append([]string(nil), os.Args[1:]...)
-	if len(args) == 0 {
-		runServer()
-		return
-	}
-	os.Exit(runCLI(args))
+// AdminFunc runs `admin ACTION NAME [--json]`. Admin users live in the
+// server's database, which the client never opens, so the binary supplies it.
+type AdminFunc func(action, name string, jsonOut bool, stdin io.Reader, stdout, stderr io.Writer) (int, error)
+
+var (
+	version string    // build version, from Run
+	admin   AdminFunc // the admin command, from Run
+)
+
+// Run runs the client command in args (the arguments after the program name)
+// and returns the process exit code.
+func Run(args []string, buildVersion string, adminCmd AdminFunc) int {
+	version, admin = buildVersion, adminCmd
+	return runCLI(args)
 }
+
+// Usagef reports a UsageError (exit code 2) from a command the binary supplies.
+func Usagef(format string, a ...any) error { return usagef(format, a...) }
 
 func runCLI(args []string) int {
 	code, err := dispatch(args)
-	var ue usageError
+	var ue UsageError
 	if errors.As(err, &ue) {
 		fmt.Fprintln(os.Stderr, progName()+": "+ue.msg)
 		fmt.Fprintln(os.Stderr, "Run '"+progName()+" --help' for usage.")
-		return exitUsage
+		return ExitUsage
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, progName()+": "+err.Error())
-		return exitError
+		return ExitError
 	}
 	return code
 }
@@ -247,7 +262,7 @@ func dispatch(args []string) (int, error) {
 		switch {
 		case a == "-h" || a == "--help":
 			printHelp()
-			return exitOK, nil
+			return ExitOK, nil
 		case a == "--profile":
 			if len(args) < 2 {
 				return 0, usagef("--profile requires a value")
@@ -273,13 +288,13 @@ func dispatch(args []string) (int, error) {
 	if name == "help" {
 		if len(rest) == 0 {
 			printHelp()
-			return exitOK, nil
+			return ExitOK, nil
 		}
 		if _, ok := findCommand(rest[0]); !ok {
 			return 0, usagef("unknown command %q", rest[0])
 		}
 		printCommandHelp(rest[0])
-		return exitOK, nil
+		return ExitOK, nil
 	}
 	cmd, ok := findCommand(name)
 	if !ok {
@@ -287,7 +302,7 @@ func dispatch(args []string) (int, error) {
 	}
 	if hasHelp(rest) || len(rest) > 0 && rest[0] == "help" {
 		printCommandHelp(name)
-		return exitOK, nil
+		return ExitOK, nil
 	}
 	p, err := parseCommandArgs(cmd, rest)
 	if err != nil {
@@ -299,17 +314,17 @@ func dispatch(args []string) (int, error) {
 	if profileFlag != "" && !validProfile(profileFlag) {
 		return 0, usagef("invalid profile name %q", profileFlag)
 	}
-	if v, from := envAliasFrom(os.Getenv, "PROFILE"); profileFlag == "" && v != "" && !validProfile(v) {
+	if v, from := config.EnvAliasFrom(os.Getenv, "PROFILE"); profileFlag == "" && v != "" && !validProfile(v) {
 		return 0, usagef("invalid profile name %q in %s", v, from)
 	}
 	switch name {
 	case "version":
 		fmt.Println(progName() + " " + version)
-		return exitOK, nil
+		return ExitOK, nil
 	case "register":
 		return cliRegister(p)
 	case "admin":
-		return cliAdmin(p, os.Stdin, os.Stdout, os.Stderr)
+		return admin(p.pos[0], p.pos[1], p.bool("--json"), os.Stdin, os.Stdout, os.Stderr)
 	case "join":
 		return cliJoin(p, os.Stdout)
 	case "config":
@@ -510,7 +525,7 @@ func configPath() string {
 	if filename == "default.json" {
 		filename = "config.json"
 	}
-	if d := envAlias("CONFIG_DIR"); d != "" {
+	if d := config.EnvAlias("CONFIG_DIR"); d != "" {
 		return filepath.Join(d, filename)
 	}
 	d, e := os.UserConfigDir()
@@ -524,11 +539,11 @@ func configPath() string {
 // <config>/agent-mail/ holds that profile: then the old file is read and
 // updated in place, so a profile is never split across the two directories.
 func profilePath(configDir, filename string) string {
-	p := filepath.Join(configDir, configDirName, filename)
+	p := filepath.Join(configDir, config.ConfigDirName, filename)
 	if _, err := os.Stat(p); err == nil {
 		return p
 	}
-	old := filepath.Join(configDir, legacyConfigDir, filename)
+	old := filepath.Join(configDir, config.LegacyConfigDir, filename)
 	if _, err := os.Stat(old); err == nil {
 		return old
 	}
@@ -541,7 +556,7 @@ func explicitProfile() bool { return profileName() != "default" }
 func profileName() string {
 	name := profileFlag
 	if name == "" {
-		name = envAlias("PROFILE")
+		name = config.EnvAlias("PROFILE")
 	}
 	if name == "" {
 		return "default"
@@ -570,16 +585,16 @@ func readConfig() Config {
 	if e == nil {
 		_ = json.Unmarshal(b, &c)
 	}
-	if v := envAlias("ENDPOINT"); v != "" {
+	if v := config.EnvAlias("ENDPOINT"); v != "" {
 		c.Endpoint = v
 	}
 	// With a saved role and no SWITCHBOARD_TOKEN, SWITCHBOARD_ROLE picks a
 	// numbered role of the saved one (see actingRole); otherwise it is the
 	// role itself, as in environment-only setups.
-	if v := envAlias("ROLE"); v != "" && (c.Role == "" || envAlias("TOKEN") != "") {
+	if v := config.EnvAlias("ROLE"); v != "" && (c.Role == "" || config.EnvAlias("TOKEN") != "") {
 		c.Role = v
 	}
-	if v := envAlias("TOKEN"); v != "" {
+	if v := config.EnvAlias("TOKEN"); v != "" {
 		c.Token = v
 	}
 	return c
@@ -614,15 +629,15 @@ var roleFlag string
 // numbered role <base>-N under it, since the profile's token covers only those.
 func actingRole(profileRole string) (string, error) {
 	want, from := roleFlag, "--role"
-	if want == "" && envAlias("TOKEN") == "" {
-		want, from = envAliasFrom(os.Getenv, "ROLE")
+	if want == "" && config.EnvAlias("TOKEN") == "" {
+		want, from = config.EnvAliasFrom(os.Getenv, "ROLE")
 	}
 	if want == "" || want == profileRole {
 		return profileRole, nil
 	}
-	base, _, ok := splitSlot(want)
+	base, _, ok := wire.SplitSlot(want)
 	if ok {
-		if pb, _, numbered := splitSlot(profileRole); base == profileRole || numbered && base == pb {
+		if pb, _, numbered := wire.SplitSlot(profileRole); base == profileRole || numbered && base == pb {
 			return want, nil
 		}
 	}
@@ -654,7 +669,7 @@ func cliConfig(p parsedArgs) (int, error) {
 		return 0, errors.New("cannot write config")
 	}
 	fmt.Println("Saved", path)
-	return exitOK, nil
+	return ExitOK, nil
 }
 
 func cliRegister(p parsedArgs) (int, error) {
@@ -663,7 +678,7 @@ func cliRegister(p parsedArgs) (int, error) {
 			return 0, usagef("register requires --endpoint, --role, --token-file and --enrollment-token-file")
 		}
 	}
-	if !validRole(p.values["--role"]) {
+	if !wire.ValidRole(p.values["--role"]) {
 		return 0, errors.New("invalid role name")
 	}
 	credential, err := os.ReadFile(p.values["--token-file"])
@@ -688,7 +703,7 @@ func cliRegister(p parsedArgs) (int, error) {
 		return 0, fmt.Errorf("server returned %s: %s", resp.Status, string(b))
 	}
 	fmt.Print(string(b))
-	return exitOK, nil
+	return ExitOK, nil
 }
 
 func endpoint(c Config, path string) string { return strings.TrimRight(c.Endpoint, "/") + path }
@@ -750,7 +765,7 @@ func inputBody(p parsedArgs) (string, error) {
 
 func authorize(c Config, req *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+c.Token)
-	req.Header.Set(headerPrefix+"Role", c.Role)
+	req.Header.Set(config.HeaderPrefix+"Role", c.Role)
 }
 
 func doRequest(c Config, req *http.Request, jsonMode bool) (int, error) {
@@ -770,7 +785,7 @@ func doRequest(c Config, req *http.Request, jsonMode bool) (int, error) {
 			b = out.Bytes()
 		}
 		fmt.Println(string(b))
-		return exitOK, nil
+		return ExitOK, nil
 	}
 	var v any
 	if json.Unmarshal(b, &v) == nil {
@@ -778,7 +793,7 @@ func doRequest(c Config, req *http.Request, jsonMode bool) (int, error) {
 	} else {
 		fmt.Println(string(b))
 	}
-	return exitOK, nil
+	return ExitOK, nil
 }
 
 func pretty(v any) {
@@ -814,7 +829,7 @@ func secondsOption(cmd string, p parsedArgs, name string, def int, min int) (tim
 // errPermanent marks request failures that retrying cannot fix (bad credentials, bad request).
 type errPermanent struct{ error }
 
-func fetchPending(client *http.Client, c Config) ([]Message, error) {
+func fetchPending(client *http.Client, c Config) ([]wire.Message, error) {
 	req, _ := http.NewRequest("GET", listURL(c, "inbox", "", "pending"), nil)
 	authorize(c, req)
 	resp, err := client.Do(req)
@@ -830,11 +845,11 @@ func fetchPending(client *http.Client, c Config) ([]Message, error) {
 		}
 		return nil, err
 	}
-	var all []Message
+	var all []wire.Message
 	if err := json.Unmarshal(b, &all); err != nil {
 		return nil, fmt.Errorf("unexpected response from server: %v", err)
 	}
-	pending := []Message{}
+	pending := []wire.Message{}
 	for _, m := range all {
 		// Older servers ignore the status filter; filter here as well.
 		if m.Status == "pending" {
@@ -882,7 +897,7 @@ func cliWait(c Config, p parsedArgs) (int, error) {
 					fmt.Println(mailLine(m.ID, m.Sender, m.Subject, m.TaskID, m.Priority))
 				}
 			}
-			return exitOK, nil
+			return ExitOK, nil
 		default:
 			fails = 0
 		}
@@ -894,7 +909,7 @@ func cliWait(c Config, p parsedArgs) (int, error) {
 					fmt.Println("[]")
 				}
 				fmt.Fprintf(os.Stderr, progName()+" wait: no pending messages after %s\n", timeout)
-				return exitTimeout, nil
+				return ExitTimeout, nil
 			}
 			if left < sleep {
 				sleep = left
@@ -951,8 +966,8 @@ func cliEvents(c Config, p parsedArgs) (int, error) {
 		return 0, fmt.Errorf("server returned %s: %s", resp.Status, strings.TrimSpace(string(b)))
 	}
 	var v struct {
-		Events []mailEvent `json:"events"`
-		Cursor int64       `json:"cursor"`
+		Events []wire.MailEvent `json:"events"`
+		Cursor int64            `json:"cursor"`
 	}
 	if err := json.Unmarshal(b, &v); err != nil {
 		return 0, fmt.Errorf("unexpected response from server: %v", err)
@@ -966,15 +981,15 @@ func cliEvents(c Config, p parsedArgs) (int, error) {
 	}
 	if len(v.Events) == 0 {
 		fmt.Fprintf(os.Stderr, progName()+" events: no new mail (cursor %d)\n", v.Cursor)
-		return exitTimeout, nil
+		return ExitTimeout, nil
 	}
-	return exitOK, nil
+	return ExitOK, nil
 }
 
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 func cliWatch(c Config, p parsedArgs) (int, error) {
-	after, _ := parseID(p.values["--after"])
+	after, _ := wire.ParseID(p.values["--after"])
 	jsonMode := p.bool("--json")
 	for {
 		req, _ := http.NewRequest("GET", fmt.Sprintf("%s?after=%d", endpoint(c, "/api/watch"), after), nil)
@@ -1007,7 +1022,7 @@ func cliWatch(c Config, p parsedArgs) (int, error) {
 	}
 }
 
-func fatal(s string) { fmt.Fprintln(os.Stderr, s); os.Exit(exitError) }
+func fatal(s string) { fmt.Fprintln(os.Stderr, s); os.Exit(ExitError) }
 
 // slotCall sends one slot API request and returns the response body.
 func slotCall(c Config, method, path string, body any) ([]byte, error) {
@@ -1031,7 +1046,7 @@ func slotCall(c Config, method, path string, body any) ([]byte, error) {
 	return b, nil
 }
 
-func slotLine(v slotView) string {
+func slotLine(v wire.SlotView) string {
 	line := fmt.Sprintf("%s  %s:%s  until %s", v.Role, v.Machine, v.Directory, v.LeaseExpiresAt.Format(time.RFC3339))
 	if v.Label != "" {
 		line += "  label=" + v.Label
@@ -1047,18 +1062,18 @@ func cliSlots(c Config, p parsedArgs) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	var out []slotView
+	var out []wire.SlotView
 	if err = json.Unmarshal(b, &out); err != nil {
 		return 0, fmt.Errorf("unexpected response from server: %v", err)
 	}
 	if p.bool("--json") {
 		fmt.Println(strings.TrimSpace(string(b)))
-		return exitOK, nil
+		return ExitOK, nil
 	}
 	for _, v := range out {
 		fmt.Println(slotLine(v))
 	}
-	return exitOK, nil
+	return ExitOK, nil
 }
 
 func cliSlot(c Config, p parsedArgs) (int, error) {
@@ -1068,7 +1083,7 @@ func cliSlot(c Config, p parsedArgs) (int, error) {
 	default:
 		return 0, usagef("slot: unknown action %q (register, heartbeat, takeover, release)", action)
 	}
-	req := slotRequest{Machine: p.values["--machine"], Directory: p.values["--directory"], SessionID: p.values["--session-id"], Label: p.values["--label"], Parent: p.values["--parent"],
+	req := wire.SlotRequest{Machine: p.values["--machine"], Directory: p.values["--directory"], SessionID: p.values["--session-id"], Label: p.values["--label"], Parent: p.values["--parent"],
 		State: p.values["--state"], LastTurnAt: p.values["--last-turn-at"]}
 	if v, ok := p.values["--context-tokens"]; ok {
 		n, err := strconv.ParseInt(v, 10, 64)
@@ -1077,7 +1092,7 @@ func cliSlot(c Config, p parsedArgs) (int, error) {
 		}
 		req.ContextTokens = &n
 	}
-	if _, err := req.presence(); err != nil {
+	if _, err := req.Presence(); err != nil {
 		return 0, usagef("slot: %s", err.Error())
 	}
 	if req.Machine == "" {
@@ -1090,17 +1105,27 @@ func cliSlot(c Config, p parsedArgs) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	var g slotGrant
+	var g wire.SlotGrant
 	if err = json.Unmarshal(b, &g); err != nil {
 		return 0, fmt.Errorf("unexpected response from server: %v", err)
 	}
 	if p.bool("--json") {
 		fmt.Println(strings.TrimSpace(string(b)))
-		return exitOK, nil
+		return ExitOK, nil
 	}
-	fmt.Printf("%s (%d other active)\n", slotLine(g.slotView), g.OtherActive)
+	fmt.Printf("%s (%d other active)\n", slotLine(g.SlotView), g.OtherActive)
 	if g.Displaced != nil {
 		fmt.Printf("moved previous holder: %s\n", slotLine(*g.Displaced))
 	}
-	return exitOK, nil
+	return ExitOK, nil
+}
+
+// progName is the name the CLI was invoked as, for help and messages:
+// agent-mail when run under the old name, otherwise switchboard.
+func progName() string {
+	base := strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe")
+	if base == config.LegacyConfigDir {
+		return config.LegacyConfigDir
+	}
+	return "switchboard"
 }
