@@ -140,7 +140,7 @@ var commands = []command{
 		summary: "Show session presence: every session, a base and its numbers, one numbered role, or a prefix ending in *",
 		options: []option{optJSON, optProfile}},
 	{name: "permission", args: "ACTION [ID]", nargs: 2, optArgs: true, synopsis: "(ACTION: request | show ID | answer ID | list)",
-		summary: "Ask for, show, answer or list tool permission requests (answers come from the requester's parent or a boss role)",
+		summary: "Ask for, show, answer or list tool permission requests (only a boss role answers; the requester's parent is notified)",
 		options: []option{
 			{"--tool", "NAME", "request: the tool asked for"},
 			{"--summary", "TEXT", "request: what the tool will do (up to 500 bytes)"},
