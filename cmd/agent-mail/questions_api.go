@@ -55,7 +55,8 @@ const (
 func migrateQuestions(db *sql.DB) error {
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS questions(id TEXT PRIMARY KEY,asker TEXT NOT NULL,asker_base TEXT NOT NULL,questions TEXT NOT NULL,answers TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'pending',answered_by TEXT NOT NULL DEFAULT '',created_at INTEGER NOT NULL,answered_at INTEGER NOT NULL DEFAULT 0,withdrawn_at INTEGER NOT NULL DEFAULT 0,seq INTEGER NOT NULL);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_questions_seq ON questions(seq);
-CREATE INDEX IF NOT EXISTS idx_questions_asker ON questions(asker_base,created_at);`)
+CREATE INDEX IF NOT EXISTS idx_questions_asker ON questions(asker_base,created_at);
+CREATE INDEX IF NOT EXISTS idx_questions_answered ON questions(status,answered_at);`)
 	return err
 }
 
@@ -358,6 +359,7 @@ func (s *Server) askQuestion(w http.ResponseWriter, r *http.Request, p principal
 	now := s.now()
 	var v questionView
 	var told []string
+	var related []decision
 	errNobody := errors.New("nobody")
 	err = s.inTx(r.Context(), func(tx *sql.Tx) error {
 		nobody := true
@@ -384,8 +386,11 @@ func (s *Server) askQuestion(w http.ResponseWriter, r *http.Request, p principal
 		if told, e = questionWatchers(tx, p.Role, p.Base); e != nil {
 			return e
 		}
+		if related, e = relatedDecisions(tx, p.Base, settings.Target, v.Questions[0].Header); e != nil {
+			return e
+		}
 		subject := fmt.Sprintf("[질문] %s %s %s", id, p.Role, v.Questions[0].Header)
-		body := questionText(v)
+		body := questionText(v) + relatedText(related)
 		for _, box := range told {
 			if e = insertSystemMail(tx, box, subject, body, id, "normal", "", now); e != nil {
 				return e
@@ -406,7 +411,14 @@ func (s *Server) askQuestion(w http.ResponseWriter, r *http.Request, p principal
 		s.discord.noticeQuestion(id, p.Role, v.Questions[0].Header)
 	}
 	w.WriteHeader(http.StatusCreated)
-	writeJSON(w, s.forCaller(p, v))
+	writeJSON(w, askedQuestion{questionView: s.forCaller(p, v), Related: related})
+}
+
+// askedQuestion is the 201 body of a new question: the question and up to
+// maxRelated related past decisions.
+type askedQuestion struct {
+	questionView
+	Related []decision `json:"related"`
 }
 
 func (s *Server) publishQuestion(boxes []string) {

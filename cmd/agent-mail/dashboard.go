@@ -70,8 +70,18 @@ tr.offline td{color:#889}
 .settings-form label{display:flex;flex-direction:column;gap:.2rem}
 .settings-form label.check{flex-direction:row;align-items:center;gap:.4rem}
 #settingsTbl td.watchers{white-space:normal;overflow-wrap:anywhere}
+.viewswitch{display:inline-flex;border:1px solid #1e5bb8;border-radius:6px;overflow:hidden;margin:.5rem 0}
+.viewswitch button{margin:0;border:0;border-radius:0;background:#fff;color:#1e5bb8;padding:.45rem 1rem}
+.viewswitch button[aria-pressed=true]{background:#1e5bb8;color:#fff;font-weight:600}
+.decfilters input,.decfilters select{min-width:0}
+.decfilters a.button{display:inline-block;padding:.5rem .8rem;margin:.2rem;border:1px solid #1e5bb8;border-radius:4px;color:#1e5bb8;text-decoration:none;background:#fff}
+.dec{border-bottom:1px solid #e3e7ee;padding:.5rem 0}
+.dec p{margin:.15rem 0;overflow-wrap:anywhere}
+.dec .pill{background:#1e5bb8}
 @media (max-width:600px){
 body{margin:1rem auto}
+.decfilters>*{flex:1 1 100%;box-sizing:border-box}
+.decfilters a.button,.decfilters button{text-align:center}
 td.dir{max-width:11rem}
 #settingsTbl thead{display:none}
 #settingsTbl tr{display:block;border-bottom:1px solid #dde;padding:.4rem 0}
@@ -116,9 +126,27 @@ td.dir{max-width:11rem}
 </section>
 <section id="panel-questions" role="tabpanel" aria-labelledby="tab-questions" tabindex="0" class="card" hidden>
 <div class="row"><h2 style="margin:0">질문</h2><button id="reloadQuestions">새로 고침</button><span id="questionsNote" class="muted"></span></div>
+<div class="viewswitch" role="group" aria-label="질문 보기 고르기"><button type="button" id="viewQuestions" aria-pressed="true">질문</button><button type="button" id="viewDecisions" aria-pressed="false">결정</button></div>
+<div id="questionsView">
 <p class="muted">기다리는 질문이 먼저, 그다음 최근에 답했거나 거둔 질문이 보입니다.</p>
 <div id="questionsMsg" class="msg" role="status" aria-live="polite"></div>
 <div id="questions"></div>
+</div>
+<div id="decisionsView" hidden>
+<p class="muted">답한 질문을 결정으로 봅니다. 최근에 답한 것이 먼저, 최대 1000개입니다. 날짜는 UTC 기준입니다.</p>
+<form id="decForm" class="row decfilters">
+<select id="decPeriod" aria-label="기간"><option value="7">최근 7일</option><option value="30" selected>최근 30일</option><option value="90">최근 90일</option><option value="all">전체</option><option value="custom">직접 고르기</option></select>
+<input id="decFrom" type="date" aria-label="시작일" hidden>
+<input id="decTo" type="date" aria-label="끝일" hidden>
+<input id="decRole" list="decRoles" aria-label="역할" placeholder="역할 또는 svc/*" autocomplete="off" autocapitalize="off" spellcheck="false">
+<datalist id="decRoles"></datalist>
+<input id="decSearch" type="search" aria-label="검색" placeholder="제목·질문·고른 답 검색">
+<button type="submit">검색</button>
+<a id="decExport" class="button" download href="/api/admin/decisions?format=ndjson">JSON 내보내기</a>
+</form>
+<div id="decisionsNote" class="muted" role="status" aria-live="polite"></div>
+<div id="decisions"></div>
+</div>
 </section>
 <section id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" tabindex="0" class="card" hidden>
 <div class="row"><h2 style="margin:0">질문 설정</h2><button id="reloadSettings">새로 고침</button><span id="settingsNote" class="muted"></span></div>
@@ -353,6 +381,72 @@ function focusQuestion(id){
   c.focus({preventScroll:true});
 }
 tabLoaders.questions=loadQuestions;
+// ---- 결정 (#50) ----
+// The 결정 view of the 질문 tab lists answered questions as decisions. Its
+// filters build one query used both for the list and for the 「JSON 내보내기」
+// link (format=ndjson, a same-origin GET the browser downloads).
+let decisionsLoaded=false;
+function showQuestionView(name){
+  const dec=name==='decisions';
+  $('viewQuestions').setAttribute('aria-pressed',dec?'false':'true');
+  $('viewDecisions').setAttribute('aria-pressed',dec?'true':'false');
+  $('questionsView').hidden=dec;$('decisionsView').hidden=!dec;
+  if(dec&&!decisionsLoaded){decisionsLoaded=true;loadDecisionRoles();loadDecisions()}
+}
+function decisionQuery(){
+  const p=new URLSearchParams(),period=$('decPeriod').value;
+  if(period==='custom'){
+    if($('decFrom').value)p.set('from',$('decFrom').value);
+    if($('decTo').value)p.set('to',$('decTo').value);
+  }else if(period!=='all'){
+    p.set('from',new Date(Date.now()-Number(period)*864e5).toISOString().replace(/\.\d+Z$/,'Z'));
+  }
+  const role=$('decRole').value.trim(),q=$('decSearch').value.trim();
+  if(role)p.set('role',role);
+  if(q)p.set('q',q);
+  return p;
+}
+function updateDecisionExport(){
+  const p=decisionQuery();p.set('format','ndjson');
+  $('decExport').href='/api/admin/decisions?'+p.toString();
+}
+async function loadDecisionRoles(){
+  try{
+    const roles=await api('roles'),seen=new Set(),list=$('decRoles');
+    const add=v=>{if(!seen.has(v)){seen.add(v);const o=document.createElement('option');o.value=v;list.append(o)}};
+    for(const r of roles){const i=r.lastIndexOf('/');if(i>0)add(r.slice(0,i)+'/*')}
+    for(const r of roles)add(r);
+  }catch(e){}
+}
+async function loadDecisions(){
+  updateDecisionExport();
+  $('decisionsNote').textContent='불러오는 중…';
+  try{
+    const list=(await api('decisions?'+decisionQuery().toString())).decisions;
+    const box=$('decisions');box.replaceChildren();
+    for(const d of list)box.append(decisionRow(d));
+    $('decisionsNote').textContent='결정 '+list.length+'개'+(list.length>=1000?'(최대 1000개)':'');
+    if(!list.length)box.append(node('p','조건에 맞는 결정이 없습니다.','muted'));
+  }catch(e){$('decisionsNote').textContent=e.message}
+}
+function decisionRow(d){
+  const row=node('div','','dec');
+  row.append(node('p',d.asker+' · '+when(d.answered_at)+' · '+d.id+' · 답한 쪽 '+d.answered_by,'muted'));
+  for(const it of d.items){
+    const p=node('p','');
+    let chosen=(it.chosen||[]).join(', ');
+    if(it.other)chosen+=(chosen?' / ':'')+'기타: '+it.other;
+    p.title=it.question;
+    p.append(node('span',it.header,'pill'),document.createTextNode('→ '+(chosen||'(선택 없음)')));
+    row.append(p);
+  }
+  return row;
+}
+$('decPeriod').onchange=()=>{const c=$('decPeriod').value==='custom';$('decFrom').hidden=!c;$('decTo').hidden=!c;loadDecisions()};
+$('decForm').onsubmit=e=>{e.preventDefault();loadDecisions()};
+for(const id of ['decFrom','decTo','decRole','decSearch'])$(id).addEventListener('input',updateDecisionExport);
+$('viewQuestions').onclick=()=>selectTab('questions');
+$('viewDecisions').onclick=()=>selectTab('decisions');
 // ---- 질문 설정 ----
 async function loadSettings(){
   $('settingsNote').textContent='불러오는 중…';
@@ -404,10 +498,12 @@ function showTab(name){
   }
   if(!tabLoaded.has(name)){tabLoaded.add(name);if(tabLoaders[name])tabLoaders[name]()}
 }
-// Routes: #sessions #mail #permissions #questions #settings, and #q=<id> (질문 + focusQuestion).
-// No hash or an unknown one shows 세션.
+// Routes: #sessions #mail #permissions #questions #settings, #decisions (질문 tab,
+// 결정 view) and #q=<id> (질문 + focusQuestion). No hash or an unknown one shows 세션.
 function route(){
   const h=location.hash.slice(1);
+  if(h==='decisions'){showTab('questions');showQuestionView('decisions');return}
+  if(h==='questions'||h.startsWith('q='))showQuestionView('questions');
   if(h.startsWith('q=')){
     showTab('questions');
     let id=h.slice(2);try{id=decodeURIComponent(id)}catch(e){}
@@ -416,6 +512,7 @@ function route(){
   }
   showTab(tabNames.includes(h)?h:'sessions');
 }
+// selectTab(name) also takes 'decisions' (the 결정 view of the 질문 tab).
 function selectTab(name){
   if(location.hash==='#'+name)route();else location.hash=name;
 }
