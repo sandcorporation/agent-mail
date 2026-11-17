@@ -126,9 +126,11 @@ func (s *Server) startSweeper() func() {
 type sweepResult struct {
 	Offline int
 	Label   int
+	Alerts  int
 }
 
-// sweep sends every due stall notice once and prunes old presence_log rows.
+// sweep sends every due stall notice and metrics alert once and prunes old
+// presence_log and alerts rows.
 // It is safe to run repeatedly.
 func (s *Server) sweep(ctx context.Context) (sweepResult, error) {
 	var out sweepResult
@@ -138,6 +140,9 @@ func (s *Server) sweep(ctx context.Context) (sweepResult, error) {
 		return out, err
 	}
 	if out.Label, err = s.sweepLabels(ctx); err != nil {
+		return out, err
+	}
+	if out.Alerts, err = s.sweepAlerts(ctx); err != nil {
 		return out, err
 	}
 	_, err = prunePresenceLog(s.db, s.now())
