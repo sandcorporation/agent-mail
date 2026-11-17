@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"github.com/sandcorporation/agent-mail/internal/wire"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -128,14 +129,14 @@ func sendMail(t *testing.T, s *Server, token, to, subject string) int64 {
 	if w.Code != 201 {
 		t.Fatalf("send=%d %s", w.Code, w.Body)
 	}
-	var m Message
+	var m wire.Message
 	_ = json.Unmarshal(w.Body.Bytes(), &m)
 	return m.ID
 }
 
 func eventServer(t *testing.T) (*Server, string) {
 	s := testServer(t)
-	s.eventKeepAlive = time.Hour
+	s.mailCfg.KeepAlive = time.Hour
 	if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES('c','secret-c','now')`); err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +241,7 @@ func TestEventsRejectsBadCredentialsAndCursor(t *testing.T) {
 
 func TestEventsKeepAliveAndShutdown(t *testing.T) {
 	s, base := eventServer(t)
-	s.eventKeepAlive = 30 * time.Millisecond
+	s.mailCfg.KeepAlive = 30 * time.Millisecond
 	s.done = make(chan struct{})
 	st := openEvents(t, base, "secret-b", "b", nil, "")
 	st.untilReady(t)
@@ -253,9 +254,7 @@ func TestEventsKeepAliveAndShutdown(t *testing.T) {
 		select {
 		case _, ok := <-st.frames:
 			if !ok {
-				s.hub.mu.Lock()
-				left := len(s.hub.subs)
-				s.hub.mu.Unlock()
+				left := s.hub.Waiting()
 				if left != 0 {
 					t.Fatalf("subscribers left after shutdown: %d", left)
 				}
@@ -289,7 +288,7 @@ func TestEventsSlowSubscriberDoesNotBlockSendOrLoseMail(t *testing.T) {
 
 func TestEventsStreamEndsAfterRevoke(t *testing.T) {
 	s, base := eventServer(t)
-	s.eventKeepAlive = 30 * time.Millisecond
+	s.mailCfg.KeepAlive = 30 * time.Millisecond
 	st := openEvents(t, base, "secret-b", "b", nil, "")
 	st.untilReady(t)
 	if _, err := s.ids().SetRevoked(context.Background(), "b", true); err != nil {

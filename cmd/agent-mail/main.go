@@ -1,12 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -20,33 +18,31 @@ import (
 	"github.com/sandcorporation/agent-mail/internal/cli"
 	"github.com/sandcorporation/agent-mail/internal/config"
 	"github.com/sandcorporation/agent-mail/internal/identity"
+	"github.com/sandcorporation/agent-mail/internal/mail"
+	"github.com/sandcorporation/agent-mail/internal/presence"
 	"github.com/sandcorporation/agent-mail/internal/store"
 	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 type Server struct {
-	db               *sql.DB
-	tokens           map[string]string
-	hub              mailHub
-	eventKeepAlive   time.Duration
-	pollMax          time.Duration       // cap on a long poll's wait; 0 means defaultPollMax
-	done             chan struct{}       // closed on shutdown; ends event streams
-	slotLease        time.Duration       // AGENT_MAIL_SLOT_LEASE; 0 means presence interval × missed
-	presenceInterval time.Duration       // expected heartbeat interval; 0 means defaultPresenceInterval
-	presenceMissed   int                 // heartbeats a session may miss; 0 means defaultPresenceMissed
-	presenceRetain   *time.Duration      // how long offline sessions stay listed; nil means defaultPresenceRetain
-	clock            func() time.Time    // nil means time.Now; tests move time forward
-	sweepEvery       time.Duration       // AGENT_MAIL_SWEEP_INTERVAL; 0 means defaultSweepInterval
-	labelStall       time.Duration       // AGENT_MAIL_LABEL_STALL; 0 means defaultLabelStall
-	permissionTTL    time.Duration       // AGENT_MAIL_PERMISSION_TTL; 0 means defaultPermissionTTL
-	bossRoles        map[string]bool     // AGENT_MAIL_BOSS_ROLES; may answer any permission request
-	discord          *discordNotifier    // AGENT_MAIL_DISCORD_WEBHOOK; nil sends no question notices
-	alerts           *alertThresholds    // SWITCHBOARD_ALERT_*; nil means defaultAlertThresholds
-	oldHeaders       config.AliasCounter // requests that used an X-Agent-Mail-* header
-	groups           identity.Groups     // collaborator groups (internal/identity)
-	admin            adminauth.Config    // admin login settings (internal/adminauth)
-	loginLimits      adminauth.Limiter   // failed admin logins
-	joinLimits       adminauth.Limiter   // failed POST /api/join per client IP (invites.go)
+	db            *sql.DB
+	tokens        map[string]string
+	hub           mail.Hub            // wakes event streams and long polls (internal/mail)
+	mailCfg       mail.Config         // SSE keep-alive and long-poll cap (internal/mail)
+	done          chan struct{}       // closed on shutdown; ends event streams
+	presenceCfg   presence.Config     // slot lease and presence settings (internal/presence)
+	clock         func() time.Time    // nil means time.Now; tests move time forward
+	sweepEvery    time.Duration       // AGENT_MAIL_SWEEP_INTERVAL; 0 means defaultSweepInterval
+	labelStall    time.Duration       // AGENT_MAIL_LABEL_STALL; 0 means defaultLabelStall
+	permissionTTL time.Duration       // AGENT_MAIL_PERMISSION_TTL; 0 means defaultPermissionTTL
+	bossRoles     map[string]bool     // AGENT_MAIL_BOSS_ROLES; may answer any permission request
+	discord       *discordNotifier    // AGENT_MAIL_DISCORD_WEBHOOK; nil sends no question notices
+	alerts        *alertThresholds    // SWITCHBOARD_ALERT_*; nil means defaultAlertThresholds
+	oldHeaders    config.AliasCounter // requests that used an X-Agent-Mail-* header
+	groups        identity.Groups     // collaborator groups (internal/identity)
+	admin         adminauth.Config    // admin login settings (internal/adminauth)
+	loginLimits   adminauth.Limiter   // failed admin logins
+	joinLimits    adminauth.Limiter   // failed POST /api/join per client IP (invites.go)
 }
 
 var version = "dev"
@@ -72,23 +68,23 @@ func runServer() {
 		if err != nil || d <= 0 {
 			log.Fatal(from + " must be a positive duration such as 20s")
 		}
-		s.eventKeepAlive = d
+		s.mailCfg.KeepAlive = d
 	}
 	if v, from := config.EnvAliasFrom(os.Getenv, "POLL_MAX"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n <= 0 {
 			log.Fatal(from + " must be a positive whole number of seconds such as 55")
 		}
-		s.pollMax = time.Duration(n) * time.Second
+		s.mailCfg.PollMax = time.Duration(n) * time.Second
 	}
 	if v, from := config.EnvAliasFrom(os.Getenv, "SLOT_LEASE"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil || d < time.Second {
 			log.Fatal(from + " must be a duration of at least 1s such as 3m")
 		}
-		s.slotLease = d
+		s.presenceCfg.SlotLease = d
 	}
-	if e = configurePresence(s, os.Getenv); e != nil {
+	if e = presence.Configure(&s.presenceCfg, os.Getenv); e != nil {
 		log.Fatal(e)
 	}
 	if e = configureStall(s, os.Getenv); e != nil {
@@ -144,18 +140,6 @@ func runServer() {
 	<-stopped
 	waitSweeper()
 	_ = db.Close()
-}
-
-// normalizePriority returns the stored priority for a request value: empty
-// means normal; anything other than normal or urgent is rejected.
-func normalizePriority(p string) (string, bool) {
-	switch p {
-	case "":
-		return "normal", true
-	case "normal", "urgent":
-		return p, true
-	}
-	return "", false
 }
 
 func migrateConfiguredRoles(s *Server) error {
@@ -232,7 +216,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if path == "presence" {
-		s.presenceAPI(w, r, &who)
+		s.presence().API(w, r, &who)
 		return
 	}
 	if path == "whoami" {
@@ -252,30 +236,30 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if path == "slots" || strings.HasPrefix(path, "slots/") {
-		s.slotAPI(w, r, who, strings.TrimPrefix(strings.TrimPrefix(path, "slots"), "/"))
+		s.presence().SlotAPI(w, r, who, strings.TrimPrefix(strings.TrimPrefix(path, "slots"), "/"))
 		return
 	}
 	if path == "messages" {
 		switch r.Method {
 		case "POST":
-			s.send(w, r, who)
+			s.mail().Send(w, r, who)
 		case "GET":
-			s.list(w, r, role)
+			s.mail().List(w, r, role)
 		default:
 			http.Error(w, "method not allowed", 405)
 		}
 		return
 	}
 	if path == "events/poll" && r.Method == "GET" {
-		s.pollEvents(w, r, role)
+		s.mail().PollEvents(w, r, role)
 		return
 	}
 	if path == "events" && r.Method == "GET" {
-		s.events(w, r, role)
+		s.mail().Events(w, r, role)
 		return
 	}
 	if path == "watch" && r.Method == "GET" {
-		s.watch(w, r, role)
+		s.mail().Watch(w, r, role)
 		return
 	}
 	parts := strings.Split(path, "/")
@@ -285,21 +269,21 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid id", 400)
 			return
 		}
-		if box, other := s.otherSlotMailbox(who, id); other {
+		if box, other := s.mail().OtherSlotMailbox(who, id); other {
 			http.Error(w, "message belongs to "+box+"; send X-Switchboard-Role: "+box+" (CLI: switchboard --role "+box+" or SWITCHBOARD_ROLE)", 403)
 			return
 		}
 		if len(parts) == 2 && r.Method == "GET" {
-			s.read(w, r, role, id)
+			s.mail().Read(w, r, role, id)
 			return
 		}
 		if len(parts) == 3 && r.Method == "POST" {
 			if parts[2] == "reply" {
-				s.reply(w, r, who, id)
+				s.mail().Reply(w, r, who, id)
 				return
 			}
 			if parts[2] == "ack" || parts[2] == "complete" || parts[2] == "read" {
-				s.status(w, r, role, id, parts[2])
+				s.mail().Status(w, r, role, id, parts[2])
 				return
 			}
 		}
@@ -366,20 +350,20 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, out)
 	case "slots":
-		out, err := s.activeSlots("")
+		out, err := s.presence().ActiveSlots("")
 		if err != nil {
 			http.Error(w, "query failed", 500)
 			return
 		}
 		writeJSON(w, out)
 	case "presence":
-		s.presenceAPI(w, r, nil)
+		s.presence().API(w, r, nil)
 	case "metrics":
 		s.metricsAPI(w, r, true, true)
 	case "progress":
 		s.progressAPI(w, r, true)
 	case "messages":
-		adminList(w, r, s.db)
+		s.mail().AdminList(w, r)
 	case "decisions":
 		s.decisionsAPI(w, r, nil)
 	default:
@@ -387,170 +371,7 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func adminList(w http.ResponseWriter, r *http.Request, db *sql.DB) {
-	q, status, role, box := strings.TrimSpace(r.URL.Query().Get("q")), r.URL.Query().Get("status"), r.URL.Query().Get("role"), r.URL.Query().Get("box")
-	thread := strings.TrimSpace(r.URL.Query().Get("thread"))
-	task := strings.TrimSpace(r.URL.Query().Get("task"))
-	id := strings.TrimSpace(r.URL.Query().Get("id"))
-	if mb, ok := identity.Mailbox(db, role); ok {
-		role = mb
-	}
-	if box != "inbox" && box != "outbox" && box != "held" {
-		box = "all"
-	}
-	query := `SELECT ` + messageCols(`COALESCE(rs.status,m.status,'pending')`) + ` FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=m.recipient WHERE 1=1`
-	args := []any{}
-	if role != "" {
-		query += ` AND (m.sender=? OR m.recipient=?)`
-		args = append(args, role, role)
-	}
-	if box == "inbox" && role != "" {
-		query += ` AND m.recipient=?`
-		args = append(args, role)
-	}
-	if box == "outbox" && role != "" {
-		query += ` AND m.sender=?`
-		args = append(args, role)
-	}
-	if box == "held" {
-		query += ` AND m.status='held'`
-	}
-	if q != "" {
-		query += ` AND (m.subject LIKE ? OR m.body LIKE ? OR m.task_id LIKE ? OR m.sender LIKE ? OR m.recipient LIKE ?)`
-		like := "%" + q + "%"
-		args = append(args, like, like, like, like, like)
-	}
-	if status != "" {
-		values := statusValues(status)
-		query += ` AND COALESCE(rs.status,m.status,'pending') IN (?` + strings.Repeat(",?", len(values)-1) + `)`
-		args = append(args, values...)
-	}
-	if thread != "" {
-		query += ` AND (m.thread_id=? OR m.id=?)`
-		args = append(args, thread, thread)
-	}
-	if task != "" {
-		query += ` AND m.task_id=?`
-		args = append(args, task)
-	}
-	if id != "" {
-		query += ` AND m.id=?`
-		args = append(args, id)
-	}
-	query += ` ORDER BY m.id DESC LIMIT 500`
-	rows, err := db.Query(query, args...)
-	if err != nil {
-		http.Error(w, "query failed", 500)
-		return
-	}
-	defer rows.Close()
-	out := []Message{}
-	for rows.Next() {
-		if m, err := scanMessage(rows); err == nil {
-			out = append(out, m)
-		}
-	}
-	writeJSON(w, out)
-}
 func writeJSON(w http.ResponseWriter, v any) { _ = json.NewEncoder(w).Encode(v) }
-func (s *Server) send(w http.ResponseWriter, r *http.Request, p identity.Principal) {
-	role := p.Role
-	var m Message
-	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&m) != nil {
-		http.Error(w, "invalid JSON", 400)
-		return
-	}
-	m.Sender = role
-	if m.Recipient == "" || m.Subject == "" {
-		http.Error(w, "recipient and subject required", 400)
-		return
-	}
-	priority, ok := normalizePriority(m.Priority)
-	if !ok {
-		http.Error(w, `priority must be "normal" or "urgent"`, 400)
-		return
-	}
-	m.Priority = priority
-	m.AddressedTo, m.HeldID, m.HeldAt, m.DeliveredAt = "", 0, nil, nil
-	var label labelAddr
-	if isLabelAddress(m.Recipient) {
-		var e error
-		if label, e = parseLabelAddress(m.Recipient); e != nil {
-			http.Error(w, e.Error(), 400)
-			return
-		}
-		if !identity.RoleExists(s.db, label.Base) {
-			http.Error(w, "unknown recipient role", 403)
-			return
-		}
-		if !s.ids().MaySend(p, label.Base) {
-			http.Error(w, "outside your group", 403)
-			return
-		}
-		m.Recipient = label.String()
-	} else {
-		box, ok := identity.Mailbox(s.db, m.Recipient)
-		if !ok {
-			http.Error(w, "unknown recipient role", 403)
-			return
-		}
-		if !s.ids().MaySend(p, identity.BaseOf(s.db, box)) && !s.isReplyToSender(role, m.ReplyTo, box) {
-			http.Error(w, "outside your group", 403)
-			return
-		}
-		m.Recipient = box
-	}
-	key := r.Header.Get("Idempotency-Key")
-	if key == "" {
-		key = m.IdempotencyKey
-	}
-	if key != "" {
-		existing, e := scanMessage(s.db.QueryRow(`SELECT `+messageCols(`m.status`)+` FROM messages m WHERE m.sender=? AND m.idem=?`, role, key))
-		if e == nil {
-			w.WriteHeader(200)
-			writeJSON(w, existing)
-			return
-		}
-	}
-	now := s.now().UTC()
-	if m.ThreadID == 0 && m.ReplyTo > 0 {
-		m.ThreadID = m.ReplyTo
-	}
-	m.Status = "pending"
-	e := s.inTx(r.Context(), func(tx *sql.Tx) error {
-		var heldAt any
-		if label.Base != "" {
-			// Look up the label's session in the same transaction as the insert, so
-			// a registration either sees this message as held or is seen here.
-			target, err := labelTarget(tx, label, s.now())
-			if err != nil {
-				return err
-			}
-			m.AddressedTo = label.String()
-			if target != "" {
-				m.Recipient = target
-			} else {
-				m.Status, m.HeldAt, heldAt = statusHeld, &now, now.Format(time.RFC3339Nano)
-			}
-		}
-		res, err := tx.Exec(`INSERT INTO messages(sender,recipient,subject,body,created_at,task_id,thread_id,reply_to,idem,priority,status,addressed_to,held_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, role, m.Recipient, m.Subject, m.Body, now.Format(time.RFC3339Nano), m.TaskID, nullInt(m.ThreadID), nullInt(m.ReplyTo), nullable(key), m.Priority, m.Status, nullable(m.AddressedTo), heldAt)
-		if err != nil {
-			return err
-		}
-		m.ID, err = res.LastInsertId()
-		return err
-	})
-	if e != nil {
-		http.Error(w, "could not store message", 500)
-		return
-	}
-	m.CreatedAt = now
-	if m.Status != statusHeld {
-		s.hub.publish(m.Recipient)
-	}
-	w.WriteHeader(201)
-	writeJSON(w, m)
-}
 func nullable(s string) any {
 	if s == "" {
 		return nil
@@ -562,157 +383,6 @@ func nullInt(i int64) any {
 		return nil
 	}
 	return i
-}
-func (s *Server) list(w http.ResponseWriter, r *http.Request, role string) {
-	box := r.URL.Query().Get("box")
-	if box != "outbox" {
-		box = "inbox"
-	}
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	status := r.URL.Query().Get("status")
-	limit := 100
-	query := `SELECT ` + messageCols(`COALESCE(CASE WHEN rs.status IS NOT NULL THEN rs.status ELSE m.status END,'pending')`) + ` FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=CASE WHEN m.sender=? THEN m.recipient ELSE ? END WHERE `
-	args := []any{role, role}
-	if box == "outbox" {
-		query += `m.sender=? `
-	} else {
-		query += `m.recipient=? `
-	}
-	args = append(args, role)
-	if q != "" {
-		query += `AND (m.subject LIKE ? OR m.body LIKE ? OR m.task_id LIKE ?) `
-		like := "%" + q + "%"
-		args = append(args, like, like, like)
-	}
-	if status != "" {
-		values := statusValues(status)
-		query += `AND COALESCE(rs.status,m.status) IN (?` + strings.Repeat(",?", len(values)-1) + `) `
-		args = append(args, values...)
-	}
-	query += `ORDER BY m.id DESC LIMIT ?`
-	args = append(args, limit)
-	rows, e := s.db.Query(query, args...)
-	if e != nil {
-		http.Error(w, "query failed", 500)
-		return
-	}
-	defer rows.Close()
-	out := []Message{}
-	for rows.Next() {
-		if m, err := scanMessage(rows); err == nil {
-			out = append(out, m)
-		}
-	}
-	writeJSON(w, out)
-}
-func (s *Server) read(w http.ResponseWriter, r *http.Request, role string, id int64) {
-	m, e := s.get(id)
-	if e != nil || (m.Sender != role && m.Recipient != role) {
-		http.Error(w, "not found", 404)
-		return
-	}
-	if m.Recipient == role {
-		_, _ = s.db.Exec(`INSERT INTO role_states(role,message_id,status,updated_at) VALUES(?,?,?,?) ON CONFLICT(role,message_id) DO UPDATE SET status=CASE WHEN role_states.status='pending' THEN 'read' ELSE role_states.status END,updated_at=excluded.updated_at`, role, id, "read", time.Now().UTC().Format(time.RFC3339Nano))
-	}
-	_ = s.db.QueryRow(`SELECT COALESCE(status,'pending') FROM role_states WHERE role=? AND message_id=?`, role, id).Scan(&m.Status)
-	writeJSON(w, m)
-}
-func (s *Server) get(id int64) (Message, error) {
-	return scanMessage(s.db.QueryRow(`SELECT `+messageCols(`m.status`)+` FROM messages m WHERE m.id=?`, id))
-}
-
-// statusValues maps a status filter to stored values. /complete stores "complete";
-// "completed" (the documented spelling before v0.4.1) is accepted as the same state.
-func statusValues(status string) []any {
-	if status == "complete" || status == "completed" {
-		return []any{"complete", "completed"}
-	}
-	return []any{status}
-}
-
-func (s *Server) status(w http.ResponseWriter, r *http.Request, role string, id int64, status string) {
-	if status == "ack" {
-		status = "acknowledged"
-	}
-	m, e := s.get(id)
-	if e != nil || m.Recipient != role {
-		http.Error(w, "not found", 404)
-		return
-	}
-	_, e = s.db.Exec(`INSERT INTO role_states(role,message_id,status,updated_at) VALUES(?,?,?,?) ON CONFLICT(role,message_id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at`, role, id, status, time.Now().UTC().Format(time.RFC3339Nano))
-	if e != nil {
-		http.Error(w, "update failed", 500)
-		return
-	}
-	m.Status = status
-	writeJSON(w, m)
-}
-func (s *Server) reply(w http.ResponseWriter, r *http.Request, p identity.Principal, id int64) {
-	role := p.Role
-	orig, e := s.get(id)
-	if e != nil || orig.Recipient != role {
-		http.Error(w, "not found", 404)
-		return
-	}
-	var m Message
-	if json.NewDecoder(r.Body).Decode(&m) != nil {
-		http.Error(w, "invalid JSON", 400)
-		return
-	}
-	if m.ThreadID == 0 {
-		m.ThreadID = orig.ID
-		if orig.ThreadID != 0 {
-			m.ThreadID = orig.ThreadID
-		}
-	}
-	m.ReplyTo = id
-	if m.Recipient == "" {
-		m.Recipient = orig.Sender
-	}
-	b, _ := json.Marshal(m)
-	r.Body = io.NopCloser(bytes.NewReader(b))
-	s.send(w, r, p)
-}
-
-// isReplyToSender: mail replyTo was received by role and box sent it. A group
-// role may always answer whoever mailed it.
-func (s *Server) isReplyToSender(role string, replyTo int64, box string) bool {
-	if replyTo <= 0 {
-		return false
-	}
-	orig, err := s.get(replyTo)
-	return err == nil && orig.Recipient == role && orig.Sender == box
-}
-func (s *Server) watch(w http.ResponseWriter, r *http.Request, role string) {
-	after, _ := wire.ParseID(r.URL.Query().Get("after"))
-	deadline := time.Now().Add(25 * time.Second)
-	for {
-		rows, e := s.db.Query(`SELECT id FROM messages WHERE recipient=? AND id>? ORDER BY id LIMIT 100`, role, after)
-		if e != nil {
-			http.Error(w, "query failed", 500)
-			return
-		}
-		ids := []int64{}
-		for rows.Next() {
-			var id int64
-			_ = rows.Scan(&id)
-			ids = append(ids, id)
-		}
-		rows.Close()
-		if len(ids) > 0 {
-			writeJSON(w, map[string]any{"messages": ids, "cursor": ids[len(ids)-1]})
-			return
-		}
-		if time.Now().After(deadline) {
-			writeJSON(w, map[string]any{"messages": ids, "cursor": after, "timeout": true})
-			return
-		}
-		select {
-		case <-r.Context().Done():
-			return
-		case <-time.After(1 * time.Second):
-		}
-	}
 }
 
 // health reports liveness and the build version. It is unauthenticated; the

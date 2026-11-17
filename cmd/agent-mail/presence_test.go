@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/sandcorporation/agent-mail/internal/cli"
+	"github.com/sandcorporation/agent-mail/internal/presence"
 	"github.com/sandcorporation/agent-mail/internal/store"
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 // presenceServer is slotServer with the lease derived from presence settings:
@@ -18,20 +20,20 @@ import (
 func presenceServer(t *testing.T) (*Server, *fakeClock) {
 	t.Helper()
 	s, clock := slotServer(t)
-	s.slotLease = 0
-	s.presenceInterval = 10 * time.Second
-	s.presenceMissed = 3
+	s.presenceCfg.SlotLease = 0
+	s.presenceCfg.Interval = 10 * time.Second
+	s.presenceCfg.Missed = 3
 	return s, clock
 }
 
 func int64p(v int64) *int64 { return &v }
 
-func report(machine, dir, state string, tokens *int64, last string) slotRequest {
-	return slotRequest{Machine: machine, Directory: dir, State: state, ContextTokens: tokens, LastTurnAt: last}
+func report(machine, dir, state string, tokens *int64, last string) wire.SlotRequest {
+	return wire.SlotRequest{Machine: machine, Directory: dir, State: state, ContextTokens: tokens, LastTurnAt: last}
 }
 
 // presenceAs reads GET /api/presence?role=filter as role a.
-func presenceAs(t *testing.T, s *Server, filter string) (presenceList, string) {
+func presenceAs(t *testing.T, s *Server, filter string) (wire.PresenceList, string) {
 	t.Helper()
 	path := "/api/presence"
 	if filter != "" {
@@ -41,14 +43,14 @@ func presenceAs(t *testing.T, s *Server, filter string) (presenceList, string) {
 	if w.Code != 200 {
 		t.Fatalf("presence %q: %d %s", filter, w.Code, w.Body)
 	}
-	var out presenceList
+	var out wire.PresenceList
 	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
 	return out, w.Body.String()
 }
 
-func onlySession(t *testing.T, s *Server, filter string) presenceView {
+func onlySession(t *testing.T, s *Server, filter string) wire.PresenceView {
 	t.Helper()
 	out, _ := presenceAs(t, s, filter)
 	if len(out.Sessions) != 1 {
@@ -59,9 +61,9 @@ func onlySession(t *testing.T, s *Server, filter string) presenceView {
 
 func TestPresenceReportAndQuery(t *testing.T) {
 	s, clock := presenceServer(t)
-	slotDo(t, s, "register", slotRequest{Machine: "m", Directory: "/a", SessionID: "sess-1", Label: "issue-21", Parent: "team/lead", State: "idle"})
+	slotDo(t, s, "register", wire.SlotRequest{Machine: "m", Directory: "/a", SessionID: "sess-1", Label: "issue-21", Parent: "team/lead", State: "idle"})
 	clock.add(5 * time.Second)
-	slotDo(t, s, "heartbeat", slotRequest{Machine: "m", Directory: "/a", SessionID: "sess-1", Label: "issue-21", Parent: "team/lead",
+	slotDo(t, s, "heartbeat", wire.SlotRequest{Machine: "m", Directory: "/a", SessionID: "sess-1", Label: "issue-21", Parent: "team/lead",
 		State: "busy", ContextTokens: int64p(12345), LastTurnAt: "2026-11-17T08:59:00+09:00"})
 	clock.add(4 * time.Second)
 
@@ -174,7 +176,7 @@ func TestPresenceOfflineAfterMissedHeartbeats(t *testing.T) {
 	if v := onlySession(t, s, ""); !v.Online || v.Status != "busy" {
 		t.Fatalf("before the third missed heartbeat: %+v", v)
 	}
-	if got, _ := s.offlineUnnoticed(); len(got) != 0 {
+	if got, _ := s.presence().OfflineUnnoticed(); len(got) != 0 {
 		t.Fatalf("online session listed as offline: %+v", got)
 	}
 	clock.add(time.Second)
@@ -187,14 +189,14 @@ func TestPresenceOfflineAfterMissedHeartbeats(t *testing.T) {
 	}
 
 	// The offline transition shows up once until handled.
-	got, err := s.offlineUnnoticed()
+	got, err := s.presence().OfflineUnnoticed()
 	if err != nil || len(got) != 1 || got[0].Role != "team/worker-1" {
 		t.Fatalf("offline transition: %+v %v", got, err)
 	}
-	if ok, err := s.markOfflineNoticed(got[0]); !ok || err != nil {
+	if ok, err := s.presence().MarkOfflineNoticed(got[0]); !ok || err != nil {
 		t.Fatalf("mark noticed: %v %v", ok, err)
 	}
-	if got, _ = s.offlineUnnoticed(); len(got) != 0 {
+	if got, _ = s.presence().OfflineUnnoticed(); len(got) != 0 {
 		t.Fatalf("handled transition listed again: %+v", got)
 	}
 
@@ -208,9 +210,9 @@ func TestPresenceOfflineAfterMissedHeartbeats(t *testing.T) {
 	}
 	// A transition read before a renewal cannot be marked afterwards.
 	clock.add(30 * time.Second)
-	got, _ = s.offlineUnnoticed()
+	got, _ = s.presence().OfflineUnnoticed()
 	slotDo(t, s, "heartbeat", ident("m", "/a"))
-	if ok, _ := s.markOfflineNoticed(got[0]); ok {
+	if ok, _ := s.presence().MarkOfflineNoticed(got[0]); ok {
 		t.Fatal("marked a session that reported again")
 	}
 
@@ -237,7 +239,7 @@ func TestPresenceOfflineAfterMissedHeartbeats(t *testing.T) {
 func TestPresenceRetention(t *testing.T) {
 	s, clock := presenceServer(t)
 	retain := time.Hour
-	s.presenceRetain = &retain
+	s.presenceCfg.Retain = &retain
 	slotDo(t, s, "register", ident("m", "/a"))
 	clock.add(30*time.Second + time.Hour - time.Millisecond)
 	if v := onlySession(t, s, ""); v.Online {
@@ -247,7 +249,7 @@ func TestPresenceRetention(t *testing.T) {
 	if out, _ := presenceAs(t, s, ""); len(out.Sessions) != 0 {
 		t.Fatalf("offline past retention still listed: %+v", out.Sessions)
 	}
-	if got, _ := s.offlineUnnoticed(); len(got) != 0 {
+	if got, _ := s.presence().OfflineUnnoticed(); len(got) != 0 {
 		t.Fatalf("offline past retention still pending: %+v", got)
 	}
 }
@@ -302,20 +304,20 @@ func TestPresenceAuth(t *testing.T) {
 func TestPresenceSettings(t *testing.T) {
 	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
 	s := &Server{}
-	if err := configurePresence(s, env(nil)); err != nil || s.leaseLength() != 3*time.Minute || s.offlineRetention() != 24*time.Hour {
-		t.Fatalf("defaults: %v %v %v", err, s.leaseLength(), s.offlineRetention())
+	if err := presence.Configure(&s.presenceCfg, env(nil)); err != nil || s.presence().LeaseLength() != 3*time.Minute || s.presence().OfflineRetention() != 24*time.Hour {
+		t.Fatalf("defaults: %v %v %v", err, s.presence().LeaseLength(), s.presence().OfflineRetention())
 	}
 	s = &Server{}
-	if err := configurePresence(s, env(map[string]string{"AGENT_MAIL_PRESENCE_INTERVAL": "40s", "AGENT_MAIL_PRESENCE_MISSED": "2", "AGENT_MAIL_PRESENCE_RETAIN": "0"})); err != nil ||
-		s.leaseLength() != 80*time.Second || s.offlineRetention() != 0 {
-		t.Fatalf("configured: %v %v %v", err, s.leaseLength(), s.offlineRetention())
+	if err := presence.Configure(&s.presenceCfg, env(map[string]string{"AGENT_MAIL_PRESENCE_INTERVAL": "40s", "AGENT_MAIL_PRESENCE_MISSED": "2", "AGENT_MAIL_PRESENCE_RETAIN": "0"})); err != nil ||
+		s.presence().LeaseLength() != 80*time.Second || s.presence().OfflineRetention() != 0 {
+		t.Fatalf("configured: %v %v %v", err, s.presence().LeaseLength(), s.presence().OfflineRetention())
 	}
-	s.slotLease = 5 * time.Minute // AGENT_MAIL_SLOT_LEASE overrides the product
-	if s.leaseLength() != 5*time.Minute {
-		t.Fatalf("override: %v", s.leaseLength())
+	s.presenceCfg.SlotLease = 5 * time.Minute // AGENT_MAIL_SLOT_LEASE overrides the product
+	if s.presence().LeaseLength() != 5*time.Minute {
+		t.Fatalf("override: %v", s.presence().LeaseLength())
 	}
 	for k, v := range map[string]string{"AGENT_MAIL_PRESENCE_INTERVAL": "500ms", "AGENT_MAIL_PRESENCE_MISSED": "0", "AGENT_MAIL_PRESENCE_RETAIN": "-1h"} {
-		if err := configurePresence(&Server{}, env(map[string]string{k: v})); err == nil {
+		if err := presence.Configure(&presence.Config{}, env(map[string]string{k: v})); err == nil {
 			t.Fatalf("%s=%s accepted", k, v)
 		}
 	}
@@ -352,9 +354,9 @@ func TestPresenceSchemaOnSlotsDatabase(t *testing.T) {
 	}
 }
 
-func onlyPresence(t *testing.T, s *Server) presenceView {
+func onlyPresence(t *testing.T, s *Server) wire.PresenceView {
 	t.Helper()
-	out, err := s.presence("")
+	out, err := s.presence().List("")
 	if err != nil || len(out.Sessions) != 1 {
 		t.Fatalf("presence: %+v %v", out, err)
 	}

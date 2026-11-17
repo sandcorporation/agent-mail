@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/sandcorporation/agent-mail/internal/store"
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 const (
@@ -27,7 +28,7 @@ func labelServer(t *testing.T) (*Server, *fakeClock, string) {
 	t.Helper()
 	s, clock := slotServer(t)
 	s.admin.ProxyToken = adminToken
-	s.eventKeepAlive = time.Hour
+	s.mailCfg.KeepAlive = time.Hour
 	if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES('team/other',?,'now')`, otherToken); err != nil {
 		t.Fatal(err)
 	}
@@ -36,38 +37,38 @@ func labelServer(t *testing.T) (*Server, *fakeClock, string) {
 	return s, clock, ts.URL
 }
 
-func labeled(machine, dir, label string) slotRequest {
+func labeled(machine, dir, label string) wire.SlotRequest {
 	r := ident(machine, dir)
 	r.Label = label
 	return r
 }
 
 // sendFrom sends as role a and returns the stored message.
-func sendFrom(t *testing.T, s *Server, to, subject, idem string, want int) Message {
+func sendFrom(t *testing.T, s *Server, to, subject, idem string, want int) wire.Message {
 	t.Helper()
 	w := call(s, "POST", "/api/messages", "secret-a", map[string]any{"recipient": to, "subject": subject, "body": "b"}, idem)
 	if w.Code != want {
 		t.Fatalf("send to %q: %d %s", to, w.Code, w.Body)
 	}
-	var m Message
+	var m wire.Message
 	_ = json.Unmarshal(w.Body.Bytes(), &m)
 	return m
 }
 
-func listAs(t *testing.T, s *Server, token, role, box string) []Message {
+func listAs(t *testing.T, s *Server, token, role, box string) []wire.Message {
 	t.Helper()
 	w := callAs(s, "GET", "/api/messages?box="+box, token, role, nil)
 	if w.Code != 200 {
 		t.Fatalf("%s %s: %d %s", role, box, w.Code, w.Body)
 	}
-	var out []Message
+	var out []wire.Message
 	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
 	return out
 }
 
-func adminMessages(t *testing.T, s *Server, query string) []Message {
+func adminMessages(t *testing.T, s *Server, query string) []wire.Message {
 	t.Helper()
 	r := httptest.NewRequest("GET", "/api/admin/messages"+query, nil)
 	r.Header.Set("X-Agent-Mail-Admin", adminToken)
@@ -76,7 +77,7 @@ func adminMessages(t *testing.T, s *Server, query string) []Message {
 	if w.Code != 200 {
 		t.Fatalf("admin: %d %s", w.Code, w.Body)
 	}
-	var out []Message
+	var out []wire.Message
 	_ = json.Unmarshal(w.Body.Bytes(), &out)
 	return out
 }
@@ -138,7 +139,7 @@ func TestLabelMailIsHeldUntilTheLabelConnects(t *testing.T) {
 	}
 
 	out := listAs(t, s, "secret-a", "a", "outbox")
-	var moved Message
+	var moved wire.Message
 	for _, m := range out {
 		if m.Subject == "brief" {
 			moved = m
@@ -234,7 +235,7 @@ func TestLabelConcurrentRegistrationsDeliverToOneSession(t *testing.T) {
 		sendFrom(t, s, label22, "held-"+itoa(int64(i)), "", 201)
 	}
 	const n = 8
-	grants := make([]slotGrant, n)
+	grants := make([]wire.SlotGrant, n)
 	var wg sync.WaitGroup
 	for i := 0; i < n; i++ {
 		wg.Add(1)
@@ -322,7 +323,7 @@ func TestLabelAddressRules(t *testing.T) {
 	}
 	// A client cannot forge the label fields.
 	w := call(s, "POST", "/api/messages", "secret-a", map[string]any{"recipient": "b", "subject": "s", "addressed_to": label22, "held_id": 5}, "")
-	var m Message
+	var m wire.Message
 	_ = json.Unmarshal(w.Body.Bytes(), &m)
 	if w.Code != 201 || m.AddressedTo != "" || m.HeldID != 0 {
 		t.Fatalf("forged fields: %d %+v", w.Code, m)
@@ -334,7 +335,7 @@ func TestLabelIsScopedToTheBase(t *testing.T) {
 	sendFrom(t, s, label22, "for worker", "", 201)
 	// Another base registers the same label: it gets nothing.
 	w := callAs(s, "POST", "/api/slots/register", otherToken, "team/other", labeled("m", "/o", "22"))
-	var g slotGrant
+	var g wire.SlotGrant
 	_ = json.Unmarshal(w.Body.Bytes(), &g)
 	if w.Code != 200 || g.HeldDelivered != 0 {
 		t.Fatalf("other base register: %d %s", w.Code, w.Body)

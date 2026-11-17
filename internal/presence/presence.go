@@ -1,15 +1,21 @@
-package main
+// Package presence is the session side of numbered slots: the slot lease
+// lifecycle (register, heartbeat, takeover, release), presence reports and
+// their history (presence_log), offline notices and the progress view.
+package presence
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/sandcorporation/agent-mail/internal/config"
 	"github.com/sandcorporation/agent-mail/internal/identity"
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 // Session presence.
@@ -30,49 +36,82 @@ const (
 	defaultPresenceRetain   = 24 * time.Hour
 )
 
-// configurePresence reads the presence settings from the environment.
-func configurePresence(s *Server, getenv func(string) string) error {
+// Config is the presence and lease settings read from the environment.
+type Config struct {
+	SlotLease time.Duration  // AGENT_MAIL_SLOT_LEASE; 0 means Interval × Missed
+	Interval  time.Duration  // expected heartbeat interval; 0 means defaultPresenceInterval
+	Missed    int            // heartbeats a session may miss; 0 means defaultPresenceMissed
+	Retain    *time.Duration // how long offline sessions stay listed; nil means defaultPresenceRetain
+}
+
+// Service is the presence rules over the slots and presence_log tables. It
+// holds only what those rules need, so callers build one per use.
+type Service struct {
+	db    *sql.DB
+	clock func() time.Time
+	cfg   *Config
+	ids   *identity.Service
+	wake  func(box string)
+}
+
+// New returns the presence rules over db. clock is the current time, cfg the
+// presence settings, ids the identity rules, and wake tells event subscribers
+// of a mailbox that mail arrived (the mail hub's Publish).
+func New(db *sql.DB, clock func() time.Time, cfg *Config, ids *identity.Service, wake func(box string)) *Service {
+	return &Service{db: db, clock: clock, cfg: cfg, ids: ids, wake: wake}
+}
+
+func (s *Service) now() time.Time { return s.clock() }
+
+func writeJSON(w http.ResponseWriter, v any) { _ = json.NewEncoder(w).Encode(v) }
+
+func ms(t time.Time) int64     { return t.UnixMilli() }
+func fromMS(v int64) time.Time { return time.UnixMilli(v).UTC() }
+
+// Configure reads the presence settings from the environment into c.
+func Configure(c *Config, getenv func(string) string) error {
 	if v, from := config.EnvAliasFrom(getenv, "PRESENCE_INTERVAL"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil || d < time.Second {
 			return errors.New(from + " must be a duration of at least 1s such as 60s")
 		}
-		s.presenceInterval = d
+		c.Interval = d
 	}
 	if v, from := config.EnvAliasFrom(getenv, "PRESENCE_MISSED"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 {
 			return errors.New(from + " must be a whole number of at least 1 such as 3")
 		}
-		s.presenceMissed = n
+		c.Missed = n
 	}
 	if v, from := config.EnvAliasFrom(getenv, "PRESENCE_RETAIN"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil || d < 0 {
 			return errors.New(from + " must be a duration such as 24h (0 hides offline sessions)")
 		}
-		s.presenceRetain = &d
+		c.Retain = &d
 	}
 	return nil
 }
 
-func (s *Server) heartbeatInterval() time.Duration {
-	if s.presenceInterval > 0 {
-		return s.presenceInterval
+func (s *Service) heartbeatInterval() time.Duration {
+	if s.cfg.Interval > 0 {
+		return s.cfg.Interval
 	}
 	return defaultPresenceInterval
 }
 
-func (s *Server) missedHeartbeats() int {
-	if s.presenceMissed > 0 {
-		return s.presenceMissed
+func (s *Service) missedHeartbeats() int {
+	if s.cfg.Missed > 0 {
+		return s.cfg.Missed
 	}
 	return defaultPresenceMissed
 }
 
-func (s *Server) offlineRetention() time.Duration {
-	if s.presenceRetain != nil {
-		return *s.presenceRetain
+// OfflineRetention is how long offline sessions stay listed.
+func (s *Service) OfflineRetention() time.Duration {
+	if s.cfg.Retain != nil {
+		return *s.cfg.Retain
 	}
 	return defaultPresenceRetain
 }
@@ -80,7 +119,7 @@ func (s *Server) offlineRetention() time.Duration {
 // applyPresence records a report on a slot row. A fresh claim (register or
 // takeover) starts from the given fields only; a heartbeat keeps fields it
 // does not send. A change of state is written to presence_log.
-func applyPresence(tx *sql.Tx, base string, number int, req slotRequest, now time.Time, fresh bool) error {
+func applyPresence(tx *sql.Tx, base string, number int, req wire.SlotRequest, now time.Time, fresh bool) error {
 	last, err := req.Presence()
 	if err != nil {
 		return err
@@ -111,8 +150,8 @@ func presenceCols() string {
 	return slotCols() + `,state,context_tokens,last_turn_at,reported_at`
 }
 
-func scanPresence(sc interface{ Scan(...any) error }, now time.Time) (presenceView, error) {
-	var v presenceView
+func scanPresence(sc interface{ Scan(...any) error }, now time.Time) (wire.PresenceView, error) {
+	var v wire.PresenceView
 	var reg, until, tokens, last, reported int64
 	err := sc.Scan(&v.Base, &v.Number, &v.Machine, &v.Directory, &v.SessionID, &v.Label, &v.Parent, &reg, &until, &v.State, &tokens, &last, &reported)
 	v.Role = identity.SlotRole(v.Base, v.Number)
@@ -145,7 +184,7 @@ func scanPresence(sc interface{ Scan(...any) error }, now time.Time) (presenceVi
 // matchRole selects sessions for ?role=: empty matches everything, "x*"
 // matches roles starting with x, otherwise the value matches a base (all its
 // numbers) or one numbered role ("team/worker-1").
-func matchRole(filter string, v presenceView) bool {
+func matchRole(filter string, v wire.PresenceView) bool {
 	switch {
 	case filter == "":
 		return true
@@ -156,17 +195,19 @@ func matchRole(filter string, v presenceView) bool {
 	}
 }
 
-func (s *Server) presence(filter string) (presenceList, error) {
+// List is the sessions matching filter (see matchRole) with the presence
+// settings.
+func (s *Service) List(filter string) (wire.PresenceList, error) {
 	now := s.now()
-	out := presenceList{
+	out := wire.PresenceList{
 		Now:             now.UTC(),
 		IntervalSeconds: int(s.heartbeatInterval() / time.Second),
 		Missed:          s.missedHeartbeats(),
-		LeaseSeconds:    int(s.leaseLength() / time.Second),
-		RetainSeconds:   int(s.offlineRetention() / time.Second),
-		Sessions:        []presenceView{},
+		LeaseSeconds:    int(s.LeaseLength() / time.Second),
+		RetainSeconds:   int(s.OfflineRetention() / time.Second),
+		Sessions:        []wire.PresenceView{},
 	}
-	rows, err := s.db.Query(`SELECT `+presenceCols()+` FROM slots WHERE lease_until>? ORDER BY base,number`, ms(now.Add(-s.offlineRetention())))
+	rows, err := s.db.Query(`SELECT `+presenceCols()+` FROM slots WHERE lease_until>? ORDER BY base,number`, ms(now.Add(-s.OfflineRetention())))
 	if err != nil {
 		return out, err
 	}
@@ -183,15 +224,15 @@ func (s *Server) presence(filter string) (presenceList, error) {
 	return out, rows.Err()
 }
 
-// presenceAPI serves GET /api/presence. Internal roles and global bosses read
+// API serves GET /api/presence. Internal roles and global bosses read
 // every session; a group role reads its own group's (internal/identity/groups.go). p is nil
 // for the admin API, which sees all.
-func (s *Server) presenceAPI(w http.ResponseWriter, r *http.Request, p *identity.Principal) {
+func (s *Service) API(w http.ResponseWriter, r *http.Request, p *identity.Principal) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", 405)
 		return
 	}
-	out, err := s.presence(r.URL.Query().Get("role"))
+	out, err := s.List(r.URL.Query().Get("role"))
 	if err != nil {
 		http.Error(w, "query failed", 500)
 		return
@@ -202,19 +243,27 @@ func (s *Server) presenceAPI(w http.ResponseWriter, r *http.Request, p *identity
 	writeJSON(w, out)
 }
 
-// offlineUnnoticed lists sessions whose lease has ended (offline) and whose
+// visibleSessions keeps the presence rows p may see.
+func (s *Service) visibleSessions(p identity.Principal, in []wire.PresenceView) []wire.PresenceView {
+	if s.ids.Unrestricted(p) {
+		return in
+	}
+	return slices.DeleteFunc(in, func(v wire.PresenceView) bool { return !s.ids.MaySee(p, v.Base) })
+}
+
+// OfflineUnnoticed lists sessions whose lease has ended (offline) and whose
 // offline transition nobody has marked handled since their last report. It
 // is the hook for acting once per offline transition (notifying a parent):
-// call it periodically and mark each handled row with markOfflineNoticed.
+// call it periodically and mark each handled row with MarkOfflineNoticed.
 // Rows from before presence (never reported) are left out.
-func (s *Server) offlineUnnoticed() ([]presenceView, error) {
+func (s *Service) OfflineUnnoticed() ([]wire.PresenceView, error) {
 	now := s.now()
-	rows, err := s.db.Query(`SELECT `+presenceCols()+` FROM slots WHERE lease_until<=? AND lease_until>? AND reported_at>0 AND offline_noticed_at=0 ORDER BY base,number`, ms(now), ms(now.Add(-s.offlineRetention())))
+	rows, err := s.db.Query(`SELECT `+presenceCols()+` FROM slots WHERE lease_until<=? AND lease_until>? AND reported_at>0 AND offline_noticed_at=0 ORDER BY base,number`, ms(now), ms(now.Add(-s.OfflineRetention())))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []presenceView{}
+	out := []wire.PresenceView{}
 	for rows.Next() {
 		v, err := scanPresence(rows, now)
 		if err != nil {
@@ -225,10 +274,10 @@ func (s *Server) offlineUnnoticed() ([]presenceView, error) {
 	return out, rows.Err()
 }
 
-// markOfflineNoticed records that v's offline transition was handled. It does
+// MarkOfflineNoticed records that v's offline transition was handled. It does
 // nothing (and returns false) when the session reported again since v was
 // read, so a renewal racing with the handler is not hidden.
-func (s *Server) markOfflineNoticed(v presenceView) (bool, error) {
+func (s *Service) MarkOfflineNoticed(v wire.PresenceView) (bool, error) {
 	res, err := s.db.Exec(`UPDATE slots SET offline_noticed_at=? WHERE base=? AND number=? AND lease_until=? AND lease_until<=? AND offline_noticed_at=0`,
 		ms(s.now()), v.Base, v.Number, ms(v.LeaseExpiresAt), ms(s.now()))
 	if err != nil {

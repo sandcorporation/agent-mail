@@ -11,6 +11,7 @@ import (
 
 	"github.com/sandcorporation/agent-mail/internal/cli"
 	"github.com/sandcorporation/agent-mail/internal/store"
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 const bossToken = "secret-boss"
@@ -20,7 +21,7 @@ const bossToken = "secret-boss"
 func permissionServer(t *testing.T) (*Server, *fakeClock) {
 	t.Helper()
 	s, clock := slotServer(t)
-	s.slotLease = time.Hour
+	s.presenceCfg.SlotLease = time.Hour
 	if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES('sandcorp/boss',?,'now')`, bossToken); err != nil {
 		t.Fatal(err)
 	}
@@ -84,9 +85,9 @@ func registerWorker(t *testing.T, s *Server, dir, parent string) {
 func TestPermissionParentIsToldButCannotAnswer(t *testing.T) {
 	s, _ := permissionServer(t)
 	registerWorker(t, s, "/w", "a")
-	wakeParent, stopParent := s.hub.subscribe("a")
+	wakeParent, stopParent := s.hub.Subscribe("a")
 	defer stopParent()
-	wakeBoss, stopBoss := s.hub.subscribe("sandcorp/boss")
+	wakeBoss, stopBoss := s.hub.Subscribe("sandcorp/boss")
 	defer stopBoss()
 	v := askAs(t, s, workerToken, "team/worker-1", 201)
 	if !strings.HasPrefix(v.ID, "perm_") || len(v.ID) != 37 || v.Status != "pending" || v.Parent != "a" || v.Requester != "team/worker" ||
@@ -407,7 +408,7 @@ func TestPermissionConcurrentAnswersAndSweepsActOnce(t *testing.T) {
 		t.Fatalf("requester told %d times", len(told))
 	}
 
-	s.slotLease = time.Minute
+	s.presenceCfg.SlotLease = time.Minute
 	registerWorker(t, s, "/w2", "a")
 	clock.add(2 * time.Hour)
 	sent := make(chan int, 6)
@@ -445,7 +446,7 @@ func TestGlobalRoleOptionActsAsNumberedRole(t *testing.T) {
 	h.mustRun(nil, "send", "--to", "team/worker-2", "--subject", "for two", "--body", "x")
 	h.configure(nil, "team/worker")
 	out := h.mustRun(nil, "--role", "team/worker-2", "inbox", "--json")
-	var msgs []Message
+	var msgs []wire.Message
 	if err := json.Unmarshal([]byte(out), &msgs); err != nil || len(msgs) != 1 {
 		t.Fatalf("inbox as -2: %q", out)
 	}

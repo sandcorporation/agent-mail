@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/sandcorporation/agent-mail/internal/identity"
+	"github.com/sandcorporation/agent-mail/internal/mail"
 )
 
 // Permission requests.
@@ -209,12 +210,12 @@ func (s *Server) requestPermission(w http.ResponseWriter, r *http.Request, p ide
 		info := fmt.Sprintf("%s asks to use %s: %s\nRequest %s expires at %s. A boss role must answer it; you are told as the parent and cannot answer.",
 			p.Role, req.Tool, req.Summary, id, deadline)
 		for _, box := range notify {
-			if e := insertSystemMail(tx, box, subject, body, id, "urgent", "", now); e != nil {
+			if e := mail.InsertSystemMail(tx, box, subject, body, id, "urgent", "", now); e != nil {
 				return e
 			}
 		}
 		for _, box := range inform {
-			if e := insertSystemMail(tx, box, subject, info, id, "urgent", "", now); e != nil {
+			if e := mail.InsertSystemMail(tx, box, subject, info, id, "urgent", "", now); e != nil {
 				return e
 			}
 		}
@@ -232,7 +233,7 @@ func (s *Server) requestPermission(w http.ResponseWriter, r *http.Request, p ide
 		return
 	}
 	for _, box := range notify {
-		s.hub.publish(box)
+		s.hub.Publish(box)
 	}
 	w.WriteHeader(201)
 	writeJSON(w, v)
@@ -343,7 +344,7 @@ func (s *Server) answerPermission(w http.ResponseWriter, r *http.Request, p iden
 			body += "\nNote: " + req.Note
 		}
 		if box, ok := identity.Mailbox(tx, v.Requester); ok {
-			return insertSystemMail(tx, box, "permission "+word+": "+v.Tool, body, id, "urgent", "", now)
+			return mail.InsertSystemMail(tx, box, "permission "+word+": "+v.Tool, body, id, "urgent", "", now)
 		}
 		return nil
 	})
@@ -359,7 +360,7 @@ func (s *Server) answerPermission(w http.ResponseWriter, r *http.Request, p iden
 		return
 	}
 	if box, ok := identity.Mailbox(s.db, v.Requester); ok {
-		s.hub.publish(box)
+		s.hub.Publish(box)
 	}
 	writeJSON(w, v)
 }

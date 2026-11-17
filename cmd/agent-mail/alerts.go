@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/sandcorporation/agent-mail/internal/identity"
+	"github.com/sandcorporation/agent-mail/internal/mail"
 )
 
 // Metrics alerts.
@@ -157,7 +158,7 @@ func (s *Server) sweepAlerts(ctx context.Context) (int, error) {
 			}
 			task := "alert:" + a.Kind + ":" + a.Role + ":" + day
 			for _, box := range to {
-				if err = insertSystemMail(tx, box, a.Subject, a.Body, task, "normal", task+":"+box, now); err != nil {
+				if err = mail.InsertSystemMail(tx, box, a.Subject, a.Body, task, "normal", task+":"+box, now); err != nil {
 					return err
 				}
 			}
@@ -170,7 +171,7 @@ func (s *Server) sweepAlerts(ctx context.Context) (int, error) {
 		if len(told) > 0 {
 			sent++
 			for _, box := range told {
-				s.hub.publish(box)
+				s.hub.Publish(box)
 			}
 		}
 	}

@@ -463,7 +463,7 @@ func (s *Server) collaborators() ([]collaboratorGroup, error) {
 		c := collaboratorRole{Role: v.Role, CreatedAt: v.CreatedAt, RevokedAt: v.RevokedAt}
 		if until, ok := seen[v.Role]; ok {
 			c.Online = until > ms(now) && v.RevokedAt == nil
-			last := fromMS(until).Add(-s.leaseLength())
+			last := fromMS(until).Add(-s.presence().LeaseLength())
 			if last.After(now) {
 				last = now.UTC()
 			}

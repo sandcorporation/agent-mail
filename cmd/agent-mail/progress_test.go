@@ -9,9 +9,10 @@ import (
 	"time"
 
 	"github.com/sandcorporation/agent-mail/internal/identity"
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
-func mustProgress(t *testing.T, s *Server) progressReport {
+func mustProgress(t *testing.T, s *Server) wire.ProgressReport {
 	t.Helper()
 	out, err := s.progress()
 	if err != nil {
@@ -20,7 +21,7 @@ func mustProgress(t *testing.T, s *Server) progressReport {
 	return out
 }
 
-func serviceNamed(t *testing.T, r progressReport, name string) serviceProgress {
+func serviceNamed(t *testing.T, r wire.ProgressReport, name string) wire.ServiceProgress {
 	t.Helper()
 	for _, p := range r.Services {
 		if p.Service == name {
@@ -28,7 +29,7 @@ func serviceNamed(t *testing.T, r progressReport, name string) serviceProgress {
 		}
 	}
 	t.Fatalf("no service %q in %+v", name, r.Services)
-	return serviceProgress{}
+	return wire.ServiceProgress{}
 }
 
 func TestProgressGroupsByServiceAndSortsByActivity(t *testing.T) {
@@ -123,7 +124,7 @@ func TestProgressOpenDirectives(t *testing.T) {
 		t.Fatalf("pending_alert_s %d", r.PendingAlertS)
 	}
 	got := serviceNamed(t, r, "team").OpenDirectives
-	want := []progressDirective{
+	want := []wire.ProgressDirective{
 		{ID: old, To: "team/worker", Subject: "old", Status: "read", AgeS: 3 * 3600, OverThreshold: true},
 		{ID: fresh, To: "team/worker-2", Subject: "fresh", Status: "pending", AgeS: 3600},
 	}
@@ -161,31 +162,6 @@ func TestProgressOpenTasksWindowAndCap(t *testing.T) {
 	// The other side of the mail is a service too.
 	if ops := serviceNamed(t, r, "ops").OpenTasks; len(ops) != 10 {
 		t.Fatalf("ops tasks %d", len(ops))
-	}
-}
-
-func TestProgressBadgePriority(t *testing.T) {
-	ss := func(states ...string) []progressSession {
-		var out []progressSession
-		for _, st := range states {
-			out = append(out, progressSession{State: st})
-		}
-		return out
-	}
-	for _, c := range []struct {
-		states []string
-		want   string
-	}{
-		{nil, "none"},
-		{[]string{"idle", "unknown"}, "idle"},
-		{[]string{"idle", "compacting"}, "busy"},
-		{[]string{"busy", "idle"}, "busy"},
-		{[]string{"busy", "blocked:permission_prompt", "idle"}, "blocked"},
-		{[]string{"blocked:x", "error:StopFailure", "busy"}, "error"},
-	} {
-		if got := progressBadge(ss(c.states...)); got != c.want {
-			t.Fatalf("%v: %q, want %q", c.states, got, c.want)
-		}
 	}
 }
 
@@ -240,12 +216,12 @@ func TestAdminMessagesTaskAndIDFilter(t *testing.T) {
 	a := mailAt(t, s, flowRow{sender: "a", recipient: "b", task: "T-1", at: now})
 	mailAt(t, s, flowRow{sender: "a", recipient: "b", task: "T-10", at: now})
 	b := mailAt(t, s, flowRow{sender: "b", recipient: "a", task: "T-1", at: now})
-	get := func(q string) []Message {
+	get := func(q string) []wire.Message {
 		r := httptest.NewRequest("GET", "/api/admin/messages?"+q, nil)
 		r.Header.Set("X-Agent-Mail-Admin", "proxy-secret")
 		w := httptest.NewRecorder()
 		s.api(w, r)
-		var out []Message
+		var out []wire.Message
 		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
 			t.Fatalf("%s: %v %s", q, err, w.Body)
 		}

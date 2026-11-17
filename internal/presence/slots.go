@@ -1,4 +1,4 @@
-package main
+package presence
 
 import (
 	"context"
@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/sandcorporation/agent-mail/internal/identity"
+	"github.com/sandcorporation/agent-mail/internal/mail"
 	"github.com/sandcorporation/agent-mail/internal/store"
 	"github.com/sandcorporation/agent-mail/internal/wire"
 )
@@ -29,67 +29,21 @@ const (
 	maxSlotField     = 512 // bytes, for machine, directory, session_id, label, parent
 )
 
-// queryer is the part of *sql.DB and *sql.Tx the slot code reads through, so
-// the same lookups work inside a transaction.
-type queryer interface {
-	QueryRow(query string, args ...any) *sql.Row
-}
-
-func (s *Server) now() time.Time {
-	if s.clock != nil {
-		return s.clock()
-	}
-	return time.Now()
-}
-
-// leaseLength is AGENT_MAIL_SLOT_LEASE when set, otherwise the presence
+// LeaseLength is AGENT_MAIL_SLOT_LEASE when set, otherwise the presence
 // heartbeat interval times the number of heartbeats a session may miss
 // (60s × 3 = defaultSlotLease). Offline means the lease has ended.
-func (s *Server) leaseLength() time.Duration {
-	if s.slotLease > 0 {
-		return s.slotLease
+func (s *Service) LeaseLength() time.Duration {
+	if s.cfg.SlotLease > 0 {
+		return s.cfg.SlotLease
 	}
 	return s.heartbeatInterval() * time.Duration(s.missedHeartbeats())
 }
 
-// authenticate is the role check every /api/ request goes through: the bearer
-// token against X-Switchboard-Role (or the old X-Agent-Mail-Role), by the
-// rules in identity.Service.Authenticate.
-func (s *Server) authenticate(r *http.Request) (identity.Principal, bool) {
-	return s.ids().Authenticate(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), s.header(r, "Role"))
-}
-
-// ids is the identity rules over this server's database, clock, boss roles
-// and group cache.
-func (s *Server) ids() *identity.Service {
-	return identity.New(s.db, s.now, s.bossRoles, &s.groups, logPresenceOffline)
-}
-
-// otherSlotMailbox returns the mailbox message id belongs to when that is
-// another mailbox of the caller's base (for example mail of <base>-2 while
-// the header names <base>). Mailboxes of one base are kept apart: such
-// requests are refused with 403 naming the role to act as, rather than
-// showing the body while the state stays with the other mailbox.
-func (s *Server) otherSlotMailbox(p identity.Principal, id int64) (string, bool) {
-	m, err := s.get(id)
-	if err != nil || m.Recipient == p.Role || m.Sender == p.Role {
-		return "", false
-	}
-	for _, box := range []string{m.Recipient, m.Sender} {
-		if identity.BaseOf(s.db, box) == p.Base {
-			return box, true
-		}
-	}
-	return "", false
-}
-
-func ms(t time.Time) int64     { return t.UnixMilli() }
-func fromMS(v int64) time.Time { return time.UnixMilli(v).UTC() }
 func slotCols() string {
 	return `base,number,machine,directory,session_id,label,parent,registered_at,lease_until`
 }
-func scanSlot(sc interface{ Scan(...any) error }) (slotView, error) {
-	var v slotView
+func scanSlot(sc interface{ Scan(...any) error }) (wire.SlotView, error) {
+	var v wire.SlotView
 	var reg, until int64
 	err := sc.Scan(&v.Base, &v.Number, &v.Machine, &v.Directory, &v.SessionID, &v.Label, &v.Parent, &reg, &until)
 	v.Role = identity.SlotRole(v.Base, v.Number)
@@ -97,14 +51,14 @@ func scanSlot(sc interface{ Scan(...any) error }) (slotView, error) {
 	return v, err
 }
 
-// slotAPI serves /api/slots and /api/slots/{register,heartbeat,takeover,release}.
-func (s *Server) slotAPI(w http.ResponseWriter, r *http.Request, p identity.Principal, action string) {
+// SlotAPI serves /api/slots and /api/slots/{register,heartbeat,takeover,release}.
+func (s *Service) SlotAPI(w http.ResponseWriter, r *http.Request, p identity.Principal, action string) {
 	if action == "" {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", 405)
 			return
 		}
-		out, err := s.activeSlots(p.Base)
+		out, err := s.ActiveSlots(p.Base)
 		if err != nil {
 			http.Error(w, "query failed", 500)
 			return
@@ -116,7 +70,7 @@ func (s *Server) slotAPI(w http.ResponseWriter, r *http.Request, p identity.Prin
 		http.Error(w, "method not allowed", 405)
 		return
 	}
-	var req slotRequest
+	var req wire.SlotRequest
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&req) != nil {
 		http.Error(w, "invalid JSON body", 400)
 		return
@@ -130,7 +84,7 @@ func (s *Server) slotAPI(w http.ResponseWriter, r *http.Request, p identity.Prin
 		return
 	}
 	var (
-		g   slotGrant
+		g   wire.SlotGrant
 		err error
 	)
 	switch action {
@@ -166,7 +120,8 @@ var (
 	errSlotReserved = errors.New("slot reserved")
 )
 
-func (s *Server) activeSlots(base string) ([]slotView, error) {
+// ActiveSlots lists the leased slots, of base only when base is not empty.
+func (s *Service) ActiveSlots(base string) ([]wire.SlotView, error) {
 	query := `SELECT ` + slotCols() + ` FROM slots WHERE lease_until>?`
 	args := []any{ms(s.now())}
 	if base != "" {
@@ -178,7 +133,7 @@ func (s *Server) activeSlots(base string) ([]slotView, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []slotView{}
+	out := []wire.SlotView{}
 	for rows.Next() {
 		v, err := scanSlot(rows)
 		if err != nil {
@@ -192,7 +147,7 @@ func (s *Server) activeSlots(base string) ([]slotView, error) {
 // inTx runs f in one transaction. The pool has a single connection, so slot
 // changes are serialised; the (base, number) primary key and the
 // (base, machine, directory) unique key back that up.
-func (s *Server) inTx(ctx context.Context, f func(*sql.Tx) error) error {
+func (s *Service) inTx(ctx context.Context, f func(*sql.Tx) error) error {
 	return store.InTx(ctx, s.db, f)
 }
 
@@ -218,7 +173,7 @@ func freeNumber(tx *sql.Tx, base string, now int64, skip map[int]bool) (int, err
 		if leased[n] || skip[n] || identity.RoleExists(tx, identity.SlotRole(base, n)) {
 			continue
 		}
-		if err = logPresenceOffline(tx, base, n, fromMS(now)); err != nil {
+		if err = LogOffline(tx, base, n, fromMS(now)); err != nil {
 			return 0, err
 		}
 		if _, err = tx.Exec(`DELETE FROM slots WHERE base=? AND number=?`, base, n); err != nil {
@@ -229,7 +184,7 @@ func freeNumber(tx *sql.Tx, base string, now int64, skip map[int]bool) (int, err
 	return 0, errSlotsFull
 }
 
-func identityRow(tx *sql.Tx, base string, req slotRequest) (slotView, bool, error) {
+func identityRow(tx *sql.Tx, base string, req wire.SlotRequest) (wire.SlotView, bool, error) {
 	v, err := scanSlot(tx.QueryRow(`SELECT `+slotCols()+` FROM slots WHERE base=? AND machine=? AND directory=?`, base, req.Machine, req.Directory))
 	if errors.Is(err, sql.ErrNoRows) {
 		return v, false, nil
@@ -246,10 +201,10 @@ func identityRow(tx *sql.Tx, base string, req slotRequest) (slotView, bool, erro
 // Takeover: the caller gets number 1. A leased previous holder moves to the
 // smallest free number other than 1, keeping its lease; an expired one is
 // dropped. The caller's own previous number, if any, is released.
-func (s *Server) claimSlot(ctx context.Context, base string, req slotRequest, takeover bool) (slotGrant, error) {
+func (s *Service) claimSlot(ctx context.Context, base string, req wire.SlotRequest, takeover bool) (wire.SlotGrant, error) {
 	now := s.now()
-	until := now.Add(s.leaseLength())
-	var g slotGrant
+	until := now.Add(s.LeaseLength())
+	var g wire.SlotGrant
 	var box string
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
 		own, has, err := identityRow(tx, base, req)
@@ -267,7 +222,7 @@ func (s *Server) claimSlot(ctx context.Context, base string, req slotRequest, ta
 			}
 			g.Reclaimed = has && own.Number == 1
 			if has && own.Number != 1 {
-				if err = logPresenceOffline(tx, base, own.Number, now); err != nil {
+				if err = LogOffline(tx, base, own.Number, now); err != nil {
 					return err
 				}
 				if _, err = tx.Exec(`DELETE FROM slots WHERE base=? AND number=?`, base, own.Number); err != nil {
@@ -299,24 +254,25 @@ func (s *Server) claimSlot(ctx context.Context, base string, req slotRequest, ta
 		if err = applyPresence(tx, base, number, req, now, true); err != nil {
 			return err
 		}
-		if box, g.HeldDelivered, err = deliverHeld(tx, base, number, req.Label, now); err != nil {
+		if box, g.HeldDelivered, err = mail.DeliverHeld(tx, base, number, req.Label, now); err != nil {
 			return err
 		}
 		return s.fillGrant(tx, &g, base, number)
 	})
-	s.wake(err, box, g.HeldDelivered)
+	s.wakeHeld(err, box, g.HeldDelivered)
 	return g, err
 }
 
-// wake tells subscribers of box about held mail a committed slot change moved.
-func (s *Server) wake(err error, box string, moved int) {
+// wakeHeld tells subscribers of box about held mail a committed slot change
+// moved.
+func (s *Service) wakeHeld(err error, box string, moved int) {
 	if err == nil && moved > 0 {
-		s.hub.publish(box)
+		s.wake(box)
 	}
 }
 
 // displaceFirst moves the current holder of number 1 out of the way.
-func displaceFirst(tx *sql.Tx, base string, now int64) (*slotView, error) {
+func displaceFirst(tx *sql.Tx, base string, now int64) (*wire.SlotView, error) {
 	cur, err := scanSlot(tx.QueryRow(`SELECT `+slotCols()+` FROM slots WHERE base=? AND number=1`, base))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -324,8 +280,8 @@ func displaceFirst(tx *sql.Tx, base string, now int64) (*slotView, error) {
 	if err != nil {
 		return nil, err
 	}
-	drop := func() (*slotView, error) {
-		if err := logPresenceOffline(tx, base, 1, fromMS(now)); err != nil {
+	drop := func() (*wire.SlotView, error) {
+		if err := LogOffline(tx, base, 1, fromMS(now)); err != nil {
 			return nil, err
 		}
 		_, err := tx.Exec(`DELETE FROM slots WHERE base=? AND number=1`, base)
@@ -356,13 +312,13 @@ func displaceFirst(tx *sql.Tx, base string, now int64) (*slotView, error) {
 // An expired slot whose number nobody took is renewed as well. The answer
 // carries the identity's current role, which differs from the caller's when a
 // takeover moved it.
-func (s *Server) renewSlot(ctx context.Context, base string, req slotRequest, release bool) (slotGrant, error) {
+func (s *Service) renewSlot(ctx context.Context, base string, req wire.SlotRequest, release bool) (wire.SlotGrant, error) {
 	now := s.now()
-	until := now.Add(s.leaseLength())
+	until := now.Add(s.LeaseLength())
 	if release {
 		until = now
 	}
-	var g slotGrant
+	var g wire.SlotGrant
 	var box string
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
 		own, has, err := identityRow(tx, base, req)
@@ -386,7 +342,7 @@ func (s *Server) renewSlot(ctx context.Context, base string, req slotRequest, re
 			return err
 		}
 		if release {
-			if err = logPresenceOffline(tx, base, own.Number, now); err != nil {
+			if err = LogOffline(tx, base, own.Number, now); err != nil {
 				return err
 			}
 		}
@@ -394,28 +350,28 @@ func (s *Server) renewSlot(ctx context.Context, base string, req slotRequest, re
 			if err = applyPresence(tx, base, own.Number, req, now, false); err != nil {
 				return err
 			}
-			if box, g.HeldDelivered, err = deliverHeld(tx, base, own.Number, req.Label, now); err != nil {
+			if box, g.HeldDelivered, err = mail.DeliverHeld(tx, base, own.Number, req.Label, now); err != nil {
 				return err
 			}
 		}
 		g.Reclaimed = true
 		return s.fillGrant(tx, &g, base, own.Number)
 	})
-	s.wake(err, box, g.HeldDelivered)
+	s.wakeHeld(err, box, g.HeldDelivered)
 	return g, err
 }
 
-func (s *Server) fillGrant(tx *sql.Tx, g *slotGrant, base string, number int) error {
+func (s *Service) fillGrant(tx *sql.Tx, g *wire.SlotGrant, base string, number int) error {
 	v, err := scanSlot(tx.QueryRow(`SELECT `+slotCols()+` FROM slots WHERE base=? AND number=?`, base, number))
 	if err != nil {
 		return err
 	}
 	g.SlotView = v
-	g.LeaseSeconds = int(s.leaseLength() / time.Second)
+	g.LeaseSeconds = int(s.LeaseLength() / time.Second)
 	return tx.QueryRow(`SELECT COUNT(*) FROM slots WHERE base=? AND number<>? AND lease_until>?`, base, number, ms(s.now())).Scan(&g.OtherActive)
 }
 
-func slotRequestValid(q slotRequest) bool {
+func slotRequestValid(q wire.SlotRequest) bool {
 	if q.Machine == "" || q.Directory == "" {
 		return false
 	}

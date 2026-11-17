@@ -13,7 +13,7 @@ import (
 func alertServer(t *testing.T) (*Server, *fakeClock) {
 	t.Helper()
 	s, clock := slotServer(t)
-	s.slotLease = 72 * time.Hour
+	s.presenceCfg.SlotLease = 72 * time.Hour
 	s.alerts = &alertThresholds{Pending: 2 * time.Hour, Error: 10 * time.Minute, Blocked: 30 * time.Minute}
 	s.bossRoles = map[string]bool{"a": true}
 	return s, clock
@@ -50,7 +50,7 @@ func TestAlertsEachKindOncePerDay(t *testing.T) {
 	if got := sweepOnce(t, s).Alerts; got != 1 {
 		t.Fatalf("blocked alert: %d", got)
 	}
-	wake, stop := s.hub.subscribe("a")
+	wake, stop := s.hub.Subscribe("a")
 	defer stop()
 	clock.add(100 * time.Minute) // pending 2h10m
 	if got := sweepOnce(t, s).Alerts; got != 1 {
@@ -129,7 +129,7 @@ func TestAlertsZeroDisablesKind(t *testing.T) {
 
 func TestAlertsOfflineSessionDoesNotAlert(t *testing.T) {
 	s, clock := alertServer(t)
-	s.slotLease = 5 * time.Minute
+	s.presenceCfg.SlotLease = 5 * time.Minute
 	slotDo(t, s, "register", report("m", "/e", "error:StopFailure", nil, ""))
 	clock.add(time.Hour)
 	if got := sweepOnce(t, s).Alerts; got != 0 {

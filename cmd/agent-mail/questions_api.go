@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/sandcorporation/agent-mail/internal/identity"
+	"github.com/sandcorporation/agent-mail/internal/mail"
 	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
@@ -347,7 +348,7 @@ func (s *Server) askQuestion(w http.ResponseWriter, r *http.Request, p identity.
 		subject := fmt.Sprintf("[질문] %s %s %s", id, p.Role, v.Questions[0].Header)
 		body := wire.QuestionText(v) + relatedText(related)
 		for _, box := range told {
-			if e = insertSystemMail(tx, box, subject, body, id, "normal", "", now); e != nil {
+			if e = mail.InsertSystemMail(tx, box, subject, body, id, "normal", "", now); e != nil {
 				return e
 			}
 		}
@@ -378,9 +379,9 @@ type askedQuestion struct {
 
 func (s *Server) publishQuestion(boxes []string) {
 	for _, box := range boxes {
-		s.hub.publish(box)
+		s.hub.Publish(box)
 	}
-	s.hub.publish(questionHubKey)
+	s.hub.Publish(questionHubKey)
 }
 
 // answerQuestion is the answering core shared by the role endpoint and the
@@ -432,7 +433,7 @@ func (s *Server) answerQuestion(ctx context.Context, id, by string, answers []qu
 		body := wire.AnswerText(v)
 		first := v.Questions[0].Header
 		if box, ok := identity.Mailbox(tx, v.Asker); ok {
-			if e = insertSystemMail(tx, box, fmt.Sprintf("[질문 답] %s %s", id, first), body, id, "normal", "", now); e != nil {
+			if e = mail.InsertSystemMail(tx, box, fmt.Sprintf("[질문 답] %s %s", id, first), body, id, "normal", "", now); e != nil {
 				return e
 			}
 			told = append(told, box)
@@ -443,7 +444,7 @@ func (s *Server) answerQuestion(ctx context.Context, id, by string, answers []qu
 		}
 		subject := fmt.Sprintf("[질문 답] %s %s %s", id, v.Asker, first)
 		for _, box := range watchers {
-			if e = insertSystemMail(tx, box, subject, body, id, "normal", "", now); e != nil {
+			if e = mail.InsertSystemMail(tx, box, subject, body, id, "normal", "", now); e != nil {
 				return e
 			}
 		}
@@ -587,14 +588,14 @@ func (s *Server) pollQuestions(w http.ResponseWriter, r *http.Request, p identit
 		}
 		after = n
 	}
-	wait, ok := s.pollWait(r)
+	wait, ok := s.mail().PollWait(r)
 	if !ok {
 		http.Error(w, "invalid timeout", 400)
 		return
 	}
 	// Subscribe before the first query so a change between the query and the
 	// wait still wakes this request.
-	wake, unsubscribe := s.hub.subscribe(questionHubKey)
+	wake, unsubscribe := s.hub.Subscribe(questionHubKey)
 	defer unsubscribe()
 	timer := time.NewTimer(wait)
 	defer timer.Stop()

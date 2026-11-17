@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/sandcorporation/agent-mail/internal/identity"
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 const (
@@ -69,7 +70,7 @@ func presenceRoles(t *testing.T, s *Server, token, role string) []string {
 	if w.Code != 200 {
 		t.Fatalf("presence %s: %d %s", role, w.Code, w.Body)
 	}
-	var out presenceList
+	var out wire.PresenceList
 	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +282,7 @@ func TestGroupPresenceScope(t *testing.T) {
 		}
 	}
 	w := adminRequest(s, "GET", "/api/admin/presence", "", nil)
-	var out presenceList
+	var out wire.PresenceList
 	_ = json.Unmarshal(w.Body.Bytes(), &out)
 	if len(out.Sessions) != 4 {
 		t.Fatalf("admin presence = %d sessions", len(out.Sessions))

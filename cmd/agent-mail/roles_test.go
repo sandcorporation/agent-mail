@@ -189,7 +189,7 @@ func TestRevokeRefusesRoleAndSlotsUntilRestored(t *testing.T) {
 	if w := callAs(s, "POST", "/api/slots/heartbeat", workerToken, "team/worker", ident("m", "/one")); w.Code != 401 {
 		t.Fatalf("heartbeat after revoke: %d", w.Code)
 	}
-	if live, err := s.activeSlots("team/worker"); err != nil || len(live) != 0 {
+	if live, err := s.presence().ActiveSlots("team/worker"); err != nil || len(live) != 0 {
 		t.Fatalf("live slots after revoke: %v %v", live, err)
 	}
 	if w := call(s, "GET", "/api/presence", "secret-a", nil, ""); w.Code != 200 || strings.Count(w.Body.String(), `"status":"offline"`) != 2 {

@@ -67,7 +67,7 @@ func TestProgressAnsweredWithSlotLikeRoleNames(t *testing.T) {
 				if w.Code != 201 && w.Code != 200 {
 					t.Fatalf("send as %s %v: %d %s", as, body, w.Code, w.Body)
 				}
-				var m Message
+				var m wire.Message
 				if err := json.Unmarshal(w.Body.Bytes(), &m); err != nil {
 					t.Fatal(err)
 				}

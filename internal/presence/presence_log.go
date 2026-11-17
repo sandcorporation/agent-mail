@@ -1,4 +1,4 @@
-package main
+package presence
 
 import (
 	"database/sql"
@@ -19,7 +19,7 @@ import (
 // online without a reported state is logged as "unknown". Closed rows older
 // than presenceLogRetain are pruned by the sweep.
 //
-// The metrics (metrics.go) read error:* and blocked:* time from this table.
+// The metrics (cmd/agent-mail/metrics.go) read error:* and blocked:* time from this table.
 
 const (
 	presenceLogRetain = 60 * 24 * time.Hour
@@ -29,7 +29,7 @@ const (
 
 // openPresenceState is the state of (base, number)'s open presence_log row;
 // ok is false when there is none.
-func openPresenceState(q queryer, base string, number int) (state string, ok bool, err error) {
+func openPresenceState(q identity.Queryer, base string, number int) (state string, ok bool, err error) {
 	err = q.QueryRow(`SELECT state FROM presence_log WHERE base=? AND number=? AND ended_at IS NULL ORDER BY id DESC LIMIT 1`, base, number).Scan(&state)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
@@ -53,9 +53,9 @@ func logPresenceState(tx *sql.Tx, base string, number int, state string, at time
 	return err
 }
 
-// logPresenceOffline records that (base, number) went offline at at. A slot
+// LogOffline records that (base, number) went offline at at. A slot
 // with no open row (never reported, or a free number) is left alone.
-func logPresenceOffline(tx *sql.Tx, base string, number int, at time.Time) error {
+func LogOffline(tx *sql.Tx, base string, number int, at time.Time) error {
 	if _, ok, err := openPresenceState(tx, base, number); err != nil || !ok {
 		return err
 	}
@@ -93,9 +93,9 @@ func closePresenceLog(tx *sql.Tx, base string, number int, at time.Time) error {
 	return err
 }
 
-// prunePresenceLog drops closed rows that ended more than presenceLogRetain
+// PruneLog drops closed rows that ended more than presenceLogRetain
 // before now. Open rows stay however old they are.
-func prunePresenceLog(db *sql.DB, now time.Time) (int64, error) {
+func PruneLog(db *sql.DB, now time.Time) (int64, error) {
 	res, err := db.Exec(`DELETE FROM presence_log WHERE ended_at IS NOT NULL AND ended_at<?`, ms(now.Add(-presenceLogRetain)))
 	if err != nil {
 		return 0, err
