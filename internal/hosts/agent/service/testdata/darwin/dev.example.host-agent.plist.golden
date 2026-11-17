@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>dev.example.host-agent</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/agent/bin/host agent</string>
+		<string>run</string>
+		<string>--label</string>
+		<string>50% &amp; &lt;done&gt;</string>
+		<string>$HOME</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>AGENT_URL</key>
+		<string>https://agent.example.test</string>
+		<key>NOTE</key>
+		<string>a &#34;quoted&#34; 100% $x</string>
+	</dict>
+	<key>WorkingDirectory</key>
+	<string>/var/lib/agent</string>
+	<key>StandardOutPath</key>
+	<string>/var/log/agent/host.log</string>
+	<key>StandardErrorPath</key>
+	<string>/var/log/agent/host.log</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ProcessType</key>
+	<string>Background</string>
+</dict>
+</plist>
