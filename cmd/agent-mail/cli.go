@@ -139,6 +139,16 @@ var commands = []command{
 	{name: "status", args: "[ROLE]", nargs: 1, optArgs: true,
 		summary: "Show session presence: every session, a base and its numbers, one numbered role, or a prefix ending in *",
 		options: []option{optJSON, optProfile}},
+	{name: "permission", args: "ACTION [ID]", nargs: 2, optArgs: true, synopsis: "(ACTION: request | show ID | answer ID | list)",
+		summary: "Ask for, show, answer or list tool permission requests (answers come from the requester's parent or a boss role)",
+		options: []option{
+			{"--tool", "NAME", "request: the tool asked for"},
+			{"--summary", "TEXT", "request: what the tool will do (up to 500 bytes)"},
+			{"--decision", "allow|deny", "answer: the decision"},
+			{"--note", "TEXT", "answer: optional note for the requester"},
+			{"--pending", "", "list: only requests still waiting for an answer"},
+			optJSON, optProfile,
+		}},
 	{name: "version", summary: "Show build version"},
 }
 
@@ -283,6 +293,8 @@ func dispatch(args []string) (int, error) {
 		return cliSlot(c, p)
 	case "status":
 		return cliStatus(c, p)
+	case "permission":
+		return cliPermission(c, p)
 	case "read", "ack", "complete":
 		method, u := "GET", endpoint(c, "/api/messages/"+p.pos[0])
 		if name != "read" {
