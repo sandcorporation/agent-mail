@@ -95,6 +95,21 @@ table.stack td.wrap{white-space:normal;overflow-wrap:anywhere}
 .mthreads li{margin:.3rem 0}
 .mthreads button{margin:0;padding:.3rem .4rem;border:1px solid #c9d3e3;border-radius:4px;background:#fff;color:#1e5bb8;text-align:left;width:100%;overflow-wrap:anywhere}
 .mthreads small{display:block;color:#556}
+.progrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,22rem),1fr));gap:.8rem;margin-top:.6rem;align-items:start}
+.pcard{border:1px solid #dde;border-radius:6px;padding:.7rem;min-width:0}
+.pcard h3{display:flex;gap:.5rem;align-items:center;justify-content:space-between;margin:0 0 .4rem;min-width:0}
+.pcard h3 .pname{min-width:0;overflow-wrap:anywhere}
+.pcard h4{margin:.7rem 0 .2rem;font-size:.95em}
+.pcard p{margin:.2rem 0}
+.pbadge{flex:none;border-radius:4px;padding:.05rem .45rem;font-size:.8em;color:#fff;background:#889}
+.pbadge.b-error{background:#c62828}.pbadge.b-blocked{background:#b26a00}.pbadge.b-busy{background:#1e5bb8}.pbadge.b-idle{background:#2e7d32}
+.plist{list-style:none;margin:0;padding:0}
+.plist li{margin:.3rem 0;min-width:0;overflow-wrap:anywhere}
+.pdir{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left;color:#556;font-size:.85em}
+.plinks button{margin:0;padding:.3rem .4rem;border:1px solid #c9d3e3;border-radius:4px;background:#fff;color:#1e5bb8;text-align:left;width:100%;overflow-wrap:anywhere}
+.plinks small{display:block;color:#556}
+.plinks li.over button{border-color:#c62828;background:#fdecea;box-shadow:inset 4px 0 #c62828}
+.plinks li.over small{color:#8e1b1b;font-weight:600}
 @media (max-width:600px){
 body{margin:1rem auto}
 .decfilters>*{flex:1 1 100%;box-sizing:border-box}
@@ -116,14 +131,20 @@ table.stack td:first-child{font-weight:600}
 <h1>Agent Mail · 관리자 보기</h1>
 <p class="muted">등록된 모든 역할과 메일함을 봅니다. 바꿀 수 있는 것은 질문 답과 질문 설정뿐입니다.</p>
 <nav id="tabs" class="tabs" role="tablist" aria-label="관리자 보기 탭">
-<button type="button" role="tab" id="tab-sessions" data-tab="sessions" aria-controls="panel-sessions" aria-selected="true" tabindex="0"><span class="tab-name">세션</span><span class="tab-count"></span></button>
+<button type="button" role="tab" id="tab-progress" data-tab="progress" aria-controls="panel-progress" aria-selected="true" tabindex="0"><span class="tab-name">진행</span><span class="tab-count"></span></button>
+<button type="button" role="tab" id="tab-sessions" data-tab="sessions" aria-controls="panel-sessions" aria-selected="false" tabindex="-1"><span class="tab-name">세션</span><span class="tab-count"></span></button>
 <button type="button" role="tab" id="tab-metrics" data-tab="metrics" aria-controls="panel-metrics" aria-selected="false" tabindex="-1"><span class="tab-name">지표</span><span class="tab-count"></span></button>
 <button type="button" role="tab" id="tab-mail" data-tab="mail" aria-controls="panel-mail" aria-selected="false" tabindex="-1"><span class="tab-name">메일</span><span class="tab-count"></span></button>
 <button type="button" role="tab" id="tab-permissions" data-tab="permissions" aria-controls="panel-permissions" aria-selected="false" tabindex="-1"><span class="tab-name">권한 요청</span><span class="tab-count"></span></button>
 <button type="button" role="tab" id="tab-questions" data-tab="questions" aria-controls="panel-questions" aria-selected="false" tabindex="-1"><span class="tab-name">질문</span><span class="tab-count"></span></button>
 <button type="button" role="tab" id="tab-settings" data-tab="settings" aria-controls="panel-settings" aria-selected="false" tabindex="-1"><span class="tab-name">설정</span><span class="tab-count"></span></button>
 </nav>
-<section id="panel-sessions" role="tabpanel" aria-labelledby="tab-sessions" tabindex="0" class="card">
+<section id="panel-progress" role="tabpanel" aria-labelledby="tab-progress" tabindex="0" class="card">
+<div class="row"><h2 style="margin:0">진행</h2><button id="reloadProgress">새로 고침</button><span id="progressNote" class="muted" role="status" aria-live="polite"></span></div>
+<p class="muted">서비스마다 지금 하는 일과 마지막 소식입니다. 최근에 움직인 서비스가 먼저입니다. 지시나 task를 누르면 메일 탭에서 엽니다.</p>
+<div id="progress" class="progrid"></div>
+</section>
+<section id="panel-sessions" role="tabpanel" aria-labelledby="tab-sessions" tabindex="0" class="card" hidden>
 <div class="row"><h2 style="margin:0">세션</h2><button id="reloadSessions">새로 고침</button><span id="sessionsNote" class="muted"></span></div>
 <div class="wide"><table><thead><tr><th>역할</th><th>상태</th><th>컨텍스트</th><th>마지막 턴</th><th>기계</th><th>폴더</th><th>라벨</th><th>부모</th><th>마지막 보고</th></tr></thead><tbody id="sessions"></tbody></table></div>
 </section>
@@ -161,6 +182,7 @@ table.stack td:first-child{font-weight:600}
 <select id="status"><option value="">모든 상태</option><option value="pending">안 읽음</option><option value="read">읽음</option><option value="acknowledged">확인함</option><option value="complete">완료</option></select>
 <input id="search" placeholder="내용·역할·task 검색">
 <input id="thread" type="number" min="1" placeholder="스레드 번호">
+<input id="task" placeholder="task id" autocomplete="off" autocapitalize="off" spellcheck="false">
 <button id="go">검색</button>
 <button id="reset">초기화</button>
 <button id="reloadMail">새로 고침</button>
@@ -268,15 +290,19 @@ async function loadSessions(){
     $('sessionsNote').textContent=p.sessions.length+'개 · 심장박동 '+p.interval_seconds+'초, '+p.missed+'번 놓치면 오프라인';
   }catch(e){$('sessionsNote').textContent=e.message}
 }
+// mailID is set by openMessage (진행 tab) to show one message; 「초기화」 or a
+// new search clears it.
+let mailID='';
 async function load(){
   $('conn').textContent='불러오는 중…';
-  const thread=$('thread').value;
-  $('notice').textContent=thread?'스레드 #'+thread+'의 메일만 보는 중입니다. 「초기화」로 돌아갑니다.':'';
+  const thread=$('thread').value,task=$('task').value.trim(),id=mailID;
+  $('notice').textContent=[id?'메일 #'+id+'만 보는 중입니다.':'',thread?'스레드 #'+thread+'의 메일만 보는 중입니다.':'',task?'task '+task+'의 메일만 보는 중입니다.':''].filter(Boolean).join(' ')+(id||thread||task?' 「초기화」로 돌아갑니다.':'');
   try{
-    const q=new URLSearchParams({box:$('box').value,role:$('role').value,status:$('status').value,q:$('search').value,thread:thread});
+    const q=new URLSearchParams({box:$('box').value,role:$('role').value,status:$('status').value,q:$('search').value,thread:thread,task:task,id:id});
     const rows=await api('messages?'+q);
     const list=$('list');list.replaceChildren();
     for(const m of rows)list.append(card(m));
+    if(id&&rows.length===1)list.querySelector('article button').click();
     $('conn').textContent=rows.length+'통 (최대 500통)';
   }catch(e){$('conn').textContent=e.message}
 }
@@ -312,8 +338,8 @@ function card(m){
 // Each tab's loader runs once, the first time the tab is shown; after that the
 // tab's own 「새로 고침」 button reloads it. #33 sets tabLoaders.permissions and
 // #42 sets tabLoaders.questions / tabLoaders.settings (null = nothing to load).
-const tabNames=['sessions','metrics','mail','permissions','questions','settings'];
-const tabLoaders={sessions:loadSessions,metrics:null,mail:initMail,permissions:null,questions:null,settings:null};
+const tabNames=['progress','sessions','metrics','mail','permissions','questions','settings'];
+const tabLoaders={progress:null,sessions:loadSessions,metrics:null,mail:initMail,permissions:null,questions:null,settings:null};
 const tabLoaded=new Set();
 // setTabCount(name,n) shows 「이름 (n)」 on a tab; n null/undefined hides the number.
 // #42 calls it for 'questions' (open questions), #33 for 'permissions' (pending requests),
@@ -439,13 +465,79 @@ function setMetricsDays(d){
 }
 // openThread shows the 메일 tab filtered to one thread (the 「스레드 보기」 filter),
 // clearing the other filters so the whole thread shows.
-function openThread(id){
-  $('thread').value=id;$('search').value='';$('status').value='';$('role').value='';$('box').value='all';
+function openThread(id){openMail({thread:id})}
+// openMail shows the 메일 tab with only the given filter (thread, task or id)
+// set and every other filter cleared.
+function openMail(f){
+  $('thread').value=f.thread||'';$('task').value=f.task||'';mailID=f.id?String(f.id):'';
+  $('search').value='';$('status').value='';$('role').value='';$('box').value='all';
   const fresh=!tabLoaded.has('mail');
   selectTab('mail');
   if(!fresh)load();
   window.scrollTo({top:0});
 }
+function openMessage(id){openMail({id:id})}
+function openTask(task){openMail({task:task})}
+// ---- 진행 ----
+// One GET /api/admin/progress fills a card per service. The tab number is the
+// open directives older than the pending alert threshold (0 hides it).
+const badgeLabel={error:'오류',blocked:'막힘',busy:'바쁨',idle:'유휴',none:'세션 없음'};
+function rel(now,t){if(!t)return '-';const s=Math.max(0,Math.round((new Date(now)-new Date(t))/1000));return s<60?'방금':dur(s)+' 전'}
+function linkItem(label,sub,over,onclick){
+  const li=node('li','',over?'over':''),b=node('button','');
+  b.type='button';b.append(document.createTextNode(label),node('small',sub));b.onclick=onclick;
+  li.append(b);return li;
+}
+function progressCard(p,now,limit){
+  const c=node('article','','pcard');
+  const h=node('h3','');h.append(node('span',p.service,'pname'),node('span',badgeLabel[p.badge]||p.badge,'pbadge b-'+p.badge));
+  const news=node('p','');news.append(node('b','마지막 소식 '));
+  const r=p.last_report;
+  if(r){news.append(document.createTextNode((r.subject||'(제목 없음)')+' · '+rel(now,r.at)));news.title=r.from+' → '+r.to+' · '+when(r.at)}
+  else news.append(document.createTextNode(p.last_activity_at?'보고 없음 · 마지막 활동 '+rel(now,p.last_activity_at):'소식 없음'));
+  c.append(h,news);
+  if(p.sessions.length){
+    c.append(node('h4','세션 ('+p.sessions.length+')'));
+    const ul=node('ul','','plist');
+    for(const v of p.sessions){
+      const li=node('li',''),[text,cls]=sessionStatus(v.state);
+      li.append(node('b',v.role),document.createTextNode(' · '),node('span',text,cls),node('span',' · '+dur(Math.max(0,Math.round((new Date(now)-new Date(v.since))/1000)))+'째','muted'));
+      // 폴더는 #346처럼 앞쪽을 줄임표로 줄이고 전체 경로는 툴팁으로.
+      if(v.directory){const d=node('span','\u200e'+v.directory+'\u200e','pdir');d.title=v.directory;li.append(d)}
+      ul.append(li);
+    }
+    c.append(ul);
+  }
+  if(p.open_directives.length){
+    c.append(node('h4','답 없는 지시 ('+p.open_directives.length+')'));
+    const ul=node('ul','','plist plinks');
+    for(const d of p.open_directives)ul.append(linkItem('#'+d.id+' '+(d.subject||'(제목 없음)'),d.to+' · '+(statusLabel[d.status]||d.status)+' · '+dur(d.age_s)+' 지남'+(d.over_threshold?' · 문턱('+dur(limit)+') 넘음':''),d.over_threshold,()=>openMessage(d.id)));
+    c.append(ul);
+  }
+  if(p.open_tasks.length){
+    c.append(node('h4','진행 중 task ('+p.open_tasks.length+')'));
+    const ul=node('ul','','plist plinks');
+    for(const t of p.open_tasks)ul.append(linkItem(t.task_id,(t.last_subject||'(제목 없음)')+' · '+rel(now,t.last_at)+' · '+t.messages+'통',false,()=>openTask(t.task_id)));
+    c.append(ul);
+  }
+  return c;
+}
+let progressSeq=0;
+async function loadProgress(){
+  const seq=++progressSeq;
+  $('progressNote').textContent='불러오는 중…';
+  try{
+    const r=await api('progress');
+    if(seq!==progressSeq)return;
+    const box=$('progress');box.replaceChildren();
+    let over=0;
+    for(const p of r.services){over+=p.open_directives.filter(d=>d.over_threshold).length;box.append(progressCard(p,r.generated_at,r.pending_alert_s))}
+    if(!r.services.length)box.append(node('p','아직 서비스가 없습니다.','muted'));
+    setTabCount('progress',over||null);
+    $('progressNote').textContent=r.services.length+'개 서비스 · '+when(r.generated_at)+(over?' · 오래된 지시 '+over+'개':'');
+  }catch(e){if(seq===progressSeq)$('progressNote').textContent=e.message}
+}
+tabLoaders.progress=loadProgress;
 tabLoaders.metrics=loadMetrics;
 // ---- 질문 ----
 const qStatusLabel={pending:'대기',answered:'답함',withdrawn:'거둠'};
@@ -674,8 +766,8 @@ function showTab(name){
   }
   if(!tabLoaded.has(name)){tabLoaded.add(name);if(tabLoaders[name])tabLoaders[name]()}
 }
-// Routes: #sessions #metrics #mail #permissions #questions #settings, #decisions (질문 tab,
-// 결정 view) and #q=<id> (질문 + focusQuestion). No hash or an unknown one shows 세션.
+// Routes: #progress #sessions #metrics #mail #permissions #questions #settings, #decisions (질문 tab,
+// 결정 view) and #q=<id> (질문 + focusQuestion). No hash or an unknown one shows 진행.
 function route(){
   const h=location.hash.slice(1);
   if(h==='decisions'){showTab('questions');showQuestionView('decisions');return}
@@ -686,7 +778,7 @@ function route(){
     focusQuestion(id);
     return;
   }
-  showTab(tabNames.includes(h)?h:'sessions');
+  showTab(tabNames.includes(h)?h:'progress');
 }
 // selectTab(name) also takes 'decisions' (the 결정 view of the 질문 tab).
 function selectTab(name){
@@ -708,17 +800,19 @@ $('tabs').addEventListener('keydown',e=>{
 });
 window.addEventListener('hashchange',route);
 
-$('go').onclick=load;
+$('go').onclick=()=>{mailID='';load()};
 $('reloadMail').onclick=load;
 $('reloadSessions').onclick=loadSessions;
+$('reloadProgress').onclick=loadProgress;
 $('reloadMetrics').onclick=loadMetrics;
 $('metDays7').onclick=()=>setMetricsDays(7);
 $('metDays30').onclick=()=>setMetricsDays(30);
 $('reloadQuestions').onclick=()=>{setMsg($('questionsMsg'),'');loadQuestions()};
 $('reloadSettings').onclick=loadSettings;
-$('reset').onclick=()=>{$('thread').value='';$('search').value='';$('status').value='';$('role').value='';$('box').value='all';load()};
+$('reset').onclick=()=>{$('thread').value='';$('task').value='';mailID='';$('search').value='';$('status').value='';$('role').value='';$('box').value='all';load()};
 $('search').addEventListener('keydown',e=>{if(e.key==='Enter')load()});
 $('thread').addEventListener('keydown',e=>{if(e.key==='Enter')load()});
+$('task').addEventListener('keydown',e=>{if(e.key==='Enter'){mailID='';load()}});
 route();
 if(!tabLoaded.has('questions'))refreshQuestionCount();
 if(!tabLoaded.has('metrics'))refreshMetricsCount();

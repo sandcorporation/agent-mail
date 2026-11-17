@@ -13,9 +13,9 @@ func TestDashboardTabsSkeleton(t *testing.T) {
 	if !strings.Contains(body, `role="tablist"`) {
 		t.Fatal("dashboard has no tablist")
 	}
-	// Tab order matters: 세션, 지표, 메일, 권한 요청, 질문, 설정.
+	// Tab order matters: 진행, 세션, 지표, 메일, 권한 요청, 질문, 설정.
 	last := -1
-	for _, name := range []string{"sessions", "metrics", "mail", "permissions", "questions", "settings"} {
+	for _, name := range []string{"progress", "sessions", "metrics", "mail", "permissions", "questions", "settings"} {
 		tab := `id="tab-` + name + `" data-tab="` + name + `" aria-controls="panel-` + name + `"`
 		i := strings.Index(body, tab)
 		if i < 0 {
@@ -55,11 +55,31 @@ func TestDashboardMetricsTab(t *testing.T) {
 		`id="metDays7" data-days="7"`, `id="metDays30" data-days="30"`, `id="reloadMetrics"`,
 		"document.createElementNS(SVG,tag)", "'http://www.w3.org/2000/svg'",
 		"setTabCount('metrics',", "p.over_threshold", "t.error_s", "t.blocked_s",
-		"function openThread(id)", "$('thread').value=id",
+		"function openThread(id)", "$('thread').value=f.thread||''",
 		`id="mFirstByRecipient"`, `id="mPending"`, `id="mThreads"`, `id="mStates"`, `id="mCurrent"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("metrics tab missing %q", want)
+		}
+	}
+}
+
+func TestDashboardProgressTab(t *testing.T) {
+	w := httptest.NewRecorder()
+	dashboard(w, httptest.NewRequest("GET", "/", nil))
+	body := w.Body.String()
+	for _, want := range []string{
+		`<span class="tab-name">진행</span>`,
+		`id="tab-progress" data-tab="progress" aria-controls="panel-progress" aria-selected="true"`,
+		`id="panel-progress" role="tabpanel" aria-labelledby="tab-progress" tabindex="0" class="card">`,
+		`id="panel-sessions" role="tabpanel" aria-labelledby="tab-sessions" tabindex="0" class="card" hidden>`,
+		"tabLoaders.progress=loadProgress", "api('progress')", `id="reloadProgress"`, `id="progress"`,
+		"showTab(tabNames.includes(h)?h:'progress')",
+		"function openMessage(id)", "function openTask(task)", `id="task"`, "task:task,id:id",
+		"setTabCount('progress',", "d.over_threshold", "'세션 없음'",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("progress tab missing %q", want)
 		}
 	}
 }
