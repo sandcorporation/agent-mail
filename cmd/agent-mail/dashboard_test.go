@@ -109,7 +109,7 @@ func TestDashboardNoUsageCopy(t *testing.T) {
 }
 
 func TestDashboardHeaderFromOneConstant(t *testing.T) {
-	if headerText != "Switchboard · 관리자 보기" {
+	if headerText != "Switchboard" {
 		t.Fatalf("headerText = %q", headerText)
 	}
 	w := httptest.NewRecorder()

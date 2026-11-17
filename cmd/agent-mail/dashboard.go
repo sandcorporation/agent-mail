@@ -23,7 +23,7 @@ func dashboard(w http.ResponseWriter, r *http.Request) {
 // dashboard header live, so a rename is a one-line change.
 const (
 	productName = "Switchboard"
-	headerText  = productName + " · 관리자 보기"
+	headerText  = productName
 )
 
 // dashboardHTML is the whole page. Design tokens (colours, spacing, radius)
@@ -78,7 +78,9 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13.5px/1.55 var(--mono);mar
 #notice{margin:var(--s2) 0;font-size:.9em}
 #notice:empty{display:none}
 .wide{overflow-x:auto}
-.head{display:flex;align-items:baseline;gap:var(--s3);padding:var(--s2) 0 var(--s3)}
+.head{display:flex;align-items:center;gap:var(--s3);padding:var(--s2) 0 var(--s3)}
+.who{margin-left:auto;display:flex;align-items:center;gap:var(--s2);min-width:0}
+#whoName{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:12rem}
 .toolbar{display:flex;gap:var(--s2) var(--s3);align-items:center;flex-wrap:wrap;margin-bottom:var(--s3)}
 .toolbar [role=status],.toolbar .muted{font-size:.85em}
 .tabs{position:sticky;top:0;z-index:2;display:flex;gap:var(--s1);overflow-x:auto;scrollbar-width:none;background:var(--bg);border-bottom:1px solid var(--border);margin:0 calc(-1*var(--s4));padding:0 var(--s4)}
@@ -195,8 +197,8 @@ table.stack tbody tr:hover td{background:none}
 </style>
 </head>
 <body>
-<header class="head"><h1>` + headerText + `</h1></header>
-<nav id="tabs" class="tabs" role="tablist" aria-label="관리자 보기 탭">
+<header class="head"><h1>` + headerText + `</h1><span class="who"><span id="whoName" class="muted"></span><button type="button" id="logout" hidden>로그아웃</button></span></header>
+<nav id="tabs" class="tabs" role="tablist" aria-label="탭">
 <button type="button" role="tab" id="tab-progress" data-tab="progress" aria-controls="panel-progress" aria-selected="true" tabindex="0"><span class="tab-name">진행</span><span class="tab-count"></span></button>
 <button type="button" role="tab" id="tab-sessions" data-tab="sessions" aria-controls="panel-sessions" aria-selected="false" tabindex="-1"><span class="tab-name">세션</span><span class="tab-count"></span></button>
 <button type="button" role="tab" id="tab-metrics" data-tab="metrics" aria-controls="panel-metrics" aria-selected="false" tabindex="-1"><span class="tab-name">지표</span><span class="tab-count"></span></button>
@@ -309,12 +311,32 @@ function sessionStatus(st){
 }
 const statusLabel={pending:'안 읽음',read:'읽음',acknowledged:'확인함',complete:'완료',completed:'완료',held:'보관 중'};
 const $=id=>document.getElementById(id);
+// adminMode is the mode from /api/admin/me. Outside the proxy-secret
+// transition mode a 401 means the session ended: reload to the login page.
+let adminMode='';
+function signedOut(){if(adminMode&&adminMode!=='legacy')location.reload()}
+async function loadMe(){
+  try{
+    const r=await fetch('/api/admin/me',{credentials:'same-origin',headers:{'Accept':'application/json'}});
+    if(!r.ok)return;
+    const m=await r.json();adminMode=m.mode||'';
+    $('whoName').textContent=m.mode==='legacy'?'프록시':m.user;
+    $('whoName').title=$('whoName').textContent;
+    $('logout').hidden=m.mode==='legacy';
+  }catch(e){}
+}
+$('logout').onclick=async()=>{
+  $('logout').disabled=true;
+  try{await fetch('/auth/logout',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Switchboard-Dashboard':'1'},body:'{}'})}catch(e){}
+  location.replace('/');
+};
 async function api(path){
   let r;
   try{r=await fetch('/api/admin/'+path,{credentials:'same-origin',headers:{'Accept':'application/json'}})}
   catch(e){throw Error('네트워크 오류 · 연결과 로그인 확인')}
+  if(r.status===401)signedOut();
   if(r.redirected||!(r.headers.get('content-type')||'').includes('application/json'))throw Error('로그인 필요 · 다시 로그인한 뒤 새로 고침');
-  if(!r.ok)throw Error(r.status===401?'관리자 접근 미설정(401)':'요청 실패('+r.status+')');
+  if(!r.ok)throw Error(r.status===401?'로그인 필요(401)':'요청 실패('+r.status+')');
   return r.json();
 }
 // apiSend makes an admin write with the write guard headers. Errors carry the
@@ -328,8 +350,9 @@ async function apiSend(method,path,body){
     if(!(r.headers.get('content-type')||'').includes('application/json'))throw Error('로그인 필요 · 다시 로그인한 뒤 새로 고침');
     return r.json();
   }
+  if(r.status===401)signedOut();
   let text='';try{text=(await r.text()).trim().slice(0,300)}catch(e){}
-  const e=Error(r.status===401?'관리자 접근 미설정(401)':r.status===403?'쓰기 거부(403) · 같은 주소에서 열었는지 확인':'요청 실패('+r.status+')'+(text?': '+text:''));
+  const e=Error(r.status===401?'로그인 필요(401)':r.status===403?'쓰기 거부(403) · 같은 주소에서 열었는지 확인':'요청 실패('+r.status+')'+(text?': '+text:''));
   e.status=r.status;throw e;
 }
 function node(tag,text,cls){const n=document.createElement(tag);n.textContent=text;if(cls)n.className=cls;return n}
@@ -917,6 +940,7 @@ $('reset').onclick=()=>{$('thread').value='';$('task').value='';mailID='';$('sea
 $('search').addEventListener('keydown',e=>{if(e.key==='Enter')load()});
 $('thread').addEventListener('keydown',e=>{if(e.key==='Enter')load()});
 $('task').addEventListener('keydown',e=>{if(e.key==='Enter'){mailID='';load()}});
+loadMe();
 route();
 if(!tabLoaded.has('questions'))refreshQuestionCount();
 if(!tabLoaded.has('metrics'))refreshMetricsCount();

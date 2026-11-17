@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -60,19 +59,18 @@ type Server struct {
 	alerts           *alertThresholds // SWITCHBOARD_ALERT_*; nil means defaultAlertThresholds
 	oldHeaders       aliasCounter     // requests that used an X-Agent-Mail-* header
 	groups           groupCache       // collaborator groups (groups.go)
+	adminMode        string           // SWITCHBOARD_ADMIN_AUTH; "" is default deny or the transition rule (adminauth.go)
+	adminSessionTTL  time.Duration    // 0 means defaultSessionTTL
+	insecureCookie   bool             // SWITCHBOARD_INSECURE_COOKIE=1: session cookie without Secure, for local http
+	trustForwarded   bool             // SWITCHBOARD_TRUST_FORWARDED=1: client IP from X-Forwarded-For
+	loginLimits      loginLimiter
 }
 
 var version = "dev"
 
 func runServer() {
-	path := env("DB_PATH", "/data/mail.db")
-	_ = os.MkdirAll(filepath.Dir(path), 0755)
-	db, e := sql.Open("sqlite", path)
+	db, e := openDB(env("DB_PATH", "/data/mail.db"))
 	if e != nil {
-		log.Fatal(e)
-	}
-	db.SetMaxOpenConns(1)
-	if e = initSchema(db); e != nil {
 		log.Fatal(e)
 	}
 	s := &Server{db: db, tokens: map[string]string{}, adminProxyToken: envAlias("ADMIN_PROXY_TOKEN"), done: make(chan struct{})}
@@ -107,6 +105,9 @@ func runServer() {
 		log.Fatal(e)
 	}
 	configureDiscord(s, os.Getenv)
+	if e = configureAdminAuth(s, os.Getenv); e != nil {
+		log.Fatal(e)
+	}
 	for _, pair := range strings.Split(envAlias("TOKENS"), ",") {
 		p := strings.SplitN(strings.TrimSpace(pair), "=", 2)
 		if len(p) == 2 && p[0] != "" && p[1] != "" {
@@ -125,7 +126,8 @@ func runServer() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", health)
 	mux.HandleFunc("/api/", s.api)
-	mux.HandleFunc("/", dashboard)
+	mux.HandleFunc("/auth/", s.authAPI)
+	mux.HandleFunc("/", s.root)
 	addr := env("LISTEN_ADDR", ":8080")
 	// No WriteTimeout: /api/events responses stay open indefinitely and
 	// /api/events/poll waits up to AGENT_MAIL_POLL_MAX.
@@ -189,6 +191,9 @@ func initSchema(db *sql.DB) error {
 		return e
 	}
 	if e = migrateGroups(db); e != nil {
+		return e
+	}
+	if e = migrateAdminAuth(db); e != nil {
 		return e
 	}
 	return migrateQuestions(db)
@@ -357,13 +362,13 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
-// adminAPI exposes mailbox reporting and settings only to a reverse proxy that
-// injects a server-held secret after authenticating its user. The backend
-// must remain private; caller-supplied identity headers are never trusted.
+// adminAPI exposes mailbox reporting and settings to a signed-in admin (see
+// adminIdentify; under the transition rule, a reverse proxy that injects the
+// server-held secret). Caller-supplied identity headers are never trusted.
 // Writes (PUT, POST, DELETE) also need the dashboard CSRF guard.
 func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
-	provided := s.header(r, "Admin")
-	if s.adminProxyToken == "" || len(provided) != len(s.adminProxyToken) || subtle.ConstantTimeCompare([]byte(provided), []byte(s.adminProxyToken)) != 1 {
+	who, ok := s.adminIdentify(r)
+	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -402,6 +407,8 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch path {
+	case "me":
+		writeJSON(w, who)
 	case "slots":
 		out, err := s.activeSlots("")
 		if err != nil {
