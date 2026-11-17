@@ -19,117 +19,181 @@ func dashboard(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.WriteString(w, dashboardHTML)
 }
 
+// productName and headerText are the only places the product name and the
+// dashboard header live, so a rename is a one-line change.
+const (
+	productName = "Agent Mail"
+	headerText  = productName + " · 관리자 보기"
+)
+
+// dashboardHTML is the whole page. Design tokens (colours, spacing, radius)
+// sit on :root and are redefined for prefers-color-scheme: dark; state colours
+// (--idle, --busy, --compacting, --error, --blocked, --offline) are shared by
+// session text, rows, progress badges and question pills.
 const dashboardHTML = `<!doctype html>
 <html lang="ko">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Agent Mail</title>
+<meta name="color-scheme" content="light dark">
+<title>` + productName + `</title>
 <style>
-body{font:16px system-ui,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;background:#f5f7fa;color:#172033}
-input,button,select{font:inherit;padding:.5rem;margin:.2rem}
-button{cursor:pointer}
-.row{display:flex;gap:.4rem;align-items:center;flex-wrap:wrap}
-.card{background:#fff;padding:1rem;margin:.7rem 0;border-radius:8px;box-shadow:0 1px 5px #ccd;overflow-wrap:anywhere}
-.card h3{margin:.1rem 0 .3rem}
-.card.urgent{border-left:4px solid #c62828}
-.badge{display:inline-block;background:#c62828;color:#fff;border-radius:4px;padding:0 .4rem;margin-right:.4rem;font-size:.8em;vertical-align:middle}
-.body{margin-top:.8rem;border-top:1px solid #dde;padding-top:.8rem}
-pre{white-space:pre-wrap;overflow-wrap:anywhere;font:15px/1.5 ui-monospace,monospace;margin:0}
-.muted{color:#667}
-#notice{margin:.4rem 0}
+:root{color-scheme:light dark;
+--bg:#f4f6f9;--surface:#fff;--surface-2:#f0f3f7;--border:#dfe4ec;--border-strong:#c5cdd9;
+--text:#18202e;--muted:#5f6b7c;--accent:#2457c5;--accent-fg:#fff;--accent-soft:#e7eefc;--focus:#2457c5;
+--idle:#1f7a3a;--idle-bg:#e5f4ea;--busy:#2457c5;--busy-bg:#e7eefc;--compacting:#7a3fb0;--compacting-bg:#f1e8fa;
+--error:#c0302b;--error-bg:#fceaea;--blocked:#a35a00;--blocked-bg:#fdf1e0;--offline:#7b8594;--offline-bg:#eef0f3;
+--s1:.25rem;--s2:.5rem;--s3:.75rem;--s4:1rem;--s5:1.5rem;--s6:2rem;--r:8px;--r-sm:5px;
+--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+@media (prefers-color-scheme:dark){:root{
+--bg:#0f1319;--surface:#171c24;--surface-2:#1f2630;--border:#2b3340;--border-strong:#3b4555;
+--text:#e4e8ef;--muted:#97a1b0;--accent:#7aa5ff;--accent-fg:#0f1319;--accent-soft:#1d2a44;--focus:#7aa5ff;
+--idle:#5cc77f;--idle-bg:#16301f;--busy:#7aa5ff;--busy-bg:#1d2a44;--compacting:#c69bf2;--compacting-bg:#2c2040;
+--error:#ff7b74;--error-bg:#3a1c1c;--blocked:#f0ad4e;--blocked-bg:#36280f;--offline:#8a93a1;--offline-bg:#232932}}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0 auto;max-width:1200px;padding:var(--s4) var(--s4) var(--s6);background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans KR","Apple SD Gothic Neo","Malgun Gothic",sans-serif;-webkit-text-size-adjust:100%}
+h1{font-size:1.2rem;font-weight:650;margin:0;letter-spacing:-.01em}
+h2{font-size:1.05rem;font-weight:650;margin:0}
+h3{font-size:.98rem;font-weight:650}
+h4{font-size:.85rem;font-weight:600;color:var(--muted)}
+a{color:var(--accent)}
+input,button,select{font:inherit;color:inherit}
+input,select{padding:.4rem .55rem;margin:0;border:1px solid var(--border-strong);border-radius:var(--r-sm);background:var(--surface);min-width:0}
+input[type=checkbox],input[type=radio]{accent-color:var(--accent)}
+button,a.button{padding:.4rem .75rem;margin:0;border:1px solid var(--border-strong);border-radius:var(--r-sm);background:var(--surface);color:var(--text);cursor:pointer;line-height:1.4}
+button:hover,a.button:hover{border-color:var(--accent);color:var(--accent)}
+button[type=submit]{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}
+button[type=submit]:hover{color:var(--accent-fg);filter:brightness(1.08)}
+button:disabled{opacity:.55;cursor:default}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.row{display:flex;gap:var(--s2);align-items:center;flex-wrap:wrap}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:var(--s4);margin:var(--s3) 0;overflow-wrap:anywhere}
+.card h3{margin:0 0 var(--s1)}
+.card.urgent{border-left:4px solid var(--error)}
+.badge{display:inline-block;background:var(--error);color:#fff;border-radius:var(--r-sm);padding:0 .4rem;margin-right:var(--s2);font-size:.75em;font-weight:600;vertical-align:middle}
+.body{margin-top:var(--s3);border-top:1px solid var(--border);padding-top:var(--s3)}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13.5px/1.55 var(--mono);margin:0}
+.muted{color:var(--muted)}
+.empty{color:var(--muted);margin:var(--s3) 0}
+#notice{margin:var(--s2) 0;font-size:.9em}
+#notice:empty{display:none}
 .wide{overflow-x:auto}
-.tabs{display:flex;gap:.2rem;overflow-x:auto;border-bottom:2px solid #ccd;margin:1rem 0 .3rem}
-.tabs [role=tab]{flex:none;white-space:nowrap;margin:0;padding:.6rem .9rem;border:0;border-bottom:3px solid transparent;background:none;color:#445}
-.tabs [role=tab][aria-selected=true]{border-bottom-color:#1e5bb8;color:#172033;font-weight:600}
+.head{display:flex;align-items:baseline;gap:var(--s3);padding:var(--s2) 0 var(--s3)}
+.toolbar{display:flex;gap:var(--s2) var(--s3);align-items:center;flex-wrap:wrap;margin-bottom:var(--s3)}
+.toolbar [role=status],.toolbar .muted{font-size:.85em}
+.tabs{position:sticky;top:0;z-index:2;display:flex;gap:var(--s1);overflow-x:auto;scrollbar-width:none;background:var(--bg);border-bottom:1px solid var(--border);margin:0 calc(-1*var(--s4));padding:0 var(--s4)}
+.tabs::-webkit-scrollbar{display:none}
+.tabs [role=tab]{flex:none;white-space:nowrap;margin:0 0 -1px;padding:.55rem .8rem;border:0;border-bottom:2px solid transparent;border-radius:0;background:none;color:var(--muted);font-weight:500}
+.tabs [role=tab]:hover{color:var(--text)}
+.tabs [role=tab][aria-selected=true]{border-bottom-color:var(--accent);color:var(--text);font-weight:650}
+.tab-count{display:inline-block;min-width:1.3em;margin-left:.35rem;padding:0 .35rem;border-radius:999px;background:var(--error);color:#fff;font-size:.72em;font-weight:650;line-height:1.5;text-align:center;vertical-align:1px}
+.tab-count:empty{display:none}
+[role=tabpanel]{margin-top:var(--s4)}
 [role=tabpanel][hidden]{display:none}
-table{border-collapse:collapse;width:100%;font-size:.9em}
-th,td{text-align:left;padding:.3rem .5rem;border-bottom:1px solid #dde;white-space:nowrap}
-td.dir{max-width:18rem;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left}
-tr.offline td{color:#889}
-.st-busy{color:#b26a00;font-weight:600}.st-compacting{color:#6a1b9a;font-weight:600}.st-idle{color:#2e7d32}
-.st-error{color:#c62828;font-weight:600}.st-blocked{color:#b26a00;font-weight:700}
-.qcard{scroll-margin-top:1rem}
-.qcard.focus{outline:3px solid #1e5bb8;outline-offset:2px}
-.qcard.answered,.qcard.withdrawn{background:#fafbfd}
-.pill{display:inline-block;border-radius:4px;padding:0 .4rem;margin-right:.4rem;font-size:.8em;vertical-align:middle;color:#fff;background:#667}
-.pill.pending{background:#b26a00}.pill.answered{background:#2e7d32}.pill.withdrawn{background:#889}
-.qitem{border:1px solid #dde;border-radius:6px;padding:.6rem;margin:.6rem 0;min-width:0}
-.qitem legend,.qhead{font-weight:600;padding:0 .3rem}
-.qhead .pill{background:#1e5bb8}
-.qtext{margin:.2rem 0 .4rem;white-space:pre-wrap;overflow-wrap:anywhere}
-.qopt{display:flex;gap:.5rem;align-items:flex-start;padding:.4rem;margin:.3rem 0;border:1px solid #e3e7ee;border-radius:6px;cursor:pointer;overflow-wrap:anywhere}
-.qopt input{margin:.25rem 0 0;flex:none;width:1.1rem;height:1.1rem}
+section.card{margin-top:var(--s4)}
+table{border-collapse:collapse;width:100%;font-size:.88em;font-variant-numeric:tabular-nums}
+#sessionsTbl th:nth-child(3){text-align:right}
+th,td{text-align:left;padding:.4rem .6rem;border-bottom:1px solid var(--border);white-space:nowrap;vertical-align:top}
+th{font-size:.85em;font-weight:600;color:var(--muted);background:var(--surface-2)}
+tbody tr:hover td{background:var(--surface-2)}
+td.dir{max-width:14rem;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left}
+tr.offline td{color:var(--offline)}
+tr.row-error td:first-child{box-shadow:inset 3px 0 var(--error)}
+tr.row-blocked td:first-child{box-shadow:inset 3px 0 var(--blocked)}
+.st-idle{color:var(--idle)}.st-busy{color:var(--busy);font-weight:600}.st-compacting{color:var(--compacting);font-weight:600}
+.st-error{color:var(--error);font-weight:600}.st-blocked{color:var(--blocked);font-weight:600}
+.st-offline,.st-unknown{color:var(--offline)}
+.qcard{scroll-margin-top:3.5rem}
+.qcard.focus{outline:2px solid var(--accent);outline-offset:2px}
+.qcard.answered,.qcard.withdrawn{background:var(--surface-2)}
+.pill{display:inline-block;border-radius:var(--r-sm);padding:0 .4rem;margin-right:var(--s2);font-size:.75em;font-weight:600;vertical-align:middle;color:var(--accent);background:var(--accent-soft)}
+.pill.pending{color:var(--blocked);background:var(--blocked-bg)}.pill.answered{color:var(--idle);background:var(--idle-bg)}.pill.withdrawn{color:var(--offline);background:var(--offline-bg)}
+.qitem{border:1px solid var(--border);border-radius:var(--r);padding:var(--s3);margin:var(--s3) 0;min-width:0}
+.qitem legend,.qhead{font-weight:600;padding:0 var(--s1)}
+.qtext{margin:var(--s1) 0 var(--s2);white-space:pre-wrap;overflow-wrap:anywhere}
+.qopt{display:flex;gap:var(--s2);align-items:flex-start;padding:var(--s2);margin:var(--s1) 0;border:1px solid var(--border);border-radius:var(--r-sm);cursor:pointer;overflow-wrap:anywhere}
+.qopt:hover{border-color:var(--accent)}
+.qopt input{margin:.2rem 0 0;flex:none;width:1.05rem;height:1.05rem}
 .qopt>span{min-width:0;flex:1}
-.qopt pre{margin-top:.3rem;padding:.4rem;background:#f1f3f7;border-radius:4px;font-size:13px}
-.qother{display:flex;flex-direction:column;gap:.2rem;margin-top:.3rem}
-.qother input,.settings-form input:not([type=checkbox]){width:100%;box-sizing:border-box;margin:0}
-.qans{margin:.2rem 0;overflow-wrap:anywhere}
-.msg{margin:.4rem 0;font-weight:600}.msg.err{color:#c62828}.msg.ok{color:#2e7d32}
-.settings-form{display:grid;gap:.5rem;max-width:32rem;margin-top:1rem;padding-top:.8rem;border-top:1px solid #dde}
-.settings-form label{display:flex;flex-direction:column;gap:.2rem}
-.settings-form label.check{flex-direction:row;align-items:center;gap:.4rem}
+.qopt pre{margin-top:var(--s1);padding:var(--s2);background:var(--surface-2);border-radius:var(--r-sm);font-size:12.5px}
+.qother{display:flex;flex-direction:column;gap:var(--s1);margin-top:var(--s2);font-size:.9em}
+.qother input,.settings-form input:not([type=checkbox]){width:100%}
+.qans{margin:var(--s1) 0;overflow-wrap:anywhere}
+.msg{margin:var(--s2) 0;font-weight:600}.msg:empty{display:none}.msg.err{color:var(--error)}.msg.ok{color:var(--idle)}
+.settings-form{display:grid;gap:var(--s3);max-width:32rem;margin-top:var(--s4);padding-top:var(--s4);border-top:1px solid var(--border)}
+.settings-form label{display:flex;flex-direction:column;gap:var(--s1);font-size:.9em}
+.settings-form label.check{flex-direction:row;align-items:center;gap:var(--s2)}
 #settingsTbl td.watchers{white-space:normal;overflow-wrap:anywhere}
-.viewswitch{display:inline-flex;border:1px solid #1e5bb8;border-radius:6px;overflow:hidden;margin:.5rem 0}
-.viewswitch button{margin:0;border:0;border-radius:0;background:#fff;color:#1e5bb8;padding:.45rem 1rem}
-.viewswitch button[aria-pressed=true]{background:#1e5bb8;color:#fff;font-weight:600}
-.decfilters input,.decfilters select{min-width:0}
-.decfilters a.button{display:inline-block;padding:.5rem .8rem;margin:.2rem;border:1px solid #1e5bb8;border-radius:4px;color:#1e5bb8;text-decoration:none;background:#fff}
-.dec{border-bottom:1px solid #e3e7ee;padding:.5rem 0}
+#settingsTbl td:last-child{text-align:right}
+#settingsTbl td:last-child button{margin-left:var(--s1);padding:.2rem .55rem;font-size:.95em}
+.viewswitch{display:inline-flex;border:1px solid var(--border-strong);border-radius:var(--r-sm);overflow:hidden;margin:0 0 var(--s3)}
+.toolbar .viewswitch{margin:0}
+.viewswitch button{margin:0;border:0;border-radius:0;background:var(--surface);color:var(--muted);padding:.35rem .9rem}
+.viewswitch button+button{border-left:1px solid var(--border-strong)}
+.viewswitch button[aria-pressed=true]{background:var(--accent-soft);color:var(--accent);font-weight:650}
+.decfilters{margin-bottom:var(--s3)}
+.decfilters a.button{display:inline-block;text-decoration:none}
+.dec{border-bottom:1px solid var(--border);padding:var(--s2) 0}
 .dec p{margin:.15rem 0;overflow-wrap:anywhere}
-.dec .pill{background:#1e5bb8}
-.metgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,26rem),1fr));gap:.8rem;margin-top:.6rem}
-.mcard{border:1px solid #dde;border-radius:6px;padding:.7rem;min-width:0}
+.dec p.muted{font-size:.85em}
+.metgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,26rem),1fr));gap:var(--s3)}
+.mcard,.pcard{border:1px solid var(--border);border-radius:var(--r);padding:var(--s3) var(--s4);min-width:0;background:var(--surface)}
 .mcard.full{grid-column:1/-1}
-.mcard h3{margin:0 0 .3rem}.mcard h4{margin:.8rem 0 .2rem;font-size:.95em}
-.mcard p{margin:.2rem 0 .5rem}
-.stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(6rem,1fr));gap:.4rem;margin:.4rem 0}
-.stat{background:#f1f3f7;border-radius:6px;padding:.4rem .5rem}
-.stat b{display:block;font-size:1.25em}.stat span{font-size:.8em;color:#556}
-.chart svg{display:block;width:100%;max-width:26rem;height:auto;margin:.4rem 0}
-.chart .bar{fill:#1e5bb8}.chart .axis{stroke:#99a}.chart text{font:11px system-ui,sans-serif;fill:#334}
-tr.over td{background:#fdecea}tr.over td:first-child{box-shadow:inset 4px 0 #c62828}
+.mcard h3{margin:0 0 var(--s1)}.mcard h4{margin:var(--s4) 0 var(--s1)}
+.mcard>p.muted{margin:0 0 var(--s2);font-size:.85em}
+.mcard>p.muted:empty{display:none}
+.stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(6rem,1fr));gap:var(--s2);margin:var(--s2) 0}
+.stat{background:var(--surface-2);border-radius:var(--r-sm);padding:var(--s2) var(--s3)}
+.stat b{display:block;font-size:1.2em;font-weight:650;font-variant-numeric:tabular-nums}.stat span{font-size:.78em;color:var(--muted)}
+.chart svg{display:block;width:100%;max-width:26rem;height:auto;margin:var(--s2) 0}
+.chart .bar{fill:var(--accent)}.chart .axis{stroke:var(--border-strong)}.chart text{font:11px system-ui,sans-serif;fill:var(--muted)}
+tr.over td{background:var(--error-bg)}tr.over td:first-child{box-shadow:inset 3px 0 var(--error)}
 td.num,th.num{text-align:right}
 table.stack td.wrap{white-space:normal;overflow-wrap:anywhere}
-.mthreads{margin:.2rem 0;padding-left:1.4rem}
-.mthreads li{margin:.3rem 0}
-.mthreads button{margin:0;padding:.3rem .4rem;border:1px solid #c9d3e3;border-radius:4px;background:#fff;color:#1e5bb8;text-align:left;width:100%;overflow-wrap:anywhere}
-.mthreads small{display:block;color:#556}
-.progrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,22rem),1fr));gap:.8rem;margin-top:.6rem;align-items:start}
-.pcard{border:1px solid #dde;border-radius:6px;padding:.7rem;min-width:0}
-.pcard h3{display:flex;gap:.5rem;align-items:center;justify-content:space-between;margin:0 0 .4rem;min-width:0}
+.mthreads{margin:var(--s1) 0;padding-left:1.4rem}
+.mthreads li{margin:var(--s1) 0}
+.mthreads li.empty{list-style:none;margin-left:-1.4rem}
+.mthreads button,.plinks button{margin:0;padding:.3rem .5rem;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--surface);color:var(--accent);text-align:left;width:100%;overflow-wrap:anywhere}
+.mthreads small,.plinks small{display:block;color:var(--muted)}
+.progrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,22rem),1fr));gap:var(--s3);align-items:start}
+.pcard h3{display:flex;gap:var(--s2);align-items:center;justify-content:space-between;margin:0 0 var(--s2);min-width:0}
 .pcard h3 .pname{min-width:0;overflow-wrap:anywhere}
-.pcard h4{margin:.7rem 0 .2rem;font-size:.95em}
-.pcard p{margin:.2rem 0}
-.pbadge{flex:none;border-radius:4px;padding:.05rem .45rem;font-size:.8em;color:#fff;background:#889}
-.pbadge.b-error{background:#c62828}.pbadge.b-blocked{background:#b26a00}.pbadge.b-busy{background:#1e5bb8}.pbadge.b-idle{background:#2e7d32}
+.pcard h4{margin:var(--s3) 0 var(--s1)}
+.pcard p{margin:var(--s1) 0;font-size:.92em}
+.pbadge{flex:none;border-radius:999px;padding:.05rem .55rem;font-size:.75em;font-weight:650;color:var(--offline);background:var(--offline-bg)}
+.pbadge.b-error{color:var(--error);background:var(--error-bg)}.pbadge.b-blocked{color:var(--blocked);background:var(--blocked-bg)}.pbadge.b-busy{color:var(--busy);background:var(--busy-bg)}.pbadge.b-compacting{color:var(--compacting);background:var(--compacting-bg)}.pbadge.b-idle{color:var(--idle);background:var(--idle-bg)}
+.pcard.b-error{border-top:3px solid var(--error)}.pcard.b-blocked{border-top:3px solid var(--blocked)}
 .plist{list-style:none;margin:0;padding:0}
-.plist li{margin:.3rem 0;min-width:0;overflow-wrap:anywhere}
-.pdir{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left;color:#556;font-size:.85em}
-.plinks button{margin:0;padding:.3rem .4rem;border:1px solid #c9d3e3;border-radius:4px;background:#fff;color:#1e5bb8;text-align:left;width:100%;overflow-wrap:anywhere}
-.plinks small{display:block;color:#556}
-.plinks li.over button{border-color:#c62828;background:#fdecea;box-shadow:inset 4px 0 #c62828}
-.plinks li.over small{color:#8e1b1b;font-weight:600}
+.plist li{margin:var(--s1) 0;min-width:0;overflow-wrap:anywhere;font-size:.92em}
+.pdir{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left;color:var(--muted);font:12px/1.4 var(--mono)}
+.plinks li.over button{border-color:var(--error);background:var(--error-bg);box-shadow:inset 3px 0 var(--error)}
+.plinks li.over small{color:var(--error);font-weight:600}
+.filters{display:grid;grid-template-columns:repeat(auto-fill,minmax(9.5rem,1fr));gap:var(--s2);align-items:center}
+.filters .actions{display:flex;gap:var(--s2);flex-wrap:wrap;align-items:center;grid-column:1/-1}
+#conn{font-size:.85em;color:var(--muted)}
 @media (max-width:600px){
-body{margin:1rem auto}
-.decfilters>*{flex:1 1 100%;box-sizing:border-box}
+body{padding:var(--s3) var(--s3) var(--s5);font-size:14.5px}
+.tabs{margin:0 calc(-1*var(--s3));padding:0 var(--s3);flex-wrap:wrap;overflow-x:visible;gap:0}
+.tabs [role=tab]{padding:.45rem .55rem}
+.card{padding:var(--s3)}
+.mcard,.pcard{padding:var(--s3)}
+.filters{grid-template-columns:1fr 1fr}
+.decfilters>*{flex:1 1 100%}
 .decfilters a.button,.decfilters button{text-align:center}
 td.dir{max-width:11rem}
 table.stack thead{display:none}
-table.stack tr{display:block;border-bottom:1px solid #dde;padding:.3rem 0}
-table.stack td{display:block;border:0;padding:.1rem .2rem;white-space:normal;overflow-wrap:anywhere;text-align:left}
-table.stack td[data-label]::before{content:attr(data-label) ": ";color:#667}
-table.stack td:first-child{font-weight:600}
-#settingsTbl thead{display:none}
-#settingsTbl tr{display:block;border-bottom:1px solid #dde;padding:.4rem 0}
-#settingsTbl td{display:block;border:0;padding:.15rem .2rem;white-space:normal;overflow-wrap:anywhere}
-#settingsTbl td[data-label]::before{content:attr(data-label) ": ";color:#667}
+table.stack tr{display:block;border-bottom:1px solid var(--border);padding:var(--s2) 0}
+table.stack td{display:block;border:0;padding:.1rem .2rem;white-space:normal;overflow-wrap:anywhere;text-align:left;max-width:none;direction:ltr}
+table.stack td[data-label]::before{content:attr(data-label) " ";color:var(--muted);font-size:.85em;margin-right:var(--s1)}
+table.stack td:first-child{font-weight:650}
+table.stack tbody tr:hover td{background:none}
+#settingsTbl td:last-child{text-align:left;padding-top:var(--s1)}
+#settingsTbl td:last-child button{margin:0 var(--s1) 0 0}
 }
 </style>
 </head>
 <body>
-<h1>Agent Mail · 관리자 보기</h1>
-<p class="muted">등록된 모든 역할과 메일함을 봅니다. 바꿀 수 있는 것은 질문 답과 질문 설정뿐입니다.</p>
+<header class="head"><h1>` + headerText + `</h1></header>
 <nav id="tabs" class="tabs" role="tablist" aria-label="관리자 보기 탭">
 <button type="button" role="tab" id="tab-progress" data-tab="progress" aria-controls="panel-progress" aria-selected="true" tabindex="0"><span class="tab-name">진행</span><span class="tab-count"></span></button>
 <button type="button" role="tab" id="tab-sessions" data-tab="sessions" aria-controls="panel-sessions" aria-selected="false" tabindex="-1"><span class="tab-name">세션</span><span class="tab-count"></span></button>
@@ -140,76 +204,74 @@ table.stack td:first-child{font-weight:600}
 <button type="button" role="tab" id="tab-settings" data-tab="settings" aria-controls="panel-settings" aria-selected="false" tabindex="-1"><span class="tab-name">설정</span><span class="tab-count"></span></button>
 </nav>
 <section id="panel-progress" role="tabpanel" aria-labelledby="tab-progress" tabindex="0" class="card">
-<div class="row"><h2 style="margin:0">진행</h2><button id="reloadProgress">새로 고침</button><span id="progressNote" class="muted" role="status" aria-live="polite"></span></div>
-<p class="muted">서비스마다 지금 하는 일과 마지막 소식입니다. 최근에 움직인 서비스가 먼저입니다. 지시나 task를 누르면 메일 탭에서 엽니다.</p>
+<div class="toolbar"><h2>진행</h2><button id="reloadProgress">새로 고침</button><span id="progressNote" class="muted" role="status" aria-live="polite"></span></div>
 <div id="progress" class="progrid"></div>
 </section>
 <section id="panel-sessions" role="tabpanel" aria-labelledby="tab-sessions" tabindex="0" class="card" hidden>
-<div class="row"><h2 style="margin:0">세션</h2><button id="reloadSessions">새로 고침</button><span id="sessionsNote" class="muted"></span></div>
-<div class="wide"><table><thead><tr><th>역할</th><th>상태</th><th>컨텍스트</th><th>마지막 턴</th><th>기계</th><th>폴더</th><th>라벨</th><th>부모</th><th>마지막 보고</th></tr></thead><tbody id="sessions"></tbody></table></div>
+<div class="toolbar"><h2>세션</h2><button id="reloadSessions">새로 고침</button><span id="sessionsNote" class="muted"></span></div>
+<div class="wide"><table id="sessionsTbl" class="stack"><thead><tr><th>역할</th><th>상태</th><th>컨텍스트</th><th>마지막 턴</th><th>기계</th><th>폴더</th><th>라벨</th><th>부모</th><th>마지막 보고</th></tr></thead><tbody id="sessions"></tbody></table></div>
 </section>
 <section id="panel-metrics" role="tabpanel" aria-labelledby="tab-metrics" tabindex="0" class="card" hidden>
-<div class="row"><h2 style="margin:0">지표</h2>
+<div class="toolbar"><h2>지표</h2>
 <div class="viewswitch" role="group" aria-label="기간 고르기"><button type="button" id="metDays7" data-days="7" aria-pressed="true">7일</button><button type="button" id="metDays30" data-days="30" aria-pressed="false">30일</button></div>
 <button id="reloadMetrics">새로 고침</button><span id="metricsNote" class="muted" role="status" aria-live="polite"></span></div>
 <div class="metgrid">
-<div class="mcard full"><h3>첫 답장</h3>
-<p class="muted">스레드를 연 메일이 받는 쪽에서 첫 답을 받기까지 걸린 시간입니다.</p>
+<div class="mcard full"><h3 title="스레드를 연 메일이 첫 답을 받기까지 걸린 시간">첫 답장</h3>
 <div id="mFirstStats" class="stats"></div>
 <div id="mFirstChart" class="chart"></div>
-<table id="mFirstTbl" class="stack"><thead><tr><th>받는 쪽</th><th>메일</th><th>답 받음</th><th>답 없음</th><th>p50</th><th>p90</th><th>최장</th></tr></thead><tbody id="mFirstByRecipient"></tbody></table>
+<table id="mFirstTbl" class="stack"><thead><tr><th>받는 쪽</th><th class="num">메일</th><th class="num">답 받음</th><th class="num">답 없음</th><th class="num">p50</th><th class="num">p90</th><th class="num">최장</th></tr></thead><tbody id="mFirstByRecipient"></tbody></table>
 </div>
-<div class="mcard"><h3>안 읽힌 메일</h3>
+<div class="mcard"><h3 title="역할별 안 읽힌 메일과 가장 오래된 것">안 읽힌 메일</h3>
 <p id="mPendingNote" class="muted"></p>
-<table id="mPendingTbl" class="stack"><thead><tr><th>역할</th><th>안 읽음</th><th>가장 오래된 것</th></tr></thead><tbody id="mPending"></tbody></table>
+<table id="mPendingTbl" class="stack"><thead><tr><th>역할</th><th class="num">안 읽음</th><th class="num">가장 오래된 것</th></tr></thead><tbody id="mPending"></tbody></table>
 </div>
-<div class="mcard"><h3>되물음</h3>
+<div class="mcard"><h3 title="두 쪽이 두 번 넘게 주고받은 스레드">되물음</h3>
 <p id="mThreadsNote" class="muted"></p>
 <ol id="mThreads" class="mthreads"></ol>
 </div>
-<div class="mcard full"><h3>세션 상태</h3>
+<div class="mcard full"><h3 title="기간 안에 오류·막힘 상태로 있던 시간">세션 상태</h3>
 <p id="mSessionsNote" class="muted"></p>
-<table id="mStateTbl" class="stack"><thead><tr><th>역할</th><th>오류</th><th>막힘</th><th>많았던 상태</th></tr></thead><tbody id="mStates"></tbody></table>
+<table id="mStateTbl" class="stack"><thead><tr><th>역할</th><th class="num">오류</th><th class="num">막힘</th><th>많았던 상태</th></tr></thead><tbody id="mStates"></tbody></table>
 <h4>지금 오류·막힘</h4>
-<table id="mCurrentTbl" class="stack"><thead><tr><th>역할</th><th>상태</th><th>시작</th><th>지난 시간</th></tr></thead><tbody id="mCurrent"></tbody></table>
+<table id="mCurrentTbl" class="stack"><thead><tr><th>역할</th><th>상태</th><th>시작</th><th class="num">지난 시간</th></tr></thead><tbody id="mCurrent"></tbody></table>
 </div>
 </div>
 </section>
 <section id="panel-mail" role="tabpanel" aria-labelledby="tab-mail" tabindex="0" hidden>
-<div class="card row">
-<select id="box"><option value="all">모든 메일</option><option value="inbox">받은 메일</option><option value="outbox">보낸 메일</option><option value="held">보관 중(라벨)</option></select>
-<select id="role"><option value="">모든 역할</option></select>
-<select id="status"><option value="">모든 상태</option><option value="pending">안 읽음</option><option value="read">읽음</option><option value="acknowledged">확인함</option><option value="complete">완료</option></select>
-<input id="search" placeholder="내용·역할·task 검색">
-<input id="thread" type="number" min="1" placeholder="스레드 번호">
-<input id="task" placeholder="task id" autocomplete="off" autocapitalize="off" spellcheck="false">
-<button id="go">검색</button>
+<div class="card filters">
+<select id="box" aria-label="메일함"><option value="all">모든 메일</option><option value="inbox">받은 메일</option><option value="outbox">보낸 메일</option><option value="held">보관 중(라벨)</option></select>
+<select id="role" aria-label="역할"><option value="">모든 역할</option></select>
+<select id="status" aria-label="상태"><option value="">모든 상태</option><option value="pending">안 읽음</option><option value="read">읽음</option><option value="acknowledged">확인함</option><option value="complete">완료</option></select>
+<input id="search" aria-label="검색" placeholder="내용·역할·task 검색">
+<input id="thread" type="number" min="1" aria-label="스레드 번호" placeholder="스레드 번호">
+<input id="task" aria-label="task id" placeholder="task id" autocomplete="off" autocapitalize="off" spellcheck="false">
+<div class="actions">
+<button id="go" type="submit">검색</button>
 <button id="reset">초기화</button>
 <button id="reloadMail">새로 고침</button>
 <span id="conn">연결 중…</span>
 </div>
+</div>
 <div id="notice" class="muted"></div>
 <div id="list"></div>
 </section>
-<!-- #33 fills this panel: pending permission requests (loader in tabLoaders.permissions, count via setTabCount('permissions',n)). -->
 <section id="panel-permissions" role="tabpanel" aria-labelledby="tab-permissions" tabindex="0" class="card" hidden>
-<h2 style="margin:0">권한 요청</h2>
-<p class="muted">준비 중</p>
+<div class="toolbar"><h2>권한 요청</h2></div>
+<p class="empty">준비 중</p>
 </section>
 <section id="panel-questions" role="tabpanel" aria-labelledby="tab-questions" tabindex="0" class="card" hidden>
-<div class="row"><h2 style="margin:0">질문</h2><button id="reloadQuestions">새로 고침</button><span id="questionsNote" class="muted"></span></div>
+<div class="toolbar"><h2>질문</h2>
 <div class="viewswitch" role="group" aria-label="질문 보기 고르기"><button type="button" id="viewQuestions" aria-pressed="true">질문</button><button type="button" id="viewDecisions" aria-pressed="false">결정</button></div>
+<button id="reloadQuestions">새로 고침</button><span id="questionsNote" class="muted"></span></div>
 <div id="questionsView">
-<p class="muted">기다리는 질문이 먼저, 그다음 최근에 답했거나 거둔 질문이 보입니다.</p>
 <div id="questionsMsg" class="msg" role="status" aria-live="polite"></div>
 <div id="questions"></div>
 </div>
 <div id="decisionsView" hidden>
-<p class="muted">답한 질문을 결정으로 봅니다. 최근에 답한 것이 먼저, 최대 1000개입니다. 날짜는 UTC 기준입니다.</p>
 <form id="decForm" class="row decfilters">
-<select id="decPeriod" aria-label="기간"><option value="7">최근 7일</option><option value="30" selected>최근 30일</option><option value="90">최근 90일</option><option value="all">전체</option><option value="custom">직접 고르기</option></select>
-<input id="decFrom" type="date" aria-label="시작일" hidden>
-<input id="decTo" type="date" aria-label="끝일" hidden>
+<select id="decPeriod" aria-label="기간" title="날짜는 UTC 기준"><option value="7">최근 7일</option><option value="30" selected>최근 30일</option><option value="90">최근 90일</option><option value="all">전체</option><option value="custom">직접 고르기</option></select>
+<input id="decFrom" type="date" aria-label="시작일" title="UTC 기준" hidden>
+<input id="decTo" type="date" aria-label="끝일" title="UTC 기준" hidden>
 <input id="decRole" list="decRoles" aria-label="역할" placeholder="역할 또는 svc/*" autocomplete="off" autocapitalize="off" spellcheck="false">
 <datalist id="decRoles"></datalist>
 <input id="decSearch" type="search" aria-label="검색" placeholder="제목·질문·고른 답 검색">
@@ -221,12 +283,11 @@ table.stack td:first-child{font-weight:600}
 </div>
 </section>
 <section id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" tabindex="0" class="card" hidden>
-<div class="row"><h2 style="margin:0">질문 설정</h2><button id="reloadSettings">새로 고침</button><span id="settingsNote" class="muted"></span></div>
-<p class="muted">대상은 default, 역할(svc/coordinator — svc/coordinator-N도 포함), 접두사(svc/*)입니다. 역할마다 정확한 대상, 가장 긴 접두사, default 순으로 하나가 적용됩니다.</p>
+<div class="toolbar"><h2>질문 설정</h2><button id="reloadSettings">새로 고침</button><span id="settingsNote" class="muted"></span></div>
 <div id="settingsMsg" class="msg" role="status" aria-live="polite"></div>
-<div class="wide"><table id="settingsTbl"><thead><tr><th>대상</th><th>질문 가능</th><th>지켜보는 역할</th><th>디스코드</th><th>바뀐 때</th><th></th></tr></thead><tbody id="settingsTable"></tbody></table></div>
+<div class="wide"><table id="settingsTbl" class="stack"><thead><tr><th>대상</th><th>질문 가능</th><th>지켜보는 역할</th><th>디스코드</th><th>바뀐 때</th><th></th></tr></thead><tbody id="settingsTable"></tbody></table></div>
 <form id="settingsForm" class="settings-form">
-<label>대상 <input id="setTarget" required autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="svc/coordinator 또는 svc/*"></label>
+<label title="default, 역할(svc/coordinator — svc/coordinator-N 포함), 접두사(svc/*). 정확한 대상 → 가장 긴 접두사 → default 순으로 하나만 적용">대상 <input id="setTarget" required autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="svc/coordinator 또는 svc/*"></label>
 <label class="check"><input type="checkbox" id="setCanAsk"> 질문할 수 있음 (can_ask)</label>
 <label class="check"><input type="checkbox" id="setDiscord"> 디스코드 알림 (discord)</label>
 <label>지켜보는 역할 (쉼표로 구분, 최대 20) <input id="setWatchers" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="team/boss, ops/lead"></label>
@@ -245,9 +306,9 @@ const $=id=>document.getElementById(id);
 async function api(path){
   let r;
   try{r=await fetch('/api/admin/'+path,{credentials:'same-origin',headers:{'Accept':'application/json'}})}
-  catch(e){throw Error('네트워크 오류입니다. 사설 연결과 로그인을 확인하세요.')}
-  if(r.redirected||!(r.headers.get('content-type')||'').includes('application/json'))throw Error('로그인 페이지로 넘어갔습니다. 보호된 주소로 로그인한 뒤 새로 고치세요.');
-  if(!r.ok)throw Error(r.status===401?'이 프록시에 관리자 접근이 설정되지 않았습니다.':'요청 실패('+r.status+')');
+  catch(e){throw Error('네트워크 오류 · 연결과 로그인 확인')}
+  if(r.redirected||!(r.headers.get('content-type')||'').includes('application/json'))throw Error('로그인 필요 · 다시 로그인한 뒤 새로 고침');
+  if(!r.ok)throw Error(r.status===401?'관리자 접근 미설정(401)':'요청 실패('+r.status+')');
   return r.json();
 }
 // apiSend makes an admin write with the write guard headers. Errors carry the
@@ -255,14 +316,14 @@ async function api(path){
 async function apiSend(method,path,body){
   let r;
   try{r=await fetch('/api/admin/'+path,{method:method,credentials:'same-origin',headers:{'Accept':'application/json','Content-Type':'application/json','X-Agent-Mail-Dashboard':'1'},body:body===undefined?undefined:JSON.stringify(body)})}
-  catch(e){throw Error('네트워크 오류입니다. 사설 연결과 로그인을 확인하세요.')}
-  if(r.redirected)throw Error('로그인 페이지로 넘어갔습니다. 보호된 주소로 로그인한 뒤 새로 고치세요.');
+  catch(e){throw Error('네트워크 오류 · 연결과 로그인 확인')}
+  if(r.redirected)throw Error('로그인 필요 · 다시 로그인한 뒤 새로 고침');
   if(r.ok){
-    if(!(r.headers.get('content-type')||'').includes('application/json'))throw Error('로그인 페이지로 넘어갔습니다. 보호된 주소로 로그인한 뒤 새로 고치세요.');
+    if(!(r.headers.get('content-type')||'').includes('application/json'))throw Error('로그인 필요 · 다시 로그인한 뒤 새로 고침');
     return r.json();
   }
   let text='';try{text=(await r.text()).trim().slice(0,300)}catch(e){}
-  const e=Error(r.status===401?'이 프록시에 관리자 접근이 설정되지 않았습니다.':r.status===403?'쓰기가 거부되었습니다(403). 같은 주소에서 연 대시보드인지 확인하세요.':'요청 실패('+r.status+')'+(text?': '+text:''));
+  const e=Error(r.status===401?'관리자 접근 미설정(401)':r.status===403?'쓰기 거부(403) · 같은 주소에서 열었는지 확인':'요청 실패('+r.status+')'+(text?': '+text:''));
   e.status=r.status;throw e;
 }
 function node(tag,text,cls){const n=document.createElement(tag);n.textContent=text;if(cls)n.className=cls;return n}
@@ -273,21 +334,24 @@ async function initMail(){
 function kTokens(n){if(n===null||n===undefined)return '-';return n<10000?(n/1000).toFixed(1)+'k':Math.round(n/1000)+'k'}
 function when(t){return t?new Date(t).toLocaleString('ko-KR'):'-'}
 function ago(now,t){if(!t)return '-';const s=Math.max(0,Math.round((new Date(now)-new Date(t))/1000));return s<120?s+'초 전':s<7200?Math.round(s/60)+'분 전':Math.round(s/3600)+'시간 전'}
+const sessionCols=['역할','상태','컨텍스트','마지막 턴','기계','폴더','라벨','부모','마지막 보고'];
 async function loadSessions(){
   $('sessionsNote').textContent='불러오는 중…';
   try{
     const p=await api('presence');
     const body=$('sessions');body.replaceChildren();
     for(const v of p.sessions){
-      const tr=node('tr','',v.online?'':'offline');
       const [stText,stClass]=sessionStatus(v.status);
+      const tr=node('tr','',!v.online?'offline':/^st-(error|blocked)$/.test(stClass)?'row'+stClass.slice(2):'');
       const cells=[v.role,stText,kTokens(v.context_tokens),when(v.last_turn_at),v.machine,v.directory,v.label||'-',v.parent||'-',ago(p.now,v.reported_at)];
-      cells.forEach((text,i)=>tr.append(node('td',text,i===1?stClass:(i===5?'dir':''))));
+      cells.forEach((text,i)=>{const td=node('td',text,i===1?stClass:i===5?'dir':i===2?'num':'');if(i>0)td.dataset.label=sessionCols[i];tr.append(td)});
       // 긴 폴더는 앞쪽을 줄임표로 줄이고(끝 폴더 이름이 보이게) 전체 경로는 툴팁으로. LRM은 rtl 칸에서 / 순서를 지킨다.
       const dir=tr.children[5];if(v.directory){dir.title=v.directory;dir.textContent='\u200e'+v.directory+'\u200e'}
       body.append(tr);
     }
-    $('sessionsNote').textContent=p.sessions.length+'개 · 심장박동 '+p.interval_seconds+'초, '+p.missed+'번 놓치면 오프라인';
+    if(!p.sessions.length)emptyRow(body,9,'세션 없음');
+    $('sessionsNote').textContent=p.sessions.length+'개';
+    $('sessionsNote').title='심장박동 '+p.interval_seconds+'초, '+p.missed+'번 놓치면 오프라인';
   }catch(e){$('sessionsNote').textContent=e.message}
 }
 // mailID is set by openMessage (진행 tab) to show one message; 「초기화」 or a
@@ -296,12 +360,13 @@ let mailID='';
 async function load(){
   $('conn').textContent='불러오는 중…';
   const thread=$('thread').value,task=$('task').value.trim(),id=mailID;
-  $('notice').textContent=[id?'메일 #'+id+'만 보는 중입니다.':'',thread?'스레드 #'+thread+'의 메일만 보는 중입니다.':'',task?'task '+task+'의 메일만 보는 중입니다.':''].filter(Boolean).join(' ')+(id||thread||task?' 「초기화」로 돌아갑니다.':'');
+  $('notice').textContent=[id?'메일 #'+id:'',thread?'스레드 #'+thread:'',task?'task '+task:''].filter(Boolean).join(' · ')+(id||thread||task?'만 보는 중':'');
   try{
     const q=new URLSearchParams({box:$('box').value,role:$('role').value,status:$('status').value,q:$('search').value,thread:thread,task:task,id:id});
     const rows=await api('messages?'+q);
     const list=$('list');list.replaceChildren();
     for(const m of rows)list.append(card(m));
+    if(!rows.length)list.append(node('p','메일 없음','empty'));
     if(id&&rows.length===1)list.querySelector('article button').click();
     $('conn').textContent=rows.length+'통 (최대 500통)';
   }catch(e){$('conn').textContent=e.message}
@@ -341,12 +406,13 @@ function card(m){
 const tabNames=['progress','sessions','metrics','mail','permissions','questions','settings'];
 const tabLoaders={progress:null,sessions:loadSessions,metrics:null,mail:initMail,permissions:null,questions:null,settings:null};
 const tabLoaded=new Set();
-// setTabCount(name,n) shows 「이름 (n)」 on a tab; n null/undefined hides the number.
+// setTabCount(name,n) shows n as a small count next to the tab name; n
+// null/undefined hides it.
 // #42 calls it for 'questions' (open questions), #33 for 'permissions' (pending requests),
 // #51 for 'metrics' (alert thresholds crossed now; 0 hides the number).
 function setTabCount(name,n){
   const t=$('tab-'+name);if(!t)return;
-  t.querySelector('.tab-count').textContent=(n===null||n===undefined)?'':' ('+n+')';
+  t.querySelector('.tab-count').textContent=(n===null||n===undefined)?'':String(n);
 }
 // ---- 지표 ----
 // One GET /api/admin/metrics?days=N fills the four cards. metricsSeq drops a
@@ -400,23 +466,23 @@ function bucketChart(buckets){
 function statTile(label,value){const d=node('div','','stat');d.append(node('b',value),node('span',label));return d}
 function renderFirstReply(f){
   $('mFirstStats').replaceChildren(statTile('스레드 시작',String(f.count)),statTile('답 받음',String(f.answered)),statTile('답 없음',String(f.unanswered)),statTile('p50',dur(f.p50_s)),statTile('p90',dur(f.p90_s)),statTile('최장',dur(f.max_s)));
-  $('mFirstChart').replaceChildren(f.count?bucketChart(f.buckets||[]):node('p','이 기간에 스레드를 연 메일이 없습니다.','muted'));
+  $('mFirstChart').replaceChildren(f.count?bucketChart(f.buckets||[]):node('p','이 기간 스레드 없음','empty'));
   const body=$('mFirstByRecipient');body.replaceChildren();
   const labels=['받는 쪽','메일','답 받음','답 없음','p50','p90','최장'],num=['','num','num','num','num','num','num'];
   for(const r of f.by_recipient||[])body.append(cells(node('tr',''),labels,[r.base,String(r.count),String(r.answered),String(r.unanswered),dur(r.p50_s),dur(r.p90_s),dur(r.max_s)],num));
-  if(!body.children.length)emptyRow(body,7,'받는 쪽이 없습니다.');
+  if(!body.children.length)emptyRow(body,7,'받는 쪽 없음');
 }
 function renderPending(list,t){
-  $('mPendingNote').textContent=t.pending_s>0?'가장 오래된 메일이 '+dur(t.pending_s)+' 넘게 안 읽힌 역할을 강조합니다.':'안 읽힌 메일 알림이 꺼져 있습니다.';
+  $('mPendingNote').textContent=t.pending_s>0?'문턱 '+dur(t.pending_s):'알림 꺼짐';
   const body=$('mPending');body.replaceChildren();
   for(const p of list){
     const tr=cells(node('tr','',p.over_threshold?'over':''),['역할','안 읽음','가장 오래된 것'],[p.role,p.pending+'통',dur(p.oldest_s)+(p.over_threshold?' · 문턱 넘음':'')],['','num','num']);
     body.append(tr);
   }
-  if(!list.length)emptyRow(body,3,'안 읽힌 메일이 없습니다.');
+  if(!list.length)emptyRow(body,3,'안 읽힌 메일 없음');
 }
 function renderThreads(th){
-  $('mThreadsNote').textContent='두 쪽이 두 번 넘게 주고받은 스레드 '+th.multi_round+'개'+(th.top&&th.top.length?' · 많은 순으로 '+th.top.length+'개, 누르면 메일 탭에서 그 스레드를 엽니다.':'');
+  $('mThreadsNote').textContent=th.multi_round?'스레드 '+th.multi_round+'개':'';
   const ol=$('mThreads');ol.replaceChildren();
   for(const x of th.top||[]){
     const li=node('li',''),b=node('button','');
@@ -425,22 +491,23 @@ function renderThreads(th){
     b.onclick=()=>openThread(x.thread_id);
     li.append(b);ol.append(li);
   }
+  if(!ol.children.length)ol.append(node('li','되물은 스레드 없음','empty'));
 }
 function renderSessionStates(ss,t){
   const lim=[t.error_s>0?'오류 '+dur(t.error_s):'',t.blocked_s>0?'막힘 '+dur(t.blocked_s):''].filter(Boolean);
-  $('mSessionsNote').textContent='기간 안에 오류·막힘 상태로 있던 시간입니다.'+(lim.length?' 지금 상태가 '+lim.join(', ')+'을 넘으면 강조합니다.':' 세션 알림이 꺼져 있습니다.');
+  $('mSessionsNote').textContent=lim.length?'문턱 '+lim.join(' · '):'알림 꺼짐';
   const body=$('mStates');body.replaceChildren();
   for(const r of ss.by_role||[]){
     const kinds=(r.top_kinds||[]).map(k=>stateText(k.state)+' '+dur(k.seconds)).join(', ')||'-';
     body.append(cells(node('tr',''),['역할','오류','막힘','많았던 상태'],[r.role,dur(r.error_s),dur(r.blocked_s),kinds],['','num','num','wrap']));
   }
-  if(!body.children.length)emptyRow(body,4,'기간 안에 오류·막힘이 없었습니다.');
+  if(!body.children.length)emptyRow(body,4,'오류·막힘 없음');
   const cur=$('mCurrent');cur.replaceChildren();
   for(const c of ss.current||[]){
     const over=sessionOver(c,t),[text,cls]=sessionStatus(c.state);
     cur.append(cells(node('tr','',over?'over':''),['역할','상태','시작','지난 시간'],[c.role,text,when(c.since),dur(c.seconds)+(over?' · 문턱 넘음':'')],['',cls,'','num']));
   }
-  if(!cur.children.length)emptyRow(cur,4,'지금 오류·막힘인 세션이 없습니다.');
+  if(!cur.children.length)emptyRow(cur,4,'지금 오류·막힘 없음');
 }
 async function loadMetrics(){
   const seq=++metricsSeq;
@@ -481,7 +548,7 @@ function openTask(task){openMail({task:task})}
 // ---- 진행 ----
 // One GET /api/admin/progress fills a card per service. The tab number is the
 // open directives older than the pending alert threshold (0 hides it).
-const badgeLabel={error:'오류',blocked:'막힘',busy:'바쁨',idle:'유휴',none:'세션 없음'};
+const badgeLabel={error:'오류',blocked:'막힘',busy:'바쁨',compacting:'compact 중',idle:'유휴',none:'세션 없음'};
 function rel(now,t){if(!t)return '-';const s=Math.max(0,Math.round((new Date(now)-new Date(t))/1000));return s<60?'방금':dur(s)+' 전'}
 function linkItem(label,sub,over,onclick){
   const li=node('li','',over?'over':''),b=node('button','');
@@ -489,7 +556,7 @@ function linkItem(label,sub,over,onclick){
   li.append(b);return li;
 }
 function progressCard(p,now,limit){
-  const c=node('article','','pcard');
+  const c=node('article','','pcard b-'+p.badge);
   const h=node('h3','');h.append(node('span',p.service,'pname'),node('span',badgeLabel[p.badge]||p.badge,'pbadge b-'+p.badge));
   const news=node('p','');news.append(node('b','마지막 소식 '));
   const r=p.last_report;
@@ -532,7 +599,7 @@ async function loadProgress(){
     const box=$('progress');box.replaceChildren();
     let over=0;
     for(const p of r.services){over+=p.open_directives.filter(d=>d.over_threshold).length;box.append(progressCard(p,r.generated_at,r.pending_alert_s))}
-    if(!r.services.length)box.append(node('p','아직 서비스가 없습니다.','muted'));
+    if(!r.services.length)box.append(node('p','서비스 없음','empty'));
     setTabCount('progress',over||null);
     $('progressNote').textContent=r.services.length+'개 서비스 · '+when(r.generated_at)+(over?' · 오래된 지시 '+over+'개':'');
   }catch(e){if(seq===progressSeq)$('progressNote').textContent=e.message}
@@ -555,7 +622,7 @@ async function loadQuestions(){
     const open=list.filter(q=>q.status==='pending').length;
     setTabCount('questions',open);
     $('questionsNote').textContent='대기 '+open+'개 · 모두 '+list.length+'개(최대 200개)';
-    if(!list.length)box.append(node('p','질문이 없습니다.','muted'));
+    if(!list.length)box.append(node('p','질문 없음','empty'));
     questionsLoaded=true;
     if(wantFocus!==null)focusQuestion(wantFocus);
   }catch(e){$('questionsNote').textContent=e.message}
@@ -643,7 +710,7 @@ function focusQuestion(id){
   wantFocus=null;
   for(const c of questionCards.values())c.classList.remove('focus');
   const c=questionCards.get(id);
-  if(!c){setMsg($('questionsMsg'),'질문 '+id+'을(를) 목록에서 찾지 못했습니다.','err');return}
+  if(!c){setMsg($('questionsMsg'),'질문 '+id+' 없음','err');return}
   c.classList.add('focus');
   c.scrollIntoView({block:'start'});
   c.focus({preventScroll:true});
@@ -694,7 +761,7 @@ async function loadDecisions(){
     const box=$('decisions');box.replaceChildren();
     for(const d of list)box.append(decisionRow(d));
     $('decisionsNote').textContent='결정 '+list.length+'개'+(list.length>=1000?'(최대 1000개)':'');
-    if(!list.length)box.append(node('p','조건에 맞는 결정이 없습니다.','muted'));
+    if(!list.length)box.append(node('p','조건에 맞는 결정 없음','empty'));
   }catch(e){$('decisionsNote').textContent=e.message}
 }
 function decisionRow(d){
@@ -740,6 +807,7 @@ async function loadSettings(){
       }
       tr.append(act);body.append(tr);
     }
+    if(!rows.length)emptyRow(body,6,'설정 없음');
     $('settingsNote').textContent=rows.length+'개';
   }catch(e){$('settingsNote').textContent=e.message}
 }

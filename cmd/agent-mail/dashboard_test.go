@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -80,6 +81,43 @@ func TestDashboardProgressTab(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("progress tab missing %q", want)
+		}
+	}
+}
+
+// TestDashboardNoUsageCopy keeps explanatory copy out of the tab panels: a
+// static <p> in a panel may only be a terse empty state, and the script must
+// not build usage sentences. Hints belong in title tooltips.
+func TestDashboardNoUsageCopy(t *testing.T) {
+	w := httptest.NewRecorder()
+	dashboard(w, httptest.NewRequest("GET", "/", nil))
+	body := w.Body.String()
+	html := body[:strings.Index(body, "<script>")]
+	staticP := regexp.MustCompile(`<p( [^>]*)?>([^<]+)</p>`)
+	for _, panel := range strings.Split(html, `<section id="panel-`)[1:] {
+		for _, m := range staticP.FindAllStringSubmatch(panel, -1) {
+			if m[1] != ` class="empty"` || len([]rune(m[2])) > 12 {
+				t.Errorf("panel %s has copy %q", panel[:strings.Index(panel, `"`)], m[0])
+			}
+		}
+	}
+	for _, banned := range []string{"봅니다", "보여 줍니다", "누르면", "강조합니다", "이 탭은", "돌아갑니다", "<!--"} {
+		if strings.Contains(body, banned) {
+			t.Errorf("dashboard has usage copy %q", banned)
+		}
+	}
+}
+
+func TestDashboardHeaderFromOneConstant(t *testing.T) {
+	if headerText != "Agent Mail · 관리자 보기" {
+		t.Fatalf("headerText = %q", headerText)
+	}
+	w := httptest.NewRecorder()
+	dashboard(w, httptest.NewRequest("GET", "/", nil))
+	body := w.Body.String()
+	for _, want := range []string{"<title>" + productName + "</title>", "<h1>" + headerText + "</h1>"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("dashboard missing %q", want)
 		}
 	}
 }
