@@ -133,8 +133,8 @@ func TestAdminReadAPIRequiresProxySecretAndIsReadOnly(t *testing.T) {
 		t.Fatalf("admin messages=%d %s", w.Code, w.Body)
 	}
 	w = request("POST", "/api/admin/messages", "proxy-secret")
-	if w.Code != 405 {
-		t.Fatalf("admin write allowed: %d", w.Code)
+	if w.Code != 403 {
+		t.Fatalf("unguarded admin write: %d", w.Code)
 	}
 }
 
