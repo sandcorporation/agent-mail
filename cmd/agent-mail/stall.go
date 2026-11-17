@@ -128,7 +128,8 @@ type sweepResult struct {
 	Label   int
 }
 
-// sweep sends every due stall notice once. It is safe to run repeatedly.
+// sweep sends every due stall notice once and prunes old presence_log rows.
+// It is safe to run repeatedly.
 func (s *Server) sweep(ctx context.Context) (sweepResult, error) {
 	var out sweepResult
 	n, err := s.sweepOffline(ctx)
@@ -136,7 +137,10 @@ func (s *Server) sweep(ctx context.Context) (sweepResult, error) {
 	if err != nil {
 		return out, err
 	}
-	out.Label, err = s.sweepLabels(ctx)
+	if out.Label, err = s.sweepLabels(ctx); err != nil {
+		return out, err
+	}
+	_, err = prunePresenceLog(s.db, s.now())
 	return out, err
 }
 
@@ -151,6 +155,9 @@ func (s *Server) sweepOffline(ctx context.Context) (int, error) {
 		err := s.inTx(ctx, func(tx *sql.Tx) error {
 			ok, err := markOffline(tx, v, s.now())
 			if err != nil || !ok {
+				return err
+			}
+			if err = logPresenceOffline(tx, v.Base, v.Number, v.LeaseExpiresAt); err != nil {
 				return err
 			}
 			box, ok := mailbox(tx, v.Parent)

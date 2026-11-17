@@ -139,6 +139,12 @@ var commands = []command{
 	{name: "status", args: "[ROLE]", nargs: 1, optArgs: true,
 		summary: "Show session presence: every session, a base and its numbers, one numbered role, or a prefix ending in *",
 		options: []option{optJSON, optProfile}},
+	{name: "metrics",
+		summary: "Show mail-flow metrics: first-reply time, pending mail, back-and-forth threads, error/blocked session time (boss roles only)",
+		options: []option{
+			{"--days", "N", "window in days ending now, 1-90 (default 7)"},
+			optJSON, optProfile,
+		}},
 	{name: "permission", args: "ACTION [ID]", nargs: 2, optArgs: true, synopsis: "(ACTION: request | show ID | answer ID | list)",
 		summary: "Ask for, show, answer or list tool permission requests (only a boss role answers; the requester's parent is notified)",
 		options: []option{
@@ -307,6 +313,8 @@ func dispatch(args []string) (int, error) {
 		return cliSlot(c, p)
 	case "status":
 		return cliStatus(c, p)
+	case "metrics":
+		return cliMetrics(c, p)
 	case "permission":
 		return cliPermission(c, p)
 	case "question":
