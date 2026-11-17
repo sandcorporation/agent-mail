@@ -704,7 +704,9 @@ function questionCard(q){
   const c=node('article','','card qcard '+q.status);
   c.tabIndex=-1;
   const h=node('h3','');
-  h.append(node('span',qStatusLabel[q.status]||q.status,'pill '+q.status),document.createTextNode(q.questions.map(x=>x.header).join(' · ')));
+  h.append(node('span',qStatusLabel[q.status]||q.status,'pill '+q.status));
+  if(q.answerer==='owner')h.append(node('span','대표','pill owner'));
+  h.append(document.createTextNode(q.questions.map(x=>x.header).join(' · ')));
   c.append(h,node('p',q.asker+' · '+when(q.created_at)+' · '+q.id,'muted'));
   if(q.status==='pending'&&q.can_answer){c.append(answerForm(q));return c}
   q.questions.forEach((item,i)=>{

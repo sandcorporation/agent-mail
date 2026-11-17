@@ -38,9 +38,15 @@ type QuestionView struct {
 	WithdrawnAt *time.Time       `json:"withdrawn_at"`
 	Seq         int64            `json:"seq"`
 	CanAnswer   bool             `json:"can_answer"` // the caller may answer it now
+	// Answerer is AnswererOwner when no boss role could answer at ask time,
+	// so a person answers on the dashboard; empty (omitted) otherwise.
+	Answerer string `json:"answerer,omitempty"`
 
 	AskerBase string `json:"-"` // server-side only
 }
+
+// AnswererOwner marks a question that only a person on the dashboard answers.
+const AnswererOwner = "owner"
 
 type QuestionList struct {
 	Questions []QuestionView `json:"questions"`

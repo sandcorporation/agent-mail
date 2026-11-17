@@ -74,13 +74,13 @@ var (
 	ErrQuestionNotPending = errors.New("question is not pending")
 )
 
-const questionColumns = `id,asker,asker_base,questions,answers,status,answered_by,created_at,answered_at,withdrawn_at,seq`
+const questionColumns = `id,asker,asker_base,questions,answers,status,answered_by,created_at,answered_at,withdrawn_at,seq,answerer`
 
 func scanQuestion(sc interface{ Scan(...any) error }) (wire.QuestionView, error) {
 	var v wire.QuestionView
 	var qs, as string
 	var created, answered, withdrawn int64
-	if err := sc.Scan(&v.ID, &v.Asker, &v.AskerBase, &qs, &as, &v.Status, &v.AnsweredBy, &created, &answered, &withdrawn, &v.Seq); err != nil {
+	if err := sc.Scan(&v.ID, &v.Asker, &v.AskerBase, &qs, &as, &v.Status, &v.AnsweredBy, &created, &answered, &withdrawn, &v.Seq, &v.Answerer); err != nil {
 		return v, err
 	}
 	if err := json.Unmarshal([]byte(qs), &v.Questions); err != nil {
@@ -316,24 +316,23 @@ func (s *Service) askQuestion(w http.ResponseWriter, r *http.Request, p identity
 	var v wire.QuestionView
 	var told []string
 	var related []wire.Decision
-	errNobody := errors.New("nobody")
 	err = s.inTx(r.Context(), func(tx *sql.Tx) error {
-		nobody := true
+		// With no boss role of another base (a boss asking, or a group whose
+		// boss is not registered) the question is still stored: a person
+		// answers it on the dashboard.
+		answerer := wire.AnswererOwner
 		for _, boss := range s.ids.BossesFor(p.Base) {
 			if b := identity.BaseOf(tx, boss); b != "" && b != p.Base {
-				nobody = false
+				answerer = ""
 				break
 			}
-		}
-		if nobody {
-			return errNobody
 		}
 		seq, e := nextQuestionSeq(tx)
 		if e != nil {
 			return e
 		}
-		if _, e = tx.Exec(`INSERT INTO questions(id,asker,asker_base,questions,created_at,seq) VALUES(?,?,?,?,?,?)`,
-			id, p.Role, p.Base, string(encoded), ms(now), seq); e != nil {
+		if _, e = tx.Exec(`INSERT INTO questions(id,asker,asker_base,questions,created_at,seq,answerer) VALUES(?,?,?,?,?,?,?)`,
+			id, p.Role, p.Base, string(encoded), ms(now), seq, answerer); e != nil {
 			return e
 		}
 		if v, e = loadQuestion(tx, id); e != nil {
@@ -354,10 +353,6 @@ func (s *Service) askQuestion(w http.ResponseWriter, r *http.Request, p identity
 		}
 		return nil
 	})
-	if errors.Is(err, errNobody) {
-		http.Error(w, "nobody can answer: no boss role of another base configured", http.StatusConflict)
-		return
-	}
 	if err != nil {
 		http.Error(w, "could not store question", 500)
 		return
