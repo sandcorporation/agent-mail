@@ -120,6 +120,18 @@ var commands = []command{
 		}},
 	{name: "ack", args: "ID", nargs: 1, summary: "Acknowledge a message", options: []option{optJSON, optProfile}},
 	{name: "complete", args: "ID", nargs: 1, summary: "Mark a message complete", options: []option{optJSON, optProfile}},
+	{name: "slots", summary: "List the leased numbered slots under the active role's base",
+		options: []option{optJSON, optProfile}},
+	{name: "slot", args: "ACTION", nargs: 1, synopsis: "(ACTION: register | heartbeat | takeover | release)",
+		summary: "Claim, renew, take over (-1) or release a numbered slot for this machine and directory",
+		options: []option{
+			{"--machine", "NAME", "machine identity (default: this host name)"},
+			{"--directory", "PATH", "directory identity (default: the current directory)"},
+			{"--session-id", "ID", "session id to record with the slot"},
+			{"--label", "TEXT", "label to record with the slot"},
+			{"--parent", "ROLE", "parent role to record with the slot"},
+			optJSON, optProfile,
+		}},
 	{name: "version", summary: "Show build version"},
 }
 
@@ -258,6 +270,10 @@ func dispatch(args []string) (int, error) {
 		return cliWatch(c, p)
 	case "events":
 		return cliEvents(c, p)
+	case "slots":
+		return cliSlots(c, p)
+	case "slot":
+		return cliSlot(c, p)
 	case "read", "ack", "complete":
 		method, u := "GET", endpoint(c, "/api/messages/"+p.pos[0])
 		if name != "read" {
@@ -858,3 +874,88 @@ func cliWatch(c Config, p parsedArgs) (int, error) {
 }
 
 func fatal(s string) { fmt.Fprintln(os.Stderr, s); os.Exit(exitError) }
+
+// slotCall sends one slot API request and returns the response body.
+func slotCall(c Config, method, path string, body any) ([]byte, error) {
+	var rd io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		rd = bytes.NewReader(b)
+	}
+	req, _ := http.NewRequest(method, endpoint(c, path), rd)
+	req.Header.Set("Content-Type", "application/json")
+	authorize(c, req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("server returned %s: %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	return b, nil
+}
+
+func slotLine(v slotView) string {
+	line := fmt.Sprintf("%s  %s:%s  until %s", v.Role, v.Machine, v.Directory, v.LeaseExpiresAt.Format(time.RFC3339))
+	if v.Label != "" {
+		line += "  label=" + v.Label
+	}
+	if v.Parent != "" {
+		line += "  parent=" + v.Parent
+	}
+	return line
+}
+
+func cliSlots(c Config, p parsedArgs) (int, error) {
+	b, err := slotCall(c, "GET", "/api/slots", nil)
+	if err != nil {
+		return 0, err
+	}
+	var out []slotView
+	if err = json.Unmarshal(b, &out); err != nil {
+		return 0, fmt.Errorf("unexpected response from server: %v", err)
+	}
+	if p.bool("--json") {
+		fmt.Println(strings.TrimSpace(string(b)))
+		return exitOK, nil
+	}
+	for _, v := range out {
+		fmt.Println(slotLine(v))
+	}
+	return exitOK, nil
+}
+
+func cliSlot(c Config, p parsedArgs) (int, error) {
+	action := p.pos[0]
+	switch action {
+	case "register", "heartbeat", "takeover", "release":
+	default:
+		return 0, usagef("slot: unknown action %q (register, heartbeat, takeover, release)", action)
+	}
+	req := slotRequest{Machine: p.values["--machine"], Directory: p.values["--directory"], SessionID: p.values["--session-id"], Label: p.values["--label"], Parent: p.values["--parent"]}
+	if req.Machine == "" {
+		req.Machine, _ = os.Hostname()
+	}
+	if req.Directory == "" {
+		req.Directory, _ = os.Getwd()
+	}
+	b, err := slotCall(c, "POST", "/api/slots/"+action, req)
+	if err != nil {
+		return 0, err
+	}
+	var g slotGrant
+	if err = json.Unmarshal(b, &g); err != nil {
+		return 0, fmt.Errorf("unexpected response from server: %v", err)
+	}
+	if p.bool("--json") {
+		fmt.Println(strings.TrimSpace(string(b)))
+		return exitOK, nil
+	}
+	fmt.Printf("%s (%d other active)\n", slotLine(g.slotView), g.OtherActive)
+	if g.Displaced != nil {
+		fmt.Printf("moved previous holder: %s\n", slotLine(*g.Displaced))
+	}
+	return exitOK, nil
+}
