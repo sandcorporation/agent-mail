@@ -66,6 +66,12 @@ func loadQuestionSettings(q queryer, target string) (questionSettings, error) {
 // matched target: an exact role entry (the role itself, then its base when
 // role is <base>-N), else the longest matching "<prefix>/*", else "default".
 func (s *Server) resolveQuestionSettings(role string) (questionSettings, error) {
+	return resolveQuestionSettingsIn(s.db, role)
+}
+
+// resolveQuestionSettingsIn is resolveQuestionSettings read through q, so it
+// also works inside a transaction.
+func resolveQuestionSettingsIn(q queryer, role string) (questionSettings, error) {
 	candidates := []string{role}
 	base := role
 	if b, _, ok := splitSlot(role); ok {
@@ -82,7 +88,7 @@ func (s *Server) resolveQuestionSettings(role string) (questionSettings, error) 
 		if t != defaultQuestionTarget && !validQuestionTarget(t) {
 			continue
 		}
-		v, err := loadQuestionSettings(s.db, t)
+		v, err := loadQuestionSettings(q, t)
 		if err == nil {
 			return v, nil
 		}

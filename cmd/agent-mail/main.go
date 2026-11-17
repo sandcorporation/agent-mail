@@ -165,7 +165,10 @@ func initSchema(db *sql.DB) error {
 	if e = migratePermissions(db); e != nil {
 		return e
 	}
-	return migrateQuestionSettings(db)
+	if e = migrateQuestionSettings(db); e != nil {
+		return e
+	}
+	return migrateQuestions(db)
 }
 
 func hasColumn(db *sql.DB, table, column string) (bool, error) {
@@ -249,6 +252,10 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/")
 	if path == "permissions" || strings.HasPrefix(path, "permissions/") {
 		s.permissionAPI(w, r, who, strings.TrimPrefix(strings.TrimPrefix(path, "permissions"), "/"))
+		return
+	}
+	if path == "questions" || strings.HasPrefix(path, "questions/") {
+		s.questionAPI(w, r, who, strings.TrimPrefix(strings.TrimPrefix(path, "questions"), "/"))
 		return
 	}
 	if path == "presence" {
