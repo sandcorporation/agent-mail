@@ -145,6 +145,16 @@ var commands = []command{
 			{"--days", "N", "window in days ending now, 1-90 (default 7)"},
 			optJSON, optProfile,
 		}},
+	{name: "decisions",
+		summary: "Show the decision ledger (answered questions), newest first; a boss role sees all, other roles their own base",
+		options: []option{
+			{"--from", "DATE|TIME", "answered on or after this UTC date (YYYY-MM-DD) or RFC 3339 time"},
+			{"--to", "DATE|TIME", "answered up to this UTC date (inclusive) or RFC 3339 time"},
+			{"--role", "ROLE", "asker: an exact role or base, or PREFIX/*"},
+			{"--q", "TEXT", "case-insensitive text in a header, question or chosen label"},
+			{"--ndjson", "", "stream the server's ndjson export unchanged"},
+			optJSON, optProfile,
+		}},
 	{name: "permission", args: "ACTION [ID]", nargs: 2, optArgs: true, synopsis: "(ACTION: request | show ID | answer ID | list)",
 		summary: "Ask for, show, answer or list tool permission requests (only a boss role answers; the requester's parent is notified)",
 		options: []option{
@@ -315,6 +325,8 @@ func dispatch(args []string) (int, error) {
 		return cliStatus(c, p)
 	case "metrics":
 		return cliMetrics(c, p)
+	case "decisions":
+		return cliDecisions(c, p)
 	case "permission":
 		return cliPermission(c, p)
 	case "question":
