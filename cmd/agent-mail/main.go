@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
@@ -10,9 +11,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -35,6 +38,9 @@ type Server struct {
 	db              *sql.DB
 	tokens          map[string]string
 	adminProxyToken string
+	hub             mailHub
+	eventKeepAlive  time.Duration
+	done            chan struct{} // closed on shutdown; ends event streams
 }
 
 var version = "dev"
@@ -51,7 +57,14 @@ func runServer() {
 	if e != nil {
 		log.Fatal(e)
 	}
-	s := &Server{db: db, tokens: map[string]string{}, adminProxyToken: os.Getenv("AGENT_MAIL_ADMIN_PROXY_TOKEN")}
+	s := &Server{db: db, tokens: map[string]string{}, adminProxyToken: os.Getenv("AGENT_MAIL_ADMIN_PROXY_TOKEN"), done: make(chan struct{})}
+	if v := os.Getenv("AGENT_MAIL_SSE_KEEPALIVE"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			log.Fatal("AGENT_MAIL_SSE_KEEPALIVE must be a positive duration such as 20s")
+		}
+		s.eventKeepAlive = d
+	}
 	for _, pair := range strings.Split(os.Getenv("AGENT_MAIL_TOKENS"), ",") {
 		p := strings.SplitN(strings.TrimSpace(pair), "=", 2)
 		if len(p) == 2 && p[0] != "" && p[1] != "" {
@@ -69,8 +82,25 @@ func runServer() {
 	mux.HandleFunc("/api/", s.api)
 	mux.HandleFunc("/", dashboard)
 	addr := env("LISTEN_ADDR", ":8080")
+	// No WriteTimeout: /api/events responses stay open indefinitely.
+	srv := &http.Server{Addr: addr, Handler: secureHeaders(mux), ReadHeaderTimeout: 10 * time.Second}
+	srv.RegisterOnShutdown(func() { close(s.done) })
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	stopped := make(chan struct{})
+	go func() {
+		<-stop
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+		close(stopped)
+	}()
 	log.Printf("agent-mail listening on %s", addr)
-	log.Fatal(http.ListenAndServe(addr, secureHeaders(mux)))
+	if e = srv.ListenAndServe(); e != nil && !errors.Is(e, http.ErrServerClosed) {
+		log.Fatal(e)
+	}
+	<-stopped
+	_ = db.Close()
 }
 func migrateConfiguredRoles(s *Server) error {
 	for role, token := range s.tokens {
@@ -131,6 +161,10 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		default:
 			http.Error(w, "method not allowed", 405)
 		}
+		return
+	}
+	if path == "events" && r.Method == "GET" {
+		s.events(w, r, role)
 		return
 	}
 	if path == "watch" && r.Method == "GET" {
@@ -355,6 +389,7 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request, role string) {
 	m.ID, _ = res.LastInsertId()
 	m.CreatedAt = now
 	m.Status = "pending"
+	s.hub.publish(m.Recipient)
 	w.WriteHeader(201)
 	writeJSON(w, m)
 }
