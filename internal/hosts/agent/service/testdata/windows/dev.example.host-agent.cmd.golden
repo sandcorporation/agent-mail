@@ -1,0 +1,6 @@
+@echo off
+setlocal
+set "AGENT_URL=https://agent.example.test"
+set "NOTE=100%% & more"
+cd /d "C:\Users\me\agent"
+"C:\Program Files\Agent\host.exe" "run" "--label" "50%% & <done>" >> "C:\Users\me\agent\host.log" 2>&1

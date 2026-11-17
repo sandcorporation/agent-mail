@@ -1,0 +1,16 @@
+[Unit]
+Description=dev.example.host-agent
+
+[Service]
+Type=simple
+ExecStart="/opt/agent/bin/host agent" "run" "--label" "50%% & <done>" "$$HOME"
+WorkingDirectory=/var/lib/agent
+Environment="AGENT_URL=https://agent.example.test"
+Environment="NOTE=a \"quoted\" 100%% $x"
+StandardOutput=append:/var/log/agent/host.log
+StandardError=append:/var/log/agent/host.log
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
