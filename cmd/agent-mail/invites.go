@@ -11,6 +11,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/store"
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 // Invites and join (#71 §3).
@@ -28,33 +31,6 @@ const (
 	minJoinSecret    = 24
 	inviteGoneText   = "invite code is used, cancelled or expired"
 )
-
-// migrateInvites adds the invites table (additive). code_hash is
-// tokenHash(normalized code); the code itself is never stored.
-func migrateInvites(db *sql.DB) error {
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS invites(id INTEGER PRIMARY KEY AUTOINCREMENT, code_hash TEXT NOT NULL UNIQUE, prefix TEXT NOT NULL, role TEXT, expires_at TEXT NOT NULL, used_at TEXT, used_by TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL, cancelled_at TEXT)`)
-	return err
-}
-
-// invite is one row as the admin API shows it (never the code or its hash).
-type invite struct {
-	ID          int64   `json:"id"`
-	Prefix      string  `json:"prefix"`
-	Role        *string `json:"role"`
-	ExpiresAt   string  `json:"expires_at"`
-	UsedAt      *string `json:"used_at"`
-	UsedBy      *string `json:"used_by"`
-	CreatedBy   string  `json:"created_by"`
-	CreatedAt   string  `json:"created_at"`
-	CancelledAt *string `json:"cancelled_at"`
-}
-
-// inviteCreated answers a create: the code, shown this once.
-type inviteCreated struct {
-	invite
-	Code         string `json:"code"`
-	GroupCreated bool   `json:"group_created"`
-}
 
 // apiError carries the HTTP status for a refused request.
 type apiError struct {
@@ -95,7 +71,7 @@ func newInviteCode() (string, error) {
 // inviteCodeHash hashes a code as typed: case, dashes and spaces do not matter.
 func inviteCodeHash(code string) string {
 	norm := strings.ToUpper(strings.NewReplacer("-", "", " ", "").Replace(strings.TrimSpace(code)))
-	return tokenHash(norm)
+	return store.TokenHash(norm)
 }
 
 // parseInviteTTL reads a Go duration or a whole number of days ("7d").
@@ -123,12 +99,6 @@ func parseInviteTTL(v string) (time.Duration, error) {
 	return d, nil
 }
 
-type inviteRequest struct {
-	Prefix string `json:"prefix"`
-	Role   string `json:"role"`
-	TTL    string `json:"ttl"`
-}
-
 // createInvite stores a new invite for req.Prefix, creating the group when
 // it does not exist. Creating a group is refused (409) when roles already sit
 // under the prefix: they would become group roles and lose access.
@@ -137,7 +107,7 @@ func (s *Server) createInvite(ctx context.Context, req inviteRequest, createdBy 
 	if !validGroupPrefix(req.Prefix) {
 		return out, apiError{400, "invalid prefix"}
 	}
-	if req.Role != "" && (!validRole(req.Role) || !strings.HasPrefix(req.Role, req.Prefix+"/") || reservedRole(req.Role) || s.bossRoles[req.Role]) {
+	if req.Role != "" && (!wire.ValidRole(req.Role) || !strings.HasPrefix(req.Role, req.Prefix+"/") || reservedRole(req.Role) || s.bossRoles[req.Role]) {
 		return out, apiError{400, "role must be a role name under " + req.Prefix + "/"}
 	}
 	ttl, err := parseInviteTTL(req.TTL)
@@ -285,7 +255,7 @@ func (s *Server) adminInvitesAPI(w http.ResponseWriter, r *http.Request, who adm
 		}
 		return
 	}
-	id, err := parseID(rest)
+	id, err := wire.ParseID(rest)
 	if err != nil {
 		http.Error(w, "invalid id", 400)
 		return
@@ -330,12 +300,6 @@ func (s *Server) openInvites() ([]invite, error) {
 		out = append(out, v)
 	}
 	return out, rows.Err()
-}
-
-type joinRequest struct {
-	Code       string `json:"code"`
-	Role       string `json:"role"`
-	Credential string `json:"credential"`
 }
 
 // join is POST /api/join {code, role?, credential}: no auth beyond the code.
@@ -399,7 +363,7 @@ func (s *Server) join(w http.ResponseWriter, r *http.Request) {
 		if want == "" {
 			return apiError{400, "role required (a name under " + prefix + "/)"}
 		}
-		if !validRole(want) || !strings.HasPrefix(want, prefix+"/") || reservedRole(want) || s.bossRoles[want] {
+		if !wire.ValidRole(want) || !strings.HasPrefix(want, prefix+"/") || reservedRole(want) || s.bossRoles[want] {
 			return apiError{403, "role must be a role name under " + prefix + "/"}
 		}
 		if g, _ := s.groupOf(want); g.Prefix != prefix {
@@ -408,7 +372,7 @@ func (s *Server) join(w http.ResponseWriter, r *http.Request) {
 		if roleExists(tx, want) {
 			return apiError{409, "role already registered"}
 		}
-		if _, err = tx.Exec(`INSERT INTO roles(role,token,created_at) VALUES(?,?,?)`, want, tokenHash(req.Credential), stamp); err != nil {
+		if _, err = tx.Exec(`INSERT INTO roles(role,token,created_at) VALUES(?,?,?)`, want, store.TokenHash(req.Credential), stamp); err != nil {
 			return err
 		}
 		res, err := tx.Exec(`UPDATE invites SET used_at=?,used_by=? WHERE id=? AND used_at IS NULL`, stamp, want, id)

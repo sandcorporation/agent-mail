@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"encoding/json"
@@ -7,14 +7,16 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 // cliMetrics prints GET /api/metrics as a compact summary.
 func cliMetrics(c Config, p parsedArgs) (int, error) {
 	path := "/api/metrics"
 	if v, ok := p.values["--days"]; ok {
-		if _, err := parseMetricsDays(v); err != nil || v == "" {
-			return 0, usagef("--days must be a whole number from 1 to %d", maxMetricsDays)
+		if _, err := wire.ParseMetricsDays(v); err != nil || v == "" {
+			return 0, usagef("--days must be a whole number from 1 to %d", wire.MaxMetricsDays)
 		}
 		path += "?days=" + v
 	}
@@ -22,19 +24,19 @@ func cliMetrics(c Config, p parsedArgs) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	var m metricsReport
+	var m wire.MetricsReport
 	if err = json.Unmarshal(b, &m); err != nil {
 		return 0, fmt.Errorf("unexpected response from server: %v", err)
 	}
 	if p.bool("--json") {
 		fmt.Println(strings.TrimSpace(string(b)))
-		return exitOK, nil
+		return ExitOK, nil
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintf(tw, "window\t%s - %s (%d days)\n", m.Window.From.Local().Format("2006-01-02 15:04"), m.Window.To.Local().Format("2006-01-02 15:04"), m.Window.Days)
-	fmt.Fprintf(tw, "first reply\t%s\n", latencyLine(m.FirstReply.latencyStats))
+	fmt.Fprintf(tw, "first reply\t%s\n", latencyLine(m.FirstReply.LatencyStats))
 	for _, r := range m.FirstReply.ByRecipient {
-		fmt.Fprintf(tw, "  %s\t%s\n", r.Base, latencyLine(r.latencyStats))
+		fmt.Fprintf(tw, "  %s\t%s\n", r.Base, latencyLine(r.LatencyStats))
 	}
 	fmt.Fprintf(tw, "pending\t%s\n", plural(len(m.Pending), "role"))
 	for _, r := range m.Pending {
@@ -59,10 +61,10 @@ func cliMetrics(c Config, p parsedArgs) (int, error) {
 	for _, c := range m.Sessions.Current {
 		fmt.Fprintf(tw, "  now %s\t%s for %s (since %s)\n", c.Role, c.State, compactSeconds(c.Seconds), c.Since.Local().Format("2006-01-02 15:04"))
 	}
-	return exitOK, tw.Flush()
+	return ExitOK, tw.Flush()
 }
 
-func latencyLine(s latencyStats) string {
+func latencyLine(s wire.LatencyStats) string {
 	line := fmt.Sprintf("%d sent, %d answered, %d unanswered", s.Count, s.Answered, s.Unanswered)
 	if s.P50 != nil {
 		line += fmt.Sprintf("; p50 %s, p90 %s, max %s", compactSeconds(*s.P50), compactSeconds(*s.P90), compactSeconds(*s.Max))

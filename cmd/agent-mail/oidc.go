@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/sandcorporation/agent-mail/internal/config"
 	"golang.org/x/oauth2"
 )
 
@@ -66,7 +67,7 @@ type oidcLogin struct {
 // configureOIDC reads the SWITCHBOARD_OIDC_* settings and SWITCHBOARD_PUBLIC_URL.
 // The error names the missing or invalid settings, never their values.
 func configureOIDC(getenv func(string) string) (*oidcLogin, error) {
-	get := func(name string) string { return strings.TrimSpace(getenv(envPrefix + name)) }
+	get := func(name string) string { return strings.TrimSpace(getenv(config.EnvPrefix + name)) }
 	o := &oidcLogin{
 		issuer:       get("OIDC_ISSUER"),
 		clientID:     get("OIDC_CLIENT_ID"),
@@ -94,31 +95,31 @@ func configureOIDC(getenv func(string) string) (*oidcLogin, error) {
 	var missing, invalid []string
 	for name, v := range map[string]string{"OIDC_ISSUER": o.issuer, "OIDC_CLIENT_ID": o.clientID, "OIDC_CLIENT_SECRET": o.clientSecret, "PUBLIC_URL": public} {
 		if v == "" {
-			missing = append(missing, envPrefix+name)
+			missing = append(missing, config.EnvPrefix+name)
 		}
 	}
 	if len(o.emails)+len(o.subs) == 0 {
-		missing = append(missing, envPrefix+"OIDC_ADMINS")
+		missing = append(missing, config.EnvPrefix+"OIDC_ADMINS")
 	}
 	if u, err := url.Parse(o.issuer); o.issuer != "" && (err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "") {
-		invalid = append(invalid, envPrefix+"OIDC_ISSUER")
+		invalid = append(invalid, config.EnvPrefix+"OIDC_ISSUER")
 	}
 	if u, err := url.Parse(public); public != "" && (err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "") {
-		invalid = append(invalid, envPrefix+"PUBLIC_URL")
+		invalid = append(invalid, config.EnvPrefix+"PUBLIC_URL")
 	}
 	hasOpenID := false
 	for _, sc := range o.scopes {
 		hasOpenID = hasOpenID || sc == oidc.ScopeOpenID
 	}
 	if !hasOpenID {
-		invalid = append(invalid, envPrefix+"OIDC_SCOPES (needs openid)")
+		invalid = append(invalid, config.EnvPrefix+"OIDC_SCOPES (needs openid)")
 	}
 	if len(missing) > 0 {
 		sort.Strings(missing)
-		return nil, errors.New(envPrefix + "ADMIN_AUTH=oidc needs " + strings.Join(missing, ", "))
+		return nil, errors.New(config.EnvPrefix + "ADMIN_AUTH=oidc needs " + strings.Join(missing, ", "))
 	}
 	if len(invalid) > 0 {
-		return nil, errors.New(envPrefix + "ADMIN_AUTH=oidc: invalid " + strings.Join(invalid, ", "))
+		return nil, errors.New(config.EnvPrefix + "ADMIN_AUTH=oidc: invalid " + strings.Join(invalid, ", "))
 	}
 	o.redirectURL = public + oidcCallbackPath
 	o.flowKey = make([]byte, 32)

@@ -5,9 +5,11 @@ import (
 	"math"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/config"
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 // Mail-flow metrics.
@@ -29,10 +31,8 @@ import (
 // durations, 0 disables) are read by configureAlerts and reported alongside.
 
 const (
-	defaultMetricsDays = 7
-	maxMetricsDays     = 90
-	metricsTopThreads  = 10
-	metricsTopKinds    = 3
+	metricsTopThreads = 10
+	metricsTopKinds   = 3
 )
 
 // alertThresholds are the alert limits; a zero limit disables that kind.
@@ -56,7 +56,7 @@ func parseAlertThresholds(getenv func(string) string) (alertThresholds, error) {
 		{"ALERT_ERROR", &t.Error},
 		{"ALERT_BLOCKED", &t.Blocked},
 	} {
-		v, from := envAliasFrom(getenv, d.name)
+		v, from := config.EnvAliasFrom(getenv, d.name)
 		v = strings.TrimSpace(v)
 		if v == "" {
 			continue
@@ -87,114 +87,6 @@ func (s *Server) alertLimits() alertThresholds {
 	return *s.alerts
 }
 
-// parseMetricsDays reads ?days=: empty means 7, otherwise 1-90.
-func parseMetricsDays(v string) (int, error) {
-	if v == "" {
-		return defaultMetricsDays, nil
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n < 1 || n > maxMetricsDays {
-		return 0, fmt.Errorf("days must be a whole number from 1 to %d", maxMetricsDays)
-	}
-	return n, nil
-}
-
-type metricsReport struct {
-	Window     metricsWindow     `json:"window"`
-	FirstReply firstReplyMetrics `json:"first_reply"`
-	Pending    []pendingAge      `json:"pending"`
-	Threads    threadMetrics     `json:"threads"`
-	Sessions   sessionMetrics    `json:"sessions"`
-	Thresholds thresholdSeconds  `json:"thresholds"`
-	Aliases    *aliasUse         `json:"aliases,omitempty"` // admin view only
-}
-
-type metricsWindow struct {
-	From time.Time `json:"from"`
-	To   time.Time `json:"to"`
-	Days int       `json:"days"`
-}
-
-// latencyStats summarises first-reply latencies in whole seconds. The
-// percentiles are null when nothing was answered.
-type latencyStats struct {
-	Count      int    `json:"count"`
-	Answered   int    `json:"answered"`
-	Unanswered int    `json:"unanswered"`
-	P50        *int64 `json:"p50_s"`
-	P90        *int64 `json:"p90_s"`
-	Max        *int64 `json:"max_s"`
-}
-
-type firstReplyMetrics struct {
-	latencyStats
-	Buckets     []latencyBucket    `json:"buckets"`
-	ByRecipient []recipientLatency `json:"by_recipient"`
-}
-
-type recipientLatency struct {
-	Base string `json:"base"`
-	latencyStats
-}
-
-// latencyBucket counts answered latencies below UpToS (null: no upper bound)
-// and at or above the previous bucket's bound.
-type latencyBucket struct {
-	Label string `json:"label"`
-	UpToS *int64 `json:"up_to_s"`
-	Count int    `json:"count"`
-}
-
-type pendingAge struct {
-	Role          string `json:"role"`
-	Pending       int    `json:"pending"`
-	OldestS       int64  `json:"oldest_s"`
-	OverThreshold bool   `json:"over_threshold"`
-}
-
-type threadMetrics struct {
-	MultiRound int            `json:"multi_round"`
-	Top        []threadRounds `json:"top"`
-}
-
-type threadRounds struct {
-	ThreadID   int64    `json:"thread_id"`
-	Subject    string   `json:"subject"`
-	Parties    []string `json:"parties"`
-	RoundTrips int      `json:"round_trips"`
-}
-
-type sessionMetrics struct {
-	ByRole  []roleStateTime `json:"by_role"`
-	Current []currentState  `json:"current"`
-}
-
-type roleStateTime struct {
-	Role     string     `json:"role"`
-	ErrorS   int64      `json:"error_s"`
-	BlockedS int64      `json:"blocked_s"`
-	TopKinds []kindTime `json:"top_kinds"`
-}
-
-type kindTime struct {
-	State   string `json:"state"`
-	Seconds int64  `json:"seconds"`
-}
-
-// currentState is a session that is online and in error:* or blocked:* now.
-type currentState struct {
-	Role    string    `json:"role"`
-	State   string    `json:"state"`
-	Since   time.Time `json:"since"`
-	Seconds int64     `json:"seconds"`
-}
-
-type thresholdSeconds struct {
-	PendingS int64 `json:"pending_s"`
-	ErrorS   int64 `json:"error_s"`
-	BlockedS int64 `json:"blocked_s"`
-}
-
 // metricsAPI serves GET /api/metrics (boss roles) and, with boss checked by
 // the caller as true, GET /api/admin/metrics. admin adds the alias-use block.
 func (s *Server) metricsAPI(w http.ResponseWriter, r *http.Request, allowed, admin bool) {
@@ -206,7 +98,7 @@ func (s *Server) metricsAPI(w http.ResponseWriter, r *http.Request, allowed, adm
 		http.Error(w, "metrics are for boss roles (SWITCHBOARD_BOSS_ROLES)", http.StatusForbidden)
 		return
 	}
-	days, err := parseMetricsDays(r.URL.Query().Get("days"))
+	days, err := wire.ParseMetricsDays(r.URL.Query().Get("days"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -315,7 +207,7 @@ func (b *baseResolver) of(name string) string {
 	v := baseOf(b.q, name)
 	if v == "" {
 		v = name
-		if base, _, ok := splitSlot(name); ok {
+		if base, _, ok := wire.SplitSlot(name); ok {
 			v = base
 		}
 	}
@@ -384,7 +276,7 @@ func firstReplies(msgs []flowMail, base func(string) string, isBoss func(string)
 		answered[to] = append(answered[to], d)
 		all = append(all, d)
 	}
-	out := firstReplyMetrics{latencyStats: latencySummary(all), ByRecipient: []recipientLatency{}}
+	out := firstReplyMetrics{LatencyStats: latencySummary(all), ByRecipient: []recipientLatency{}}
 	for _, c := range counts {
 		out.Unanswered += c.Unanswered
 	}
@@ -408,7 +300,7 @@ func firstReplies(msgs []flowMail, base func(string) string, isBoss func(string)
 	for to, c := range counts {
 		st := latencySummary(answered[to])
 		st.Count, st.Unanswered = c.Count, c.Unanswered
-		out.ByRecipient = append(out.ByRecipient, recipientLatency{Base: to, latencyStats: st})
+		out.ByRecipient = append(out.ByRecipient, recipientLatency{Base: to, LatencyStats: st})
 	}
 	sort.Slice(out.ByRecipient, func(i, j int) bool { return out.ByRecipient[i].Base < out.ByRecipient[j].Base })
 	return out

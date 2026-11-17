@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 // Label addresses.
@@ -37,31 +39,6 @@ const (
 
 var errBadLabel = errors.New(`label address must be label:<base>/<label>, with a label of 1-128 characters from A-Z a-z 0-9 . _ -`)
 
-// labelColumns are added to messages in place; see migrateLabels.
-var labelColumns = []struct{ name, def string }{
-	{"addressed_to", `TEXT`},   // the label address, for mail sent to one
-	{"held_id", `INTEGER`},     // the ID the message had while held
-	{"held_at", `TEXT`},        // RFC 3339; when the message was held
-	{"delivered_at", `TEXT`},   // RFC 3339; when held mail moved to a session
-	{"held_notice_at", `TEXT`}, // RFC 3339; for telling the sender nobody connected (not set here)
-}
-
-func migrateLabels(db *sql.DB) error {
-	for _, c := range labelColumns {
-		has, err := hasColumn(db, "messages", c.name)
-		if err != nil {
-			return err
-		}
-		if !has {
-			if _, err = db.Exec(`ALTER TABLE messages ADD COLUMN ` + c.name + ` ` + c.def); err != nil {
-				return err
-			}
-		}
-	}
-	_, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_held ON messages(held_at) WHERE status='held'`)
-	return err
-}
-
 // labelAddr is a parsed "label:<base>/<label>" address.
 type labelAddr struct{ Base, Label string }
 
@@ -79,7 +56,7 @@ func parseLabelAddress(s string) (labelAddr, error) {
 		return labelAddr{}, errBadLabel
 	}
 	a := labelAddr{Base: rest[:i], Label: rest[i+1:]}
-	if !validRole(a.Base) || !validLabel(a.Label) {
+	if !wire.ValidRole(a.Base) || !validLabel(a.Label) {
 		return labelAddr{}, errBadLabel
 	}
 	return a, nil

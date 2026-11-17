@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 // Decision ledger.
@@ -24,27 +26,6 @@ const (
 	ndjsonMimeType = "application/x-ndjson"
 )
 
-// decisionItem is one question of a decision and what was chosen.
-type decisionItem struct {
-	Header   string   `json:"header"`
-	Question string   `json:"question"`
-	Chosen   []string `json:"chosen"` // option labels
-	Other    string   `json:"other"`  // free text, "" when none
-}
-
-type decision struct {
-	ID         string         `json:"id"`
-	Asker      string         `json:"asker"`
-	AskedAt    time.Time      `json:"asked_at"`
-	AnsweredAt time.Time      `json:"answered_at"`
-	AnsweredBy string         `json:"answered_by"`
-	Items      []decisionItem `json:"items"`
-}
-
-type decisionList struct {
-	Decisions []decision `json:"decisions"`
-}
-
 // asDecision turns an answered question into a decision.
 func asDecision(v questionView) decision {
 	d := decision{ID: v.ID, Asker: v.Asker, AskedAt: v.CreatedAt, AnsweredBy: v.AnsweredBy, Items: make([]decisionItem, len(v.Questions))}
@@ -62,22 +43,6 @@ func asDecision(v questionView) decision {
 		d.Items[i] = it
 	}
 	return d
-}
-
-// matches reports whether needle (already lower-cased) is in a header, a
-// question or a chosen label.
-func (d decision) matches(needle string) bool {
-	for _, it := range d.Items {
-		if strings.Contains(strings.ToLower(it.Header), needle) || strings.Contains(strings.ToLower(it.Question), needle) {
-			return true
-		}
-		for _, c := range it.Chosen {
-			if strings.Contains(strings.ToLower(c), needle) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // decisionFilter is a parsed ?from=&to=&role=&q=&format= query.
@@ -131,13 +96,13 @@ func readDecisionFilter(r *http.Request, now time.Time) (decisionFilter, error) 
 	}
 	if role := strings.TrimSpace(query.Get("role")); role != "" {
 		if p, ok := strings.CutSuffix(role, "/*"); ok {
-			if !validRole(p) {
+			if !wire.ValidRole(p) {
 				return f, badQuestion("invalid role")
 			}
 			f.where += ` AND substr(asker_base,1,?)=?`
 			f.args = append(f.args, len(p)+1, p+"/")
 		} else {
-			if !validRole(role) {
+			if !wire.ValidRole(role) {
 				return f, badQuestion("invalid role")
 			}
 			f.where += ` AND (asker=? OR asker_base=?)`
@@ -175,7 +140,7 @@ func (s *Server) queryDecisions(base string, args []any, f decisionFilter) ([]de
 		if err != nil {
 			return nil, err
 		}
-		if d := asDecision(v); f.needle == "" || d.matches(f.needle) {
+		if d := asDecision(v); f.needle == "" || decisionMatches(d, f.needle) {
 			out = append(out, d)
 		}
 	}
@@ -299,4 +264,20 @@ func relatedText(ds []decision) string {
 		fmt.Fprintf(&b, "\n- %s %s: %s", d.ID, d.AnsweredAt.Format(decisionDate), strings.Join(parts, "; "))
 	}
 	return b.String()
+}
+
+// decisionMatches reports whether needle (already lower-cased) is in a header, a
+// question or a chosen label.
+func decisionMatches(d decision, needle string) bool {
+	for _, it := range d.Items {
+		if strings.Contains(strings.ToLower(it.Header), needle) || strings.Contains(strings.ToLower(it.Question), needle) {
+			return true
+		}
+		for _, c := range it.Chosen {
+			if strings.Contains(strings.ToLower(c), needle) {
+				return true
+			}
+		}
+	}
+	return false
 }

@@ -1,10 +1,12 @@
-package main
+package cli
 
 import (
 	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
+
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 // cliPermission serves agent-mail permission request|show|answer|list.
@@ -50,10 +52,10 @@ func cliPermission(c Config, p parsedArgs) (int, error) {
 	}
 	if p.bool("--json") {
 		fmt.Println(strings.TrimSpace(string(b)))
-		return exitOK, nil
+		return ExitOK, nil
 	}
 	if action == "list" {
-		var out permissionList
+		var out wire.PermissionList
 		if err = json.Unmarshal(b, &out); err != nil {
 			return 0, fmt.Errorf("unexpected response from server: %v", err)
 		}
@@ -63,18 +65,18 @@ func cliPermission(c Config, p parsedArgs) (int, error) {
 		for _, v := range out.Permissions {
 			fmt.Println(permissionLine(v))
 		}
-		return exitOK, nil
+		return ExitOK, nil
 	}
-	var v permissionView
+	var v wire.PermissionView
 	if err = json.Unmarshal(b, &v); err != nil {
 		return 0, fmt.Errorf("unexpected response from server: %v", err)
 	}
 	fmt.Println(permissionLine(v))
-	return exitOK, nil
+	return ExitOK, nil
 }
 
 // permissionLine: "<id> <status> <requester> <tool> | <summary>[ | by X][ | note]".
-func permissionLine(v permissionView) string {
+func permissionLine(v wire.PermissionView) string {
 	line := fmt.Sprintf("%s  %s  %s  %s | %s", v.ID, v.Status, v.Requester, v.Tool, v.Summary)
 	if v.AnsweredBy != "" {
 		line += " | by " + v.AnsweredBy

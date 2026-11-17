@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sandcorporation/agent-mail/internal/store"
 )
 
 func decodeMessage(t *testing.T, raw []byte) Message {
@@ -170,12 +172,12 @@ func TestMigrationAddsPriorityAndKeepsData(t *testing.T) {
 	if _, err = db.Exec(legacySchema); err != nil {
 		t.Fatal(err)
 	}
-	if has, _ := hasColumn(db, "messages", "priority"); has {
+	if has, _ := store.HasColumn(db, "messages", "priority"); has {
 		t.Fatal("legacy schema already has priority")
 	}
 	// Twice: the migration runs on every start and must be idempotent.
 	for i := 0; i < 2; i++ {
-		if err = initSchema(db); err != nil {
+		if err = store.Init(db); err != nil {
 			t.Fatalf("migration run %d: %v", i, err)
 		}
 	}

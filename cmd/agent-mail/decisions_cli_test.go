@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/sandcorporation/agent-mail/internal/cli"
 )
 
 const decisionsJSON = `{"decisions":[` +
@@ -81,7 +83,7 @@ func TestDecisionsCommandParameters(t *testing.T) {
 	if got.Encode() != want.Encode() {
 		t.Fatalf("query: %v want %v", got, want)
 	}
-	if res := h.run(nil, "decisions", "--json", "--ndjson"); res.code != exitUsage {
+	if res := h.run(nil, "decisions", "--json", "--ndjson"); res.code != cli.ExitUsage {
 		t.Fatalf("--json --ndjson: %d %s", res.code, res.stderr)
 	}
 	if out := h.mustRun(nil, "help", "decisions"); !strings.Contains(out, "--role ROLE") || !strings.Contains(out, "--ndjson") {

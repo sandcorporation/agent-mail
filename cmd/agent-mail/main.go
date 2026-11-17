@@ -17,52 +17,37 @@ import (
 	"syscall"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"github.com/sandcorporation/agent-mail/internal/cli"
+	"github.com/sandcorporation/agent-mail/internal/config"
+	"github.com/sandcorporation/agent-mail/internal/store"
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
-type Message struct {
-	ID             int64      `json:"id"`
-	Sender         string     `json:"sender"`
-	Recipient      string     `json:"recipient"`
-	Subject        string     `json:"subject"`
-	Body           string     `json:"body"`
-	CreatedAt      time.Time  `json:"created_at"`
-	TaskID         string     `json:"task_id,omitempty"`
-	ThreadID       int64      `json:"thread_id,omitempty"`
-	ReplyTo        int64      `json:"reply_to,omitempty"`
-	Status         string     `json:"status"`
-	Priority       string     `json:"priority"`               // "normal" or "urgent"
-	AddressedTo    string     `json:"addressed_to,omitempty"` // label address the sender used (see labels.go)
-	HeldID         int64      `json:"held_id,omitempty"`      // ID while held, when the message moved to a session
-	HeldAt         *time.Time `json:"held_at,omitempty"`      // when the message was held for a label
-	DeliveredAt    *time.Time `json:"delivered_at,omitempty"` // when held mail moved to a session
-	IdempotencyKey string     `json:"-"`
-}
 type Server struct {
 	db               *sql.DB
 	tokens           map[string]string
 	adminProxyToken  string
 	hub              mailHub
 	eventKeepAlive   time.Duration
-	pollMax          time.Duration    // cap on a long poll's wait; 0 means defaultPollMax
-	done             chan struct{}    // closed on shutdown; ends event streams
-	slotLease        time.Duration    // AGENT_MAIL_SLOT_LEASE; 0 means presence interval × missed
-	presenceInterval time.Duration    // expected heartbeat interval; 0 means defaultPresenceInterval
-	presenceMissed   int              // heartbeats a session may miss; 0 means defaultPresenceMissed
-	presenceRetain   *time.Duration   // how long offline sessions stay listed; nil means defaultPresenceRetain
-	clock            func() time.Time // nil means time.Now; tests move time forward
-	sweepEvery       time.Duration    // AGENT_MAIL_SWEEP_INTERVAL; 0 means defaultSweepInterval
-	labelStall       time.Duration    // AGENT_MAIL_LABEL_STALL; 0 means defaultLabelStall
-	permissionTTL    time.Duration    // AGENT_MAIL_PERMISSION_TTL; 0 means defaultPermissionTTL
-	bossRoles        map[string]bool  // AGENT_MAIL_BOSS_ROLES; may answer any permission request
-	discord          *discordNotifier // AGENT_MAIL_DISCORD_WEBHOOK; nil sends no question notices
-	alerts           *alertThresholds // SWITCHBOARD_ALERT_*; nil means defaultAlertThresholds
-	oldHeaders       aliasCounter     // requests that used an X-Agent-Mail-* header
-	groups           groupCache       // collaborator groups (groups.go)
-	adminMode        string           // SWITCHBOARD_ADMIN_AUTH; "" is default deny or the transition rule (adminauth.go)
-	adminSessionTTL  time.Duration    // 0 means defaultSessionTTL
-	insecureCookie   bool             // SWITCHBOARD_INSECURE_COOKIE=1: session cookie without Secure, for local http
-	trustForwarded   bool             // SWITCHBOARD_TRUST_FORWARDED=1: client IP from X-Forwarded-For
+	pollMax          time.Duration       // cap on a long poll's wait; 0 means defaultPollMax
+	done             chan struct{}       // closed on shutdown; ends event streams
+	slotLease        time.Duration       // AGENT_MAIL_SLOT_LEASE; 0 means presence interval × missed
+	presenceInterval time.Duration       // expected heartbeat interval; 0 means defaultPresenceInterval
+	presenceMissed   int                 // heartbeats a session may miss; 0 means defaultPresenceMissed
+	presenceRetain   *time.Duration      // how long offline sessions stay listed; nil means defaultPresenceRetain
+	clock            func() time.Time    // nil means time.Now; tests move time forward
+	sweepEvery       time.Duration       // AGENT_MAIL_SWEEP_INTERVAL; 0 means defaultSweepInterval
+	labelStall       time.Duration       // AGENT_MAIL_LABEL_STALL; 0 means defaultLabelStall
+	permissionTTL    time.Duration       // AGENT_MAIL_PERMISSION_TTL; 0 means defaultPermissionTTL
+	bossRoles        map[string]bool     // AGENT_MAIL_BOSS_ROLES; may answer any permission request
+	discord          *discordNotifier    // AGENT_MAIL_DISCORD_WEBHOOK; nil sends no question notices
+	alerts           *alertThresholds    // SWITCHBOARD_ALERT_*; nil means defaultAlertThresholds
+	oldHeaders       config.AliasCounter // requests that used an X-Agent-Mail-* header
+	groups           groupCache          // collaborator groups (groups.go)
+	adminMode        string              // SWITCHBOARD_ADMIN_AUTH; "" is default deny or the transition rule (adminauth.go)
+	adminSessionTTL  time.Duration       // 0 means defaultSessionTTL
+	insecureCookie   bool                // SWITCHBOARD_INSECURE_COOKIE=1: session cookie without Secure, for local http
+	trustForwarded   bool                // SWITCHBOARD_TRUST_FORWARDED=1: client IP from X-Forwarded-For
 	loginLimits      loginLimiter
 	oidc             *oidcLogin   // SWITCHBOARD_ADMIN_AUTH=oidc (oidc.go)
 	joinLimits       loginLimiter // failed POST /api/join per client IP (invites.go)
@@ -70,27 +55,37 @@ type Server struct {
 
 var version = "dev"
 
+func main() {
+	// Copy the arguments so parsing never rewrites os.Args.
+	args := append([]string(nil), os.Args[1:]...)
+	if len(args) == 0 {
+		runServer()
+		return
+	}
+	os.Exit(cli.Run(args, version, cliAdmin))
+}
+
 func runServer() {
-	db, e := openDB(env("DB_PATH", "/data/mail.db"))
+	db, e := store.Open(config.Env("DB_PATH", "/data/mail.db"))
 	if e != nil {
 		log.Fatal(e)
 	}
-	s := &Server{db: db, tokens: map[string]string{}, adminProxyToken: envAlias("ADMIN_PROXY_TOKEN"), done: make(chan struct{})}
-	if v, from := envAliasFrom(os.Getenv, "SSE_KEEPALIVE"); v != "" {
+	s := &Server{db: db, tokens: map[string]string{}, adminProxyToken: config.EnvAlias("ADMIN_PROXY_TOKEN"), done: make(chan struct{})}
+	if v, from := config.EnvAliasFrom(os.Getenv, "SSE_KEEPALIVE"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil || d <= 0 {
 			log.Fatal(from + " must be a positive duration such as 20s")
 		}
 		s.eventKeepAlive = d
 	}
-	if v, from := envAliasFrom(os.Getenv, "POLL_MAX"); v != "" {
+	if v, from := config.EnvAliasFrom(os.Getenv, "POLL_MAX"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n <= 0 {
 			log.Fatal(from + " must be a positive whole number of seconds such as 55")
 		}
 		s.pollMax = time.Duration(n) * time.Second
 	}
-	if v, from := envAliasFrom(os.Getenv, "SLOT_LEASE"); v != "" {
+	if v, from := config.EnvAliasFrom(os.Getenv, "SLOT_LEASE"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil || d < time.Second {
 			log.Fatal(from + " must be a duration of at least 1s such as 3m")
@@ -110,7 +105,7 @@ func runServer() {
 	if e = configureAdminAuth(s, os.Getenv); e != nil {
 		log.Fatal(e)
 	}
-	for _, pair := range strings.Split(envAlias("TOKENS"), ",") {
+	for _, pair := range strings.Split(config.EnvAlias("TOKENS"), ",") {
 		p := strings.SplitN(strings.TrimSpace(pair), "=", 2)
 		if len(p) == 2 && p[0] != "" && p[1] != "" {
 			s.tokens[p[0]] = p[1]
@@ -122,7 +117,7 @@ func runServer() {
 	if e = s.loadGroups(); e != nil {
 		log.Fatal("cannot load groups")
 	}
-	if old := oldEnvNames(); len(old) > 0 {
+	if old := config.OldEnvNames(); len(old) > 0 {
 		log.Printf("old environment names in use (rename AGENT_MAIL_* to SWITCHBOARD_*): %s", strings.Join(old, ", "))
 	}
 	mux := http.NewServeMux()
@@ -130,7 +125,7 @@ func runServer() {
 	mux.HandleFunc("/api/", s.api)
 	mux.HandleFunc("/auth/", s.authAPI)
 	mux.HandleFunc("/", s.root)
-	addr := env("LISTEN_ADDR", ":8080")
+	addr := config.Env("LISTEN_ADDR", ":8080")
 	// No WriteTimeout: /api/events responses stay open indefinitely and
 	// /api/events/poll waits up to AGENT_MAIL_POLL_MAX.
 	srv := &http.Server{Addr: addr, Handler: secureHeaders(mux), ReadHeaderTimeout: 10 * time.Second}
@@ -155,73 +150,6 @@ func runServer() {
 	_ = db.Close()
 }
 
-// initSchema creates the tables when missing and upgrades databases created by
-// older versions in place. It is safe to run on every start.
-func initSchema(db *sql.DB) error {
-	if _, e := db.Exec(`PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT,sender TEXT NOT NULL,recipient TEXT NOT NULL,subject TEXT NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL,task_id TEXT,thread_id INTEGER,reply_to INTEGER,status TEXT NOT NULL DEFAULT 'pending',idem TEXT,priority TEXT NOT NULL DEFAULT 'normal', UNIQUE(sender,idem)); CREATE INDEX IF NOT EXISTS idx_recipient ON messages(recipient,id); CREATE INDEX IF NOT EXISTS idx_sender ON messages(sender,id); CREATE INDEX IF NOT EXISTS idx_thread ON messages(thread_id); CREATE INDEX IF NOT EXISTS idx_task ON messages(task_id); CREATE TABLE IF NOT EXISTS role_states(role TEXT NOT NULL,message_id INTEGER NOT NULL,status TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(role,message_id)); CREATE TABLE IF NOT EXISTS roles(role TEXT PRIMARY KEY, token TEXT NOT NULL, created_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS slots(base TEXT NOT NULL,number INTEGER NOT NULL,machine TEXT NOT NULL,directory TEXT NOT NULL,session_id TEXT NOT NULL DEFAULT '',label TEXT NOT NULL DEFAULT '',parent TEXT NOT NULL DEFAULT '',registered_at INTEGER NOT NULL,lease_until INTEGER NOT NULL,PRIMARY KEY(base,number),UNIQUE(base,machine,directory));`); e != nil {
-		return e
-	}
-	has, e := hasColumn(db, "messages", "priority")
-	if e != nil {
-		return e
-	}
-	if !has {
-		// Databases from before message priority: existing mail becomes normal.
-		if _, e = db.Exec(`ALTER TABLE messages ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`); e != nil {
-			return e
-		}
-	}
-	if e = migrateLabels(db); e != nil {
-		return e
-	}
-	if e = migratePresence(db); e != nil {
-		return e
-	}
-	if e = migratePresenceLog(db); e != nil {
-		return e
-	}
-	if e = migrateAlerts(db); e != nil {
-		return e
-	}
-	if e = migrateRoleTokens(db); e != nil {
-		return e
-	}
-	if e = migratePermissions(db); e != nil {
-		return e
-	}
-	if e = migrateQuestionSettings(db); e != nil {
-		return e
-	}
-	if e = migrateGroups(db); e != nil {
-		return e
-	}
-	if e = migrateAdminAuth(db); e != nil {
-		return e
-	}
-	if e = migrateInvites(db); e != nil {
-		return e
-	}
-	return migrateQuestions(db)
-}
-
-func hasColumn(db *sql.DB, table, column string) (bool, error) {
-	rows, e := db.Query(`SELECT name FROM pragma_table_info(?)`, table)
-	if e != nil {
-		return false, e
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var name string
-		if e = rows.Scan(&name); e != nil {
-			return false, e
-		}
-		if name == column {
-			return true, nil
-		}
-	}
-	return false, rows.Err()
-}
-
 // normalizePriority returns the stored priority for a request value: empty
 // means normal; anything other than normal or urgent is rejected.
 func normalizePriority(p string) (string, bool) {
@@ -240,17 +168,11 @@ func migrateConfiguredRoles(s *Server) error {
 			log.Printf("SWITCHBOARD_TOKENS: %s is reserved for system notices; ignored", role)
 			continue
 		}
-		if _, err := s.db.Exec(`INSERT OR IGNORE INTO roles(role,token,created_at) VALUES(?,?,?)`, role, tokenHash(token), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		if _, err := s.db.Exec(`INSERT OR IGNORE INTO roles(role,token,created_at) VALUES(?,?,?)`, role, store.TokenHash(token), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-func env(k, d string) string {
-	if x := os.Getenv(k); x != "" {
-		return x
-	}
-	return d
 }
 func secureHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -348,7 +270,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	}
 	parts := strings.Split(path, "/")
 	if len(parts) >= 2 && parts[0] == "messages" {
-		id, e := parseID(parts[1])
+		id, e := wire.ParseID(parts[1])
 		if e != nil {
 			http.Error(w, "invalid id", 400)
 			return
@@ -529,7 +451,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		Role       string `json:"role"`
 		Credential string `json:"credential"`
 	}
-	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req) != nil || !validRole(req.Role) || req.Credential == "" {
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req) != nil || !wire.ValidRole(req.Role) || req.Credential == "" {
 		http.Error(w, "role and credential required", 400)
 		return
 	}
@@ -560,7 +482,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "registration failed", 500)
 		return
 	}
-	enrollment := envAlias("ENROLLMENT_TOKEN")
+	enrollment := config.EnvAlias("ENROLLMENT_TOKEN")
 	provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if len(req.Credential) < 24 || enrollment == "" || len(enrollment) != len(provided) || subtle.ConstantTimeCompare([]byte(enrollment), []byte(provided)) != 1 {
 		http.Error(w, "enrollment authorization required", 401)
@@ -570,7 +492,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "role credential must differ from enrollment credential", 400)
 		return
 	}
-	_, err = s.db.Exec(`INSERT INTO roles(role,token,created_at) VALUES(?,?,?)`, req.Role, tokenHash(req.Credential), time.Now().UTC().Format(time.RFC3339Nano))
+	_, err = s.db.Exec(`INSERT INTO roles(role,token,created_at) VALUES(?,?,?)`, req.Role, store.TokenHash(req.Credential), time.Now().UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		http.Error(w, "role registration failed", 409)
 		return
@@ -578,18 +500,6 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(201)
 	writeJSON(w, map[string]string{"role": req.Role, "status": "registered"})
 }
-func validRole(role string) bool {
-	if len(role) < 1 || len(role) > 128 {
-		return false
-	}
-	for _, c := range role {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("._/-", c)) {
-			return false
-		}
-	}
-	return true
-}
-func parseID(x string) (int64, error)        { return strconv.ParseInt(x, 10, 64) }
 func writeJSON(w http.ResponseWriter, v any) { _ = json.NewEncoder(w).Encode(v) }
 func (s *Server) send(w http.ResponseWriter, r *http.Request, p principal) {
 	role := p.Role
@@ -822,7 +732,7 @@ func (s *Server) isReplyToSender(role string, replyTo int64, box string) bool {
 	return err == nil && orig.Recipient == role && orig.Sender == box
 }
 func (s *Server) watch(w http.ResponseWriter, r *http.Request, role string) {
-	after, _ := parseID(r.URL.Query().Get("after"))
+	after, _ := wire.ParseID(r.URL.Query().Get("after"))
 	deadline := time.Now().Add(25 * time.Second)
 	for {
 		rows, e := s.db.Query(`SELECT id FROM messages WHERE recipient=? AND id>? ORDER BY id LIMIT 100`, role, after)

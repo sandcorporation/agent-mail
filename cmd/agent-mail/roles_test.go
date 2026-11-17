@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sandcorporation/agent-mail/internal/store"
 )
 
 // legacyRolesDB is a database written by a binary from before hashed tokens:
@@ -22,7 +24,7 @@ func legacyRolesDB(t *testing.T) *sql.DB {
 	if _, err = db.Exec(legacySchema); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Exec(`INSERT INTO roles VALUES('done',?,'then')`, tokenHash("secret-done")); err != nil {
+	if _, err = db.Exec(`INSERT INTO roles VALUES('done',?,'then')`, store.TokenHash("secret-done")); err != nil {
 		t.Fatal(err)
 	}
 	return db
@@ -57,11 +59,11 @@ func TestRoleTokenMigrationHashesBacksUpAndKeepsClients(t *testing.T) {
 	var backedUp string
 	// Every start runs the migration; the second run must change nothing.
 	for run := 0; run < 2; run++ {
-		if err := initSchema(db); err != nil {
+		if err := store.Init(db); err != nil {
 			t.Fatalf("run %d: %v", run, err)
 		}
 		got := roleTokens(t, db, "roles")
-		want := map[string]string{"a": tokenHash("secret-a"), "b": tokenHash("secret-b"), "done": tokenHash("secret-done")}
+		want := map[string]string{"a": store.TokenHash("secret-a"), "b": store.TokenHash("secret-b"), "done": store.TokenHash("secret-done")}
 		if len(got) != len(want) {
 			t.Fatalf("run %d roles=%v", run, got)
 		}
@@ -89,7 +91,7 @@ func TestRoleTokenMigrationHashesBacksUpAndKeepsClients(t *testing.T) {
 	if w := callAs(s, "GET", "/api/messages", "secret-done", "done", nil); w.Code != 200 {
 		t.Fatalf("already hashed row: %d", w.Code)
 	}
-	if w := callAs(s, "GET", "/api/messages", tokenHash("secret-b"), "b", nil); w.Code != 401 {
+	if w := callAs(s, "GET", "/api/messages", store.TokenHash("secret-b"), "b", nil); w.Code != 401 {
 		t.Fatalf("the stored hash itself must not authenticate: %d", w.Code)
 	}
 	if w := callAs(s, "GET", "/api/messages", "secret-a", "b", nil); w.Code != 401 {
@@ -103,11 +105,11 @@ func TestRoleTokenMigrationRollsBackOnFailure(t *testing.T) {
 	if _, err := db.Exec(`CREATE TRIGGER fail_b BEFORE UPDATE ON roles WHEN NEW.role='b' BEGIN SELECT RAISE(ABORT,'injected'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if err := initSchema(db); err == nil {
+	if err := store.Init(db); err == nil {
 		t.Fatal("migration should fail")
 	}
 	got := roleTokens(t, db, "roles")
-	if got["a"] != "secret-a" || got["b"] != "secret-b" || got["done"] != tokenHash("secret-done") {
+	if got["a"] != "secret-a" || got["b"] != "secret-b" || got["done"] != store.TokenHash("secret-done") {
 		t.Fatalf("failed migration left roles=%v", got)
 	}
 	if tableExists(db, "roles_plain_backup") {
@@ -116,10 +118,10 @@ func TestRoleTokenMigrationRollsBackOnFailure(t *testing.T) {
 	if _, err := db.Exec(`DROP TRIGGER fail_b`); err != nil {
 		t.Fatal(err)
 	}
-	if err := initSchema(db); err != nil {
+	if err := store.Init(db); err != nil {
 		t.Fatal(err)
 	}
-	if got = roleTokens(t, db, "roles"); got["a"] != tokenHash("secret-a") || got["b"] != tokenHash("secret-b") {
+	if got = roleTokens(t, db, "roles"); got["a"] != store.TokenHash("secret-a") || got["b"] != store.TokenHash("secret-b") {
 		t.Fatalf("retry roles=%v", got)
 	}
 }
@@ -133,13 +135,13 @@ func TestRegisterAndSeedStoreHashes(t *testing.T) {
 	if w.Code != 201 || strings.Contains(w.Body.String(), cred) || strings.Contains(w.Body.String(), "sha256") {
 		t.Fatalf("register: %d %s", w.Code, w.Body)
 	}
-	if got := roleTokens(t, s.db, "roles")["team/worker"]; got != tokenHash(cred) {
+	if got := roleTokens(t, s.db, "roles")["team/worker"]; got != store.TokenHash(cred) {
 		t.Fatalf("stored %q", got)
 	}
 	if w = callAs(s, "POST", "/api/register", "", "", body); w.Code != 200 || !strings.Contains(w.Body.String(), "resumed") {
 		t.Fatalf("resume: %d %s", w.Code, w.Body)
 	}
-	if w = callAs(s, "POST", "/api/register", "", "", map[string]string{"role": "team/worker", "credential": tokenHash(cred)}); w.Code != 409 {
+	if w = callAs(s, "POST", "/api/register", "", "", map[string]string{"role": "team/worker", "credential": store.TokenHash(cred)}); w.Code != 409 {
 		t.Fatalf("resume with the hash: %d", w.Code)
 	}
 	s.tokens = map[string]string{"seeded": "seeded-secret", "a": "changed"}
@@ -147,7 +149,7 @@ func TestRegisterAndSeedStoreHashes(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := roleTokens(t, s.db, "roles")
-	if got["seeded"] != tokenHash("seeded-secret") || got["a"] != tokenHash("secret-a") {
+	if got["seeded"] != store.TokenHash("seeded-secret") || got["a"] != store.TokenHash("secret-a") {
 		t.Fatalf("seed: %v", got)
 	}
 	if w = callAs(s, "GET", "/api/messages", "seeded-secret", "seeded", nil); w.Code != 200 {
@@ -239,7 +241,7 @@ func TestRoleHashesNeverLeaveTheServer(t *testing.T) {
 		callAs(s, "GET", "/api/slots", workerToken, "team/worker", nil).Body.String(),
 	}
 	for _, b := range bodies {
-		if strings.Contains(b, "sha256") || strings.Contains(b, workerToken) || strings.Contains(b, tokenHash(workerToken)[7:]) {
+		if strings.Contains(b, "sha256") || strings.Contains(b, workerToken) || strings.Contains(b, store.TokenHash(workerToken)[7:]) {
 			t.Fatalf("secret in response: %s", b)
 		}
 	}

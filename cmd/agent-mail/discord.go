@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/config"
 )
 
 const discordNoticeTimeout = 5 * time.Second
@@ -44,7 +46,7 @@ type discordPayload struct {
 // variables (or their AGENT_MAIL_* aliases). An unset or empty webhook leaves s.discord nil (no notices).
 func configureDiscord(s *Server, getenv func(string) string) {
 	get := func(name string) (string, string) {
-		v, from := envAliasFrom(getenv, name)
+		v, from := config.EnvAliasFrom(getenv, name)
 		return strings.TrimSpace(v), from
 	}
 	webhook, _ := get("DISCORD_WEBHOOK")

@@ -20,12 +20,14 @@ import (
 	"io"
 	"net/url"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/sandcorporation/agent-mail/internal/cli"
+	"github.com/sandcorporation/agent-mail/internal/config"
+	"github.com/sandcorporation/agent-mail/internal/store"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/term"
 )
@@ -162,17 +164,16 @@ var adminNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$`)
 
 // cliAdmin serves `admin create|passwd|totp-reset|disable NAME`. It opens
 // DB_PATH (the server's database) directly.
-func cliAdmin(p parsedArgs, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
-	action, name := p.pos[0], p.pos[1]
+func cliAdmin(action, name string, jsonOut bool, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	switch action {
 	case "create", "passwd", "totp-reset", "disable":
 	default:
-		return 0, usagef("admin: unknown action %q (create, passwd, totp-reset, disable)", action)
+		return 0, cli.Usagef("admin: unknown action %q (create, passwd, totp-reset, disable)", action)
 	}
 	if !adminNamePattern.MatchString(name) {
-		return 0, usagef("admin: invalid name %q (1-64 of A-Z a-z 0-9 . _ @ -)", name)
+		return 0, cli.Usagef("admin: invalid name %q (1-64 of A-Z a-z 0-9 . _ @ -)", name)
 	}
-	db, err := openDB(env("DB_PATH", "/data/mail.db"))
+	db, err := store.Open(config.Env("DB_PATH", "/data/mail.db"))
 	if err != nil {
 		return 0, err
 	}
@@ -241,10 +242,10 @@ func cliAdmin(p parsedArgs, stdin io.Reader, stdout, stderr io.Writer) (int, err
 	if secret != "" {
 		out["secret"], out["otpauth_uri"] = secret, otpauthURI(name, secret)
 	}
-	if p.bool("--json") {
+	if jsonOut {
 		b, _ := json.Marshal(out)
 		fmt.Fprintln(stdout, string(b))
-		return exitOK, nil
+		return 0, nil
 	}
 	switch action {
 	case "create":
@@ -259,7 +260,7 @@ func cliAdmin(p parsedArgs, stdin io.Reader, stdout, stderr io.Writer) (int, err
 	if secret != "" {
 		fmt.Fprintf(stdout, "otpauth URI (shown once): %s\nsecret (shown once): %s\n", out["otpauth_uri"], secret)
 	}
-	return exitOK, nil
+	return 0, nil
 }
 
 // readNewPassword prompts twice without echo on a terminal; otherwise it
@@ -294,23 +295,4 @@ func readNewPassword(stdin io.Reader, stderr io.Writer) (string, error) {
 		return "", fmt.Errorf("password must be at least %d characters", minPasswordLen)
 	}
 	return pw, nil
-}
-
-// openDB opens and upgrades the SQLite database at path, as the server does.
-func openDB(path string) (*sql.DB, error) {
-	_ = os.MkdirAll(filepath.Dir(path), 0755)
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(1)
-	if _, err = db.Exec(`PRAGMA busy_timeout=5000`); err != nil {
-		db.Close()
-		return nil, err
-	}
-	if err = initSchema(db); err != nil {
-		db.Close()
-		return nil, err
-	}
-	return db, nil
 }

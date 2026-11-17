@@ -1,6 +1,10 @@
 package main
 
-import "database/sql"
+import (
+	"database/sql"
+
+	"github.com/sandcorporation/agent-mail/internal/store"
+)
 
 // seedRoles inserts role rows with plain tokens the way an old binary would,
 // then hashes them as the startup migration does.
@@ -9,5 +13,5 @@ func seedRoles(db *sql.DB, query string, args ...any) (sql.Result, error) {
 	if err != nil {
 		return res, err
 	}
-	return res, migrateRoleTokens(db)
+	return res, store.Init(db)
 }

@@ -10,6 +10,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/store"
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 // Numbered role slots.
@@ -23,7 +26,7 @@ import (
 
 const (
 	defaultSlotLease = 3 * time.Minute
-	maxSlotNumber    = 999
+	maxSlotNumber    = wire.MaxSlotNumber
 	maxSlotField     = 512 // bytes, for machine, directory, session_id, label, parent
 )
 
@@ -60,23 +63,6 @@ func (s *Server) leaseLength() time.Duration {
 	return s.heartbeatInterval() * time.Duration(s.missedHeartbeats())
 }
 
-// splitSlot parses "<base>-N" with N a positive number without leading zeros.
-func splitSlot(role string) (string, int, bool) {
-	i := strings.LastIndexByte(role, '-')
-	if i <= 0 || i == len(role)-1 {
-		return "", 0, false
-	}
-	digits := role[i+1:]
-	if digits[0] == '0' {
-		return "", 0, false
-	}
-	n, err := strconv.Atoi(digits)
-	if err != nil || n < 1 || n > maxSlotNumber {
-		return "", 0, false
-	}
-	return role[:i], n, true
-}
-
 func slotRole(base string, n int) string { return base + "-" + strconv.Itoa(n) }
 
 func roleExists(q queryer, role string) bool { _, _, ok := roleRecord(q, role); return ok }
@@ -95,7 +81,7 @@ func sameSecret(a, b string) bool {
 func (s *Server) authenticate(r *http.Request) (principal, bool) {
 	t := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	h := s.header(r, "Role")
-	if t == "" || h == "" || !validRole(h) || reservedRole(h) {
+	if t == "" || h == "" || !wire.ValidRole(h) || reservedRole(h) {
 		return principal{}, false
 	}
 	if hash, revoked, ok := roleRecord(s.db, h); ok {
@@ -104,7 +90,7 @@ func (s *Server) authenticate(r *http.Request) (principal, bool) {
 		}
 		return principal{Role: h, Base: h}, true
 	}
-	base, n, ok := splitSlot(h)
+	base, n, ok := wire.SplitSlot(h)
 	if !ok {
 		return principal{}, false
 	}
@@ -129,7 +115,7 @@ func mailbox(q queryer, name string) (string, bool) {
 	if roleExists(q, name) {
 		return name, true
 	}
-	base, n, ok := splitSlot(name)
+	base, n, ok := wire.SplitSlot(name)
 	if !ok || !roleExists(q, base) {
 		return "", false
 	}
@@ -155,59 +141,6 @@ func (s *Server) otherSlotMailbox(p principal, id int64) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-// slotRequest is the body of the slot endpoints. Machine and Directory form
-// the identity; session, label and parent are stored for display, and the
-// label also routes label mail (see labels.go). State, ContextTokens and LastTurnAt are the presence report
-// (see presence.go); release ignores them.
-type slotRequest struct {
-	Machine       string `json:"machine"`
-	Directory     string `json:"directory"`
-	SessionID     string `json:"session_id"`
-	Label         string `json:"label"`
-	Parent        string `json:"parent"`
-	State         string `json:"state,omitempty"`          // idle | busy | compacting | error:<kind> | blocked:<kind>
-	ContextTokens *int64 `json:"context_tokens,omitempty"` // >= 0
-	LastTurnAt    string `json:"last_turn_at,omitempty"`   // RFC 3339
-}
-
-func (q slotRequest) valid() bool {
-	if q.Machine == "" || q.Directory == "" {
-		return false
-	}
-	for _, f := range []string{q.Machine, q.Directory, q.SessionID, q.Label, q.Parent} {
-		if len(f) > maxSlotField {
-			return false
-		}
-	}
-	return true
-}
-
-// slotView is one row of the slot table.
-type slotView struct {
-	Role           string    `json:"role"`
-	Base           string    `json:"base"`
-	Number         int       `json:"number"`
-	Machine        string    `json:"machine"`
-	Directory      string    `json:"directory"`
-	SessionID      string    `json:"session_id,omitempty"`
-	Label          string    `json:"label,omitempty"`
-	Parent         string    `json:"parent,omitempty"`
-	RegisteredAt   time.Time `json:"registered_at"`
-	LeaseExpiresAt time.Time `json:"lease_expires_at"`
-}
-
-// slotGrant answers register, heartbeat and takeover.
-type slotGrant struct {
-	slotView
-	LeaseSeconds int       `json:"lease_seconds"`
-	OtherActive  int       `json:"other_active"`        // other leased slots under the same base
-	Reclaimed    bool      `json:"reclaimed"`           // the identity already held this number
-	Displaced    *slotView `json:"displaced,omitempty"` // takeover: where the previous -1 holder went
-	// HeldDelivered counts held label mail this call moved to the slot's
-	// mailbox (see labels.go).
-	HeldDelivered int `json:"held_delivered,omitempty"`
 }
 
 func ms(t time.Time) int64     { return t.UnixMilli() }
@@ -248,11 +181,11 @@ func (s *Server) slotAPI(w http.ResponseWriter, r *http.Request, p principal, ac
 		http.Error(w, "invalid JSON body", 400)
 		return
 	}
-	if !req.valid() {
+	if !slotRequestValid(req) {
 		http.Error(w, "machine and directory required (each field at most 512 bytes)", 400)
 		return
 	}
-	if _, err := req.presence(); err != nil && action != "release" {
+	if _, err := req.Presence(); err != nil && action != "release" {
 		http.Error(w, err.Error(), 400)
 		return
 	}
@@ -320,15 +253,7 @@ func (s *Server) activeSlots(base string) ([]slotView, error) {
 // changes are serialised; the (base, number) primary key and the
 // (base, machine, directory) unique key back that up.
 func (s *Server) inTx(ctx context.Context, f func(*sql.Tx) error) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	if err = f(tx); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	return tx.Commit()
+	return store.InTx(ctx, s.db, f)
 }
 
 // freeNumber returns the smallest number under base that is not leased, not
@@ -545,7 +470,19 @@ func (s *Server) fillGrant(tx *sql.Tx, g *slotGrant, base string, number int) er
 	if err != nil {
 		return err
 	}
-	g.slotView = v
+	g.SlotView = v
 	g.LeaseSeconds = int(s.leaseLength() / time.Second)
 	return tx.QueryRow(`SELECT COUNT(*) FROM slots WHERE base=? AND number<>? AND lease_until>?`, base, number, ms(s.now())).Scan(&g.OtherActive)
+}
+
+func slotRequestValid(q slotRequest) bool {
+	if q.Machine == "" || q.Directory == "" {
+		return false
+	}
+	for _, f := range []string{q.Machine, q.Directory, q.SessionID, q.Label, q.Parent} {
+		if len(f) > maxSlotField {
+			return false
+		}
+	}
+	return true
 }

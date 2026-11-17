@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 // mailHub wakes event subscribers when mail is stored for their role. A wake-up
@@ -53,22 +55,6 @@ func (h *mailHub) publish(role string) {
 	}
 }
 
-// mailEvent is the data of an SSE "message" event. Body is present only for
-// urgent mail (always present for urgent mail, even when empty).
-type mailEvent struct {
-	ID        int64     `json:"id"`
-	Sender    string    `json:"sender"`
-	Recipient string    `json:"recipient"`
-	Subject   string    `json:"subject"`
-	Priority  string    `json:"priority"`
-	CreatedAt time.Time `json:"created_at"`
-	TaskID    string    `json:"task_id,omitempty"`
-	ThreadID  int64     `json:"thread_id,omitempty"`
-	// AddressedTo is the label address the sender used, for label mail.
-	AddressedTo string  `json:"addressed_to,omitempty"`
-	Body        *string `json:"body,omitempty"`
-}
-
 const defaultEventKeepAlive = 20 * time.Second
 const eventBatch = 200
 
@@ -90,7 +76,7 @@ func eventCursor(r *http.Request) (int64, bool) {
 	if raw == "" {
 		return 0, true
 	}
-	id, e := parseID(raw)
+	id, e := wire.ParseID(raw)
 	return id, e == nil && id >= 0
 }
 

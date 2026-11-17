@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/sandcorporation/agent-mail/internal/store"
 )
 
 func adminRequest(s *Server, method, path, body string, headers map[string]string) *httptest.ResponseRecorder {
@@ -42,7 +44,7 @@ func TestQuestionSettingsMigrationCreatesDefaultIdempotently(t *testing.T) {
 	s := testServer(t)
 	s.adminProxyToken = "proxy-secret"
 	putSettings(t, s, "default", `{"can_ask":true,"watchers":["a"],"discord":true}`)
-	if err := initSchema(s.db); err != nil {
+	if err := store.Init(s.db); err != nil {
 		t.Fatalf("second migration: %v", err)
 	}
 	var n int

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 // Production cases of #65 replayed through the send API: a boss directs
@@ -55,7 +57,7 @@ func TestProgressAnsweredWithSlotLikeRoleNames(t *testing.T) {
 				if tok, ok := tokens[session]; ok {
 					return tok
 				}
-				base, _, _ := splitSlot(session)
+				base, _, _ := wire.SplitSlot(session)
 				return tokens[base]
 			}
 			send := func(as string, body map[string]any) int64 {
@@ -100,7 +102,7 @@ func TestProgressAnsweredWithSlotLikeRoleNames(t *testing.T) {
 				t.Fatalf("directives %d,%d answered and %d open: open %v", d1, d2, d3, open)
 			}
 			if fr := mustMetrics(t, s, 7).FirstReply; fr.Count != 3 || fr.Answered != 2 {
-				t.Fatalf("first_reply %+v, want 2 of 3 answered", fr.latencyStats)
+				t.Fatalf("first_reply %+v, want 2 of 3 answered", fr.LatencyStats)
 			}
 		})
 	}

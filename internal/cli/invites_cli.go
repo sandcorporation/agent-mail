@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"bytes"
@@ -13,6 +13,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/sandcorporation/agent-mail/internal/config"
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 // cliInvite is `switchboard invite --prefix P [--role R] [--ttl 72h]`: it
@@ -22,7 +25,7 @@ func cliInvite(c Config, p parsedArgs, stdout io.Writer) (int, error) {
 	if prefix == "" {
 		return 0, usagef("invite requires --prefix")
 	}
-	payload, _ := json.Marshal(inviteRequest{Prefix: prefix, Role: p.values["--role"], TTL: p.values["--ttl"]})
+	payload, _ := json.Marshal(wire.InviteRequest{Prefix: prefix, Role: p.values["--role"], TTL: p.values["--ttl"]})
 	req, _ := http.NewRequest("POST", endpoint(c, "/api/invites"), bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	authorize(c, req)
@@ -41,9 +44,9 @@ func cliInvite(c Config, p parsedArgs, stdout io.Writer) (int, error) {
 			b = out.Bytes()
 		}
 		fmt.Fprintln(stdout, string(b))
-		return exitOK, nil
+		return ExitOK, nil
 	}
-	var v inviteCreated
+	var v wire.InviteCreated
 	if err = json.Unmarshal(b, &v); err != nil || v.Code == "" {
 		return 0, errors.New("unexpected server response")
 	}
@@ -54,7 +57,7 @@ func cliInvite(c Config, p parsedArgs, stdout io.Writer) (int, error) {
 		line += " --role " + v.Prefix + "/NAME"
 	}
 	fmt.Fprintf(stdout, "Code:    %s\nGroup:   %s\nExpires: %s\nJoin:    %s\n", v.Code, v.Prefix, v.ExpiresAt, line)
-	return exitOK, nil
+	return ExitOK, nil
 }
 
 // cliJoin is `switchboard join URL CODE [--role R] [--profile NAME]`. It
@@ -69,15 +72,15 @@ func cliJoin(p parsedArgs, stdout io.Writer) (int, error) {
 	if code == "" {
 		return 0, usagef("join: CODE is empty")
 	}
-	if r := p.values["--role"]; r != "" && !validRole(r) {
+	if r := p.values["--role"]; r != "" && !wire.ValidRole(r) {
 		return 0, errors.New("invalid role name")
 	}
 	name := profileFlag
 	if name == "" {
-		name = envAlias("PROFILE")
+		name = config.EnvAlias("PROFILE")
 	}
 	if name == "" {
-		name = hostProfile(u.Hostname())
+		name = HostProfile(u.Hostname())
 	}
 	if !validProfile(name) {
 		return 0, usagef("invalid profile name %q", name)
@@ -108,7 +111,7 @@ func cliJoin(p parsedArgs, stdout io.Writer) (int, error) {
 		return 0, err
 	}
 	token := base64.RawURLEncoding.EncodeToString(raw)
-	payload, _ := json.Marshal(joinRequest{Code: code, Role: p.values["--role"], Credential: token})
+	payload, _ := json.Marshal(wire.JoinRequest{Code: code, Role: p.values["--role"], Credential: token})
 	req, _ := http.NewRequest("POST", base+"/api/join", bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
@@ -136,17 +139,17 @@ func cliJoin(p parsedArgs, stdout io.Writer) (int, error) {
 		return 0, fmt.Errorf("joined as %s but cannot write profile %s", out.Role, path)
 	}
 	written = true
-	envLine := envPrefix + "PROFILE=" + name
-	if d := envAlias("CONFIG_DIR"); d != "" {
-		envLine = envPrefix + "CONFIG_DIR=" + d + " " + envLine
+	envLine := config.EnvPrefix + "PROFILE=" + name
+	if d := config.EnvAlias("CONFIG_DIR"); d != "" {
+		envLine = config.EnvPrefix + "CONFIG_DIR=" + d + " " + envLine
 	}
 	fmt.Fprintf(stdout, "Role:    %s\nGroup:   %s (boss %s)\nProfile: %s\n%s\n", out.Role, out.Group, out.BossRole, path, envLine)
-	return exitOK, nil
+	return ExitOK, nil
 }
 
 // hostProfile turns a server host into a profile name: mail.example becomes
 // mail-example.
-func hostProfile(host string) string {
+func HostProfile(host string) string {
 	var b strings.Builder
 	for _, c := range host {
 		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_' {

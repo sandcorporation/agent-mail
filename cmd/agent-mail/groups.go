@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 // Collaborator groups and per-group bosses (#71 §2, §4).
@@ -29,13 +31,6 @@ import (
 //
 // With no groups every role is internal, bossesFor is the global list, and
 // all of this reduces to the behaviour from before groups.
-
-// migrateGroups adds the groups table (additive). revoked_at is set when the
-// group is revoked; its roles are revoked at the same time.
-func migrateGroups(db *sql.DB) error {
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS groups(prefix TEXT PRIMARY KEY, boss_role TEXT NOT NULL, created_at TEXT NOT NULL, revoked_at TEXT)`)
-	return err
-}
 
 // group is one row of the groups table.
 type group struct {
@@ -245,7 +240,7 @@ func (s *Server) listGroups() ([]group, error) {
 }
 
 func validGroupPrefix(prefix string) bool {
-	return validRole(prefix) && !strings.HasPrefix(prefix, "/") && !strings.HasSuffix(prefix, "/") && !strings.Contains(prefix, "//")
+	return wire.ValidRole(prefix) && !strings.HasPrefix(prefix, "/") && !strings.HasSuffix(prefix, "/") && !strings.Contains(prefix, "//")
 }
 
 var errNoGroup = errors.New("no such group")
@@ -295,7 +290,7 @@ func (s *Server) adminGroupsAPI(w http.ResponseWriter, r *http.Request, prefix s
 		if req.BossRole == "" {
 			req.BossRole = prefix + "/boss"
 		}
-		if !validRole(req.BossRole) || reservedRole(req.BossRole) {
+		if !wire.ValidRole(req.BossRole) || reservedRole(req.BossRole) {
 			http.Error(w, "invalid boss_role", 400)
 			return
 		}

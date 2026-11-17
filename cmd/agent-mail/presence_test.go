@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/cli"
+	"github.com/sandcorporation/agent-mail/internal/store"
 )
 
 // presenceServer is slotServer with the lease derived from presence settings:
@@ -334,7 +337,7 @@ func TestPresenceSchemaOnSlotsDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
-		if err = initSchema(db); err != nil {
+		if err = store.Init(db); err != nil {
 			t.Fatalf("schema run %d: %v", i, err)
 		}
 	}
@@ -400,7 +403,7 @@ func TestStatusCommand(t *testing.T) {
 		{"slot", "heartbeat", "--last-turn-at", "noon"},
 		{"status", "b", "c"},
 	} {
-		if r := h.run(nil, args...); r.code != exitUsage {
+		if r := h.run(nil, args...); r.code != cli.ExitUsage {
 			t.Fatalf("%v: %d %s", args, r.code, r.stderr)
 		}
 	}

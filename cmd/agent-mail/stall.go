@@ -9,6 +9,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/config"
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 // Stall notices.
@@ -45,7 +48,7 @@ func reservedRole(name string) bool {
 	if isSystemSender(name) {
 		return true
 	}
-	base, _, ok := splitSlot(name)
+	base, _, ok := wire.SplitSlot(name)
 	return ok && isSystemSender(base)
 }
 
@@ -75,7 +78,7 @@ func configureStall(s *Server, getenv func(string) string) error {
 		{"LABEL_STALL", &s.labelStall, time.Second, "10m"},
 		{"PERMISSION_TTL", &s.permissionTTL, time.Second, "10m"},
 	} {
-		v, from := envAliasFrom(getenv, d.name)
+		v, from := config.EnvAliasFrom(getenv, d.name)
 		if v == "" {
 			continue
 		}
@@ -86,13 +89,13 @@ func configureStall(s *Server, getenv func(string) string) error {
 		*d.dst = t
 	}
 	s.bossRoles = map[string]bool{}
-	roles, from := envAliasFrom(getenv, "BOSS_ROLES")
+	roles, from := config.EnvAliasFrom(getenv, "BOSS_ROLES")
 	for _, r := range strings.Split(roles, ",") {
 		r = strings.TrimSpace(r)
 		if r == "" {
 			continue
 		}
-		if !validRole(r) || reservedRole(r) {
+		if !wire.ValidRole(r) || reservedRole(r) {
 			return fmt.Errorf("%s: invalid role %q", from, r)
 		}
 		s.bossRoles[r] = true

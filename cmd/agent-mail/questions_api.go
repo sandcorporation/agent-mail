@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 // Questions.
@@ -52,54 +54,6 @@ const (
 	questionHubKey = "#questions"
 )
 
-func migrateQuestions(db *sql.DB) error {
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS questions(id TEXT PRIMARY KEY,asker TEXT NOT NULL,asker_base TEXT NOT NULL,questions TEXT NOT NULL,answers TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'pending',answered_by TEXT NOT NULL DEFAULT '',created_at INTEGER NOT NULL,answered_at INTEGER NOT NULL DEFAULT 0,withdrawn_at INTEGER NOT NULL DEFAULT 0,seq INTEGER NOT NULL);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_questions_seq ON questions(seq);
-CREATE INDEX IF NOT EXISTS idx_questions_asker ON questions(asker_base,created_at);
-CREATE INDEX IF NOT EXISTS idx_questions_answered ON questions(status,answered_at);`)
-	return err
-}
-
-type questionOption struct {
-	Label       string `json:"label"`
-	Description string `json:"description"`
-	Preview     string `json:"preview,omitempty"`
-}
-
-type questionItem struct {
-	Header      string           `json:"header"`
-	Question    string           `json:"question"`
-	Options     []questionOption `json:"options"`
-	MultiSelect bool             `json:"multiSelect"`
-}
-
-type questionAnswer struct {
-	Selected []string `json:"selected"`
-	Other    string   `json:"other,omitempty"`
-}
-
-// questionView is the JSON of one question. Answers, AnsweredAt and
-// WithdrawnAt are null and AnsweredBy is "" until they apply.
-type questionView struct {
-	ID          string           `json:"id"`
-	Asker       string           `json:"asker"`
-	CreatedAt   time.Time        `json:"created_at"`
-	Status      string           `json:"status"` // pending | answered | withdrawn
-	Questions   []questionItem   `json:"questions"`
-	Answers     []questionAnswer `json:"answers"`
-	AnsweredBy  string           `json:"answered_by"` // a role, or "dashboard"
-	AnsweredAt  *time.Time       `json:"answered_at"`
-	WithdrawnAt *time.Time       `json:"withdrawn_at"`
-	Seq         int64            `json:"seq"`
-	CanAnswer   bool             `json:"can_answer"` // the caller may answer it now
-
-	askerBase string
-}
-
-type questionList struct {
-	Questions []questionView `json:"questions"`
-}
-
 type questionPoll struct {
 	Questions []questionView `json:"questions"`
 	Cursor    int64          `json:"cursor"`
@@ -124,7 +78,7 @@ func scanQuestion(sc interface{ Scan(...any) error }) (questionView, error) {
 	var v questionView
 	var qs, as string
 	var created, answered, withdrawn int64
-	if err := sc.Scan(&v.ID, &v.Asker, &v.askerBase, &qs, &as, &v.Status, &v.AnsweredBy, &created, &answered, &withdrawn, &v.Seq); err != nil {
+	if err := sc.Scan(&v.ID, &v.Asker, &v.AskerBase, &qs, &as, &v.Status, &v.AnsweredBy, &created, &answered, &withdrawn, &v.Seq); err != nil {
 		return v, err
 	}
 	if err := json.Unmarshal([]byte(qs), &v.Questions); err != nil {
@@ -160,12 +114,12 @@ func loadQuestion(q queryer, id string) (questionView, error) {
 
 // mayAnswerQuestion: the asker's boss (bossesFor), never its own base.
 func (s *Server) mayAnswerQuestion(p principal, v questionView) bool {
-	return p.Base != v.askerBase && s.isBossFor(p, v.askerBase)
+	return p.Base != v.AskerBase && s.isBossFor(p, v.AskerBase)
 }
 
 // mayReadQuestion: the asker's base or the asker's boss.
 func (s *Server) mayReadQuestion(p principal, v questionView) bool {
-	return p.Base == v.askerBase || s.isBossFor(p, v.askerBase)
+	return p.Base == v.AskerBase || s.isBossFor(p, v.AskerBase)
 }
 
 func (s *Server) forCaller(p principal, v questionView) questionView {
@@ -390,7 +344,7 @@ func (s *Server) askQuestion(w http.ResponseWriter, r *http.Request, p principal
 			return e
 		}
 		subject := fmt.Sprintf("[질문] %s %s %s", id, p.Role, v.Questions[0].Header)
-		body := questionText(v) + relatedText(related)
+		body := wire.QuestionText(v) + relatedText(related)
 		for _, box := range told {
 			if e = insertSystemMail(tx, box, subject, body, id, "normal", "", now); e != nil {
 				return e
@@ -426,45 +380,6 @@ func (s *Server) publishQuestion(boxes []string) {
 		s.hub.publish(box)
 	}
 	s.hub.publish(questionHubKey)
-}
-
-// questionText is the full question with its options, for watcher mail.
-func questionText(v questionView) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s asks (%s):\n", v.Asker, v.ID)
-	for i, q := range v.Questions {
-		kind := "one choice"
-		if q.MultiSelect {
-			kind = "multiple choice"
-		}
-		fmt.Fprintf(&b, "\n%d. [%s] %s (%s)\n", i+1, q.Header, q.Question, kind)
-		for _, o := range q.Options {
-			fmt.Fprintf(&b, "   - %s", o.Label)
-			if o.Description != "" {
-				fmt.Fprintf(&b, ": %s", o.Description)
-			}
-			b.WriteString("\n")
-		}
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
-
-// answerText: one line per question, then who answered.
-func answerText(v questionView) string {
-	var b strings.Builder
-	for i, q := range v.Questions {
-		a := v.Answers[i]
-		fmt.Fprintf(&b, "%s: %s = %s", q.Header, q.Question, strings.Join(a.Selected, ", "))
-		if a.Other != "" {
-			if len(a.Selected) > 0 {
-				b.WriteString(" / ")
-			}
-			b.WriteString("기타: " + a.Other)
-		}
-		b.WriteString("\n")
-	}
-	b.WriteString("답한 쪽: " + v.AnsweredBy)
-	return b.String()
 }
 
 // answerQuestion is the answering core shared by the role endpoint and the
@@ -513,7 +428,7 @@ func (s *Server) answerQuestion(ctx context.Context, id, by string, answers []qu
 		if v, e = loadQuestion(tx, id); e != nil {
 			return e
 		}
-		body := answerText(v)
+		body := wire.AnswerText(v)
 		first := v.Questions[0].Header
 		if box, ok := mailbox(tx, v.Asker); ok {
 			if e = insertSystemMail(tx, box, fmt.Sprintf("[질문 답] %s %s", id, first), body, id, "normal", "", now); e != nil {
@@ -521,7 +436,7 @@ func (s *Server) answerQuestion(ctx context.Context, id, by string, answers []qu
 			}
 			told = append(told, box)
 		}
-		watchers, e := questionWatchers(tx, v.Asker, v.askerBase)
+		watchers, e := questionWatchers(tx, v.Asker, v.AskerBase)
 		if e != nil {
 			return e
 		}
@@ -569,7 +484,7 @@ func (s *Server) withdrawQuestion(w http.ResponseWriter, r *http.Request, p prin
 		if v, e = loadQuestion(tx, id); e != nil {
 			return e
 		}
-		if p.Base != v.askerBase {
+		if p.Base != v.AskerBase {
 			return errQuestionForbidden
 		}
 		if v.Status != "pending" {
@@ -664,7 +579,7 @@ func questionListFilter(r *http.Request) (where string, args []any, limit int, e
 func (s *Server) pollQuestions(w http.ResponseWriter, r *http.Request, p principal) {
 	var after int64
 	if raw := strings.TrimSpace(r.URL.Query().Get("after")); raw != "" {
-		n, err := parseID(raw)
+		n, err := wire.ParseID(raw)
 		if err != nil || n < 0 {
 			http.Error(w, "invalid cursor", 400)
 			return

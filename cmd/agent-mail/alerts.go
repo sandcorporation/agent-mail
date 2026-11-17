@@ -26,12 +26,6 @@ import (
 
 const alertRetainDays = 30
 
-// migrateAlerts adds the alerts table (additive).
-func migrateAlerts(db *sql.DB) error {
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS alerts(kind TEXT NOT NULL,key TEXT NOT NULL,day TEXT NOT NULL,sent_at INTEGER NOT NULL,PRIMARY KEY(kind,key,day))`)
-	return err
-}
-
 func alertDay(t time.Time) string { return t.UTC().Format("2006-01-02") }
 
 // alertDue is one alert to send: kind, the role it is about, and its text.

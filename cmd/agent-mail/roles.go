@@ -2,95 +2,21 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"errors"
-	"log"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/store"
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
-
-// Role tokens are stored as tokenHashPrefix + hex(sha256(token)), never as
-// the token itself. Tokens are high-entropy (registration asks for at least
-// 24 characters), so a fast hash is enough; comparisons stay constant time.
-// Neither tokens nor their hashes leave the server: no API response or log
-// line carries them.
-const tokenHashPrefix = "sha256:"
-
-func tokenHash(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return tokenHashPrefix + hex.EncodeToString(sum[:])
-}
 
 // tokenMatches reports whether presented is the token behind the stored hash.
 // A stored value without the hash prefix never matches: initSchema hashes
 // every such row before the server accepts requests.
 func tokenMatches(stored, presented string) bool {
-	return presented != "" && strings.HasPrefix(stored, tokenHashPrefix) && sameSecret(stored, tokenHash(presented))
-}
-
-// migrateRoleTokens upgrades the roles table in place: it adds revoked_at and
-// hashes every token that lacks the hash prefix. Before the first hash it
-// copies those plain rows to roles_plain_backup (in the same transaction), so
-// a failure part way leaves the table as it was. Rows that already carry the
-// prefix are left alone, so running it again changes nothing.
-//
-// roles_plain_backup holds plain tokens; drop it in a later release once the
-// hashed tokens are known to work.
-func migrateRoleTokens(db *sql.DB) error {
-	has, err := hasColumn(db, "roles", "revoked_at")
-	if err != nil {
-		return err
-	}
-	if !has {
-		if _, err = db.Exec(`ALTER TABLE roles ADD COLUMN revoked_at TEXT`); err != nil {
-			return err
-		}
-	}
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	rows, err := tx.Query(`SELECT role,token FROM roles WHERE substr(token,1,7)<>?`, tokenHashPrefix)
-	if err != nil {
-		return err
-	}
-	plain := map[string]string{}
-	for rows.Next() {
-		var role, token string
-		if err = rows.Scan(&role, &token); err != nil {
-			rows.Close()
-			return err
-		}
-		plain[role] = token
-	}
-	rows.Close()
-	if err = rows.Err(); err != nil {
-		return err
-	}
-	if len(plain) == 0 {
-		return nil
-	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err = tx.Exec(`CREATE TABLE IF NOT EXISTS roles_plain_backup(role TEXT PRIMARY KEY, token TEXT NOT NULL, created_at TEXT NOT NULL, backed_up_at TEXT NOT NULL)`); err != nil {
-		return err
-	}
-	if _, err = tx.Exec(`INSERT OR REPLACE INTO roles_plain_backup(role,token,created_at,backed_up_at) SELECT role,token,created_at,? FROM roles WHERE substr(token,1,7)<>?`, now, tokenHashPrefix); err != nil {
-		return err
-	}
-	for role, token := range plain {
-		if _, err = tx.Exec(`UPDATE roles SET token=? WHERE role=? AND token=?`, tokenHash(token), role, token); err != nil {
-			return err
-		}
-	}
-	if err = tx.Commit(); err != nil {
-		return err
-	}
-	log.Printf("role tokens: hashed %d plain rows; plain copies kept in roles_plain_backup", len(plain))
-	return nil
+	return presented != "" && strings.HasPrefix(stored, store.TokenHashPrefix) && sameSecret(stored, store.TokenHash(presented))
 }
 
 // roleRecord is the stored hash of role and whether it is revoked.
@@ -229,7 +155,7 @@ func (s *Server) adminRolesAPI(w http.ResponseWriter, r *http.Request, rest stri
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !validRole(role) {
+	if !wire.ValidRole(role) {
 		http.Error(w, "invalid role", 400)
 		return
 	}

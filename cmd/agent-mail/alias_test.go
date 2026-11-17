@@ -5,9 +5,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
+
+	"github.com/sandcorporation/agent-mail/internal/cli"
 )
 
 // clearNewEnv blanks the SWITCHBOARD_* client variables for CLI helper
@@ -16,28 +17,6 @@ var clearNewEnv = []string{"SWITCHBOARD_CONFIG_DIR=", "SWITCHBOARD_PROFILE=", "S
 
 func fakeEnv(m map[string]string) func(string) string {
 	return func(k string) string { return m[k] }
-}
-
-func TestEnvAliasNewWinsOldFallsBack(t *testing.T) {
-	v, from := envAliasFrom(fakeEnv(map[string]string{"SWITCHBOARD_X1": "new", "AGENT_MAIL_X1": "old"}), "X1")
-	if v != "new" || from != "SWITCHBOARD_X1" {
-		t.Fatalf("both set: %q %q", v, from)
-	}
-	if slices.Contains(oldEnvNames(), "AGENT_MAIL_X1") {
-		t.Fatal("old name recorded although the new one won")
-	}
-	v, from = envAliasFrom(fakeEnv(map[string]string{"AGENT_MAIL_X2": "old"}), "X2")
-	if v != "old" || from != "AGENT_MAIL_X2" || !slices.Contains(oldEnvNames(), "AGENT_MAIL_X2") {
-		t.Fatalf("old only: %q %q %v", v, from, oldEnvNames())
-	}
-	if v, from = envAliasFrom(fakeEnv(nil), "X3"); v != "" || from != "SWITCHBOARD_X3" {
-		t.Fatalf("neither: %q %q", v, from)
-	}
-	t.Setenv("SWITCHBOARD_X4", "real")
-	t.Setenv("AGENT_MAIL_X4", "old")
-	if envAlias("X4") != "real" {
-		t.Fatal("envAlias must read the process environment, new name first")
-	}
 }
 
 func TestServerConfigReadsBothEnvNames(t *testing.T) {
@@ -69,7 +48,7 @@ func TestHeadersAcceptBothNamesAndCountOld(t *testing.T) {
 	if c := get(map[string]string{"X-Switchboard-Role": "a"}); c != 200 {
 		t.Fatalf("new header: %d", c)
 	}
-	if n := s.oldHeaders.snapshot()["X-Agent-Mail-Role"]; n != 0 {
+	if n := s.oldHeaders.Snapshot()["X-Agent-Mail-Role"]; n != 0 {
 		t.Fatalf("new header counted as old: %d", n)
 	}
 	if c := get(map[string]string{"X-Agent-Mail-Role": "a"}); c != 200 {
@@ -79,7 +58,7 @@ func TestHeadersAcceptBothNamesAndCountOld(t *testing.T) {
 	if c := get(map[string]string{"X-Switchboard-Role": "a", "X-Agent-Mail-Role": "b"}); c != 200 {
 		t.Fatalf("both headers: %d", c)
 	}
-	if n := s.oldHeaders.snapshot()["X-Agent-Mail-Role"]; n != 1 {
+	if n := s.oldHeaders.Snapshot()["X-Agent-Mail-Role"]; n != 1 {
 		t.Fatalf("old header count=%d, want 1", n)
 	}
 
@@ -118,8 +97,8 @@ func TestDashboardWriteAcceptsBothHeaders(t *testing.T) {
 			t.Fatalf("%s refused: %d %s", h, w.Code, w.Body)
 		}
 	}
-	if s.oldHeaders.snapshot()["X-Agent-Mail-Dashboard"] != 1 {
-		t.Fatalf("dashboard count: %v", s.oldHeaders.snapshot())
+	if s.oldHeaders.Snapshot()["X-Agent-Mail-Dashboard"] != 1 {
+		t.Fatalf("dashboard count: %v", s.oldHeaders.Snapshot())
 	}
 }
 
@@ -131,34 +110,6 @@ func adminRequestWith(s *Server, method, path, body string, headers map[string]s
 	w := httptest.NewRecorder()
 	s.api(w, r)
 	return w
-}
-
-func TestProfileDirFallsBackToOldName(t *testing.T) {
-	cfg := t.TempDir()
-	newDir, oldDir := filepath.Join(cfg, "switchboard"), filepath.Join(cfg, "agent-mail")
-	write := func(dir, name string) {
-		t.Helper()
-		if err := os.MkdirAll(dir, 0700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), []byte("{}"), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if got := profilePath(cfg, "w.json"); got != filepath.Join(newDir, "w.json") {
-		t.Fatalf("none: %s", got)
-	}
-	write(oldDir, "w.json")
-	if got := profilePath(cfg, "w.json"); got != filepath.Join(oldDir, "w.json") {
-		t.Fatalf("old only: %s", got)
-	}
-	write(newDir, "w.json")
-	if got := profilePath(cfg, "w.json"); got != filepath.Join(newDir, "w.json") {
-		t.Fatalf("both: %s", got)
-	}
-	if got := profilePath(cfg, "other.json"); got != filepath.Join(newDir, "other.json") {
-		t.Fatalf("new profile: %s", got)
-	}
 }
 
 // TestCLIProfileOldAndNewEnv runs the CLI with the profile picked by the old
@@ -179,7 +130,7 @@ func TestCLIProfileOldAndNewEnv(t *testing.T) {
 	if out := h.mustRun(nil, "--help"); !strings.Contains(out, "Usage: agent-mail [--profile") {
 		t.Fatalf("help under the old name: %s", out)
 	}
-	if r := h.run([]string{"SWITCHBOARD_PROFILE=nope", "AGENT_MAIL_PROFILE=pa"}, "outbox"); r.code == exitOK {
+	if r := h.run([]string{"SWITCHBOARD_PROFILE=nope", "AGENT_MAIL_PROFILE=pa"}, "outbox"); r.code == cli.ExitOK {
 		t.Fatal("the new variable must win over the old one")
 	}
 
@@ -223,16 +174,5 @@ func TestSystemSendersBothReserved(t *testing.T) {
 	}
 	if systemSender != "switchboard/system" {
 		t.Fatalf("new mail must be sent as switchboard/system, got %s", systemSender)
-	}
-}
-
-func TestProgNameFollowsInvocation(t *testing.T) {
-	old := os.Args
-	defer func() { os.Args = old }()
-	for arg0, want := range map[string]string{"/usr/local/bin/agent-mail": "agent-mail", "agent-mail.exe": "agent-mail", "/usr/local/bin/switchboard": "switchboard", "switchboard.exe": "switchboard", "agent-mail.test": "switchboard"} {
-		os.Args = []string{filepath.FromSlash(arg0)}
-		if got := progName(); got != want {
-			t.Errorf("%s: %s, want %s", arg0, got, want)
-		}
 	}
 }

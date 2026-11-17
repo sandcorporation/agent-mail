@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/cli"
 )
 
 type pollResult struct {
@@ -236,10 +238,10 @@ func TestEventsCommand(t *testing.T) {
 	h := newCLIHarnessWith(t, func(s *Server) { s.pollMax = 2 * time.Second })
 	h.configure(nil, "b")
 	r := h.run(nil, "events", "--timeout", "0")
-	if r.code != exitTimeout || r.stdout != "" || !strings.Contains(r.stderr, "cursor 0") {
+	if r.code != cli.ExitTimeout || r.stdout != "" || !strings.Contains(r.stderr, "cursor 0") {
 		t.Fatalf("empty: code=%d stdout=%q stderr=%s", r.code, r.stdout, r.stderr)
 	}
-	if r := h.run(nil, "events", "--timeout", "0", "--json"); r.code != exitTimeout || r.stdout != `{"events":[],"cursor":0}` {
+	if r := h.run(nil, "events", "--timeout", "0", "--json"); r.code != cli.ExitTimeout || r.stdout != `{"events":[],"cursor":0}` {
 		t.Fatalf("empty json: code=%d stdout=%q", r.code, r.stdout)
 	}
 	call(h.s, "POST", "/api/messages", "secret-a", map[string]any{"recipient": "b", "subject": "one\nline", "body": "x", "task_id": "t-1"}, "")
@@ -262,16 +264,16 @@ func TestEventsCommand(t *testing.T) {
 	}
 	// Server cap: a long --timeout ends at the cap with exit 3.
 	start := time.Now()
-	if r := h.run(nil, "events", "--after", "3", "--timeout", "600"); r.code != exitTimeout || time.Since(start) > 10*time.Second {
+	if r := h.run(nil, "events", "--after", "3", "--timeout", "600"); r.code != cli.ExitTimeout || time.Since(start) > 10*time.Second {
 		t.Fatalf("capped: code=%d stderr=%s", r.code, r.stderr)
 	}
 	for _, args := range [][]string{{"events", "--after", "x"}, {"events", "--timeout", "-1"}, {"events", "--bogus"}} {
-		if r := h.run(nil, args...); r.code != exitUsage {
+		if r := h.run(nil, args...); r.code != cli.ExitUsage {
 			t.Fatalf("%v: code=%d", args, r.code)
 		}
 	}
 	h.configure([]string{"--profile", "wrong"}, "b")
-	if r := h.run([]string{"AGENT_MAIL_TOKEN=bad"}, "--profile", "wrong", "events", "--timeout", "0"); r.code != exitError {
+	if r := h.run([]string{"AGENT_MAIL_TOKEN=bad"}, "--profile", "wrong", "events", "--timeout", "0"); r.code != cli.ExitError {
 		t.Fatalf("bad credential: code=%d stderr=%s", r.code, r.stderr)
 	}
 	if out := h.mustRun(nil, "events", "--help"); !strings.Contains(out, "--after") || !strings.Contains(out, "--timeout") {

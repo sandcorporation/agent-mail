@@ -62,7 +62,7 @@ func TestMetricsFirstReplyFollowsAnsweredRule(t *testing.T) {
 	_, answered, total := answeredFixture(t, s, clock.now().Add(-time.Hour))
 	fr := mustMetrics(t, s, 7).FirstReply
 	if fr.Count != total || fr.Answered != answered || fr.Unanswered != total-answered {
-		t.Fatalf("first_reply %+v, want count %d answered %d", fr.latencyStats, total, answered)
+		t.Fatalf("first_reply %+v, want count %d answered %d", fr.LatencyStats, total, answered)
 	}
 }
 
