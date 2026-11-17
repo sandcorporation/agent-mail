@@ -171,6 +171,9 @@ func initSchema(db *sql.DB) error {
 	if e = migratePresenceLog(db); e != nil {
 		return e
 	}
+	if e = migrateAlerts(db); e != nil {
+		return e
+	}
 	if e = migratePermissions(db); e != nil {
 		return e
 	}
