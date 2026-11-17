@@ -1,4 +1,4 @@
-# Deployment image: built for linux/amd64 on a GitHub-hosted runner and pushed to GHCR as
+# Deployment image: a multi-arch manifest list (linux/amd64, linux/arm64) built on a GitHub-hosted runner and pushed to GHCR as
 #   ghcr.io/sandcorporation/agent-mail:<40-character commit sha>
 # and copied to the new name with the same tag:
 #   ghcr.io/sandcorporation/switchboard:<40-character commit sha>
@@ -35,6 +35,9 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm64
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
@@ -49,7 +52,7 @@ jobs:
         with:
           context: .
           file: Dockerfile
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: true
           provenance: false
           sbom: false
@@ -61,6 +64,7 @@ jobs:
             VERSION=${{ steps.ver.outputs.short }}
           cache-from: type=registry,ref=${{ env.IMAGE_REPO }}:buildcache
           cache-to: type=registry,ref=${{ env.IMAGE_REPO }}:buildcache,mode=max
+      # imagetools create copies the whole manifest list, so the new name is multi-arch too.
       - name: Copy to the new image name
         continue-on-error: true
         run: docker buildx imagetools create --tag "$NEW_IMAGE_REPO:$GITHUB_SHA" "$IMAGE_REPO:$GITHUB_SHA"
