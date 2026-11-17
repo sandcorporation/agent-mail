@@ -89,7 +89,28 @@ Nothing deploys until such a job exists. Host-specific values are not in this re
 
 ### Protected administrator dashboard
 
-The dashboard shows all messages, sessions and registered role names, and lets the administrator answer questions, edit question settings and revoke or restore roles (설정 tab, 역할 table: 끊기 / 되살리기, each behind a confirm). Its `/api/admin/*` endpoints return `401` unless `SWITCHBOARD_ADMIN_PROXY_TOKEN` is configured and the request includes the matching `X-Switchboard-Admin` header. The browser does not know this value. Configure a separate random secret in the private deployment `.env` and in the service's private reverse-proxy configuration; do not reuse any role or Authelia credential. The proxy must authenticate the browser session with Authelia before forwarding and must overwrite (never pass through) any incoming `X-Switchboard-Admin` header with the configured secret. Keep the backend bound to loopback/private networking so clients cannot bypass the proxy boundary. Requests without the secret cannot use admin APIs. Admin writes (`PUT`, `POST`, `DELETE`) additionally need `Content-Type: application/json` and `X-Switchboard-Dashboard: 1`, and `Sec-Fetch-Site`, when the browser sends it, must be `same-origin`; otherwise they get `403`. This is CSRF protection: the proxy authenticates by cookie, and the custom header forces a CORS preflight that a cross-site page cannot pass. `GET` needs none of these.
+The dashboard shows all messages, sessions and registered role names, and lets the administrator answer questions, edit question settings and revoke or restore roles (설정 tab, 역할 table: 끊기 / 되살리기, each behind a confirm). Who may use it is set by `SWITCHBOARD_ADMIN_AUTH`:
+
+| `SWITCHBOARD_ADMIN_AUTH` | `SWITCHBOARD_ADMIN_PROXY_TOKEN` | Admin access |
+|---|---|---|
+| unset | unset | Denied (default). `/api/admin/*` returns `401`; the page is the login form, which signs no one in. |
+| unset | set | Transition rule: the proxy secret below, exactly as before admin login. No login page; the header shows 프록시. A deprecation line is logged at start. |
+| `builtin` | ignored | Name, password and TOTP code on the login form. |
+
+`oidc` and `proxy` are reserved for later versions; any other value stops the server at start.
+
+Built-in admins live in the server database. Run the CLI inside the container, where `DB_PATH` already points at it:
+
+```sh
+docker compose exec agent-mail switchboard admin create alice   # prompts for the password twice (or reads the first line of stdin); prints the otpauth:// URI and secret once
+docker compose exec agent-mail switchboard admin passwd alice
+docker compose exec agent-mail switchboard admin totp-reset alice  # new secret, printed once
+docker compose exec agent-mail switchboard admin disable alice
+```
+
+Passwords need at least 12 characters and are stored as argon2id hashes. `passwd`, `totp-reset` and `disable` end that admin's sessions; `--json` prints `{"name","action"[,"secret","otpauth_uri"]}`. `POST /auth/login` (`{"name","password","code"}`) accepts the TOTP code (RFC 6238: SHA-1, 30 s, 6 digits) of the current step ±1, never the same step twice, and allows 5 failures per 15 minutes per name and per client IP; every failure, including the rate limit, is the same `401 login failed`. Success sets the `sb_session` cookie (`HttpOnly`, `SameSite=Strict`, `Secure` unless `SWITCHBOARD_INSECURE_COOKIE=1` for plain-http local use). Sessions (`admin_sessions`, only a SHA-256 of the cookie is stored) last 12 hours from the last request. `POST /auth/logout` ends the session; `GET /api/admin/me` returns `{"user","mode"}`. Login and logout need the same write guard as admin writes (below). Behind a reverse proxy every client has the proxy's address; set `SWITCHBOARD_TRUST_FORWARDED=1` when the proxy sets `X-Forwarded-For` (its last entry is then the client IP), and only then.
+
+The rest of this section is the transition rule: `/api/admin/*` returns `401` unless `SWITCHBOARD_ADMIN_PROXY_TOKEN` is configured and the request includes the matching `X-Switchboard-Admin` header. The browser does not know this value. Configure a separate random secret in the private deployment `.env` and in the service's private reverse-proxy configuration; do not reuse any role or Authelia credential. The proxy must authenticate the browser session with Authelia before forwarding and must overwrite (never pass through) any incoming `X-Switchboard-Admin` header with the configured secret. Keep the backend bound to loopback/private networking so clients cannot bypass the proxy boundary. Requests without the secret cannot use admin APIs. Admin writes (`PUT`, `POST`, `DELETE`) additionally need `Content-Type: application/json` and `X-Switchboard-Dashboard: 1`, and `Sec-Fetch-Site`, when the browser sends it, must be `same-origin`; otherwise they get `403`. This is CSRF protection: the proxy authenticates by cookie, and the custom header forces a CORS preflight that a cross-site page cannot pass. `GET` needs none of these.
 
 The 진행 tab (`#progress`) is the first tab and opens when the address has no hash (other hashes such as `#mail`, `#metrics`, `#q=<id>` work as before). It reads `GET /api/admin/progress` and shows one card per service (the part of a role before the first `/`), most recently active first: a badge with the worst live session state (오류 > 막힘 > 바쁨 > 유휴, 「세션 없음」 when none), 「마지막 소식」 (subject and age of the last report to a boss, else the last activity), the live sessions (role · state · how long · shortened folder), 「답 없는 지시」 (open boss directives with their age; older than `SWITCHBOARD_ALERT_PENDING` highlighted and counted on the tab) and 「진행 중 task」. Clicking a directive opens the 메일 tab on that one message; clicking a task opens it filtered to that task. The 메일 tab has a task filter (`task=`, exact match) next to the thread filter; `GET /api/admin/messages` also takes `id=`.
 

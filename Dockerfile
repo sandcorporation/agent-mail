@@ -10,7 +10,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /agent-mail ./cmd/agent-mail
 FROM alpine:3.22
-RUN addgroup -S agentmail && adduser -S -G agentmail agentmail && mkdir -p /data && chown agentmail:agentmail /data
+RUN addgroup -S agentmail && adduser -S -G agentmail agentmail && mkdir -p /data && chown agentmail:agentmail /data && ln -s agent-mail /usr/local/bin/switchboard
 COPY --from=build /agent-mail /usr/local/bin/agent-mail
 USER agentmail
 ENV DB_PATH=/data/mail.db LISTEN_ADDR=:8080

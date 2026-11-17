@@ -175,6 +175,9 @@ var commands = []command{
 			{"--status", "STATUS", "list: only pending, answered or withdrawn questions"},
 			optJSON, optProfile,
 		}},
+	{name: "admin", args: "ACTION NAME", nargs: 2, synopsis: "(ACTION: create | passwd | totp-reset | disable) NAME",
+		summary: "Manage built-in dashboard admins in the server database (DB_PATH; run inside the server container); create and passwd read the password from the terminal or the first line of stdin",
+		options: []option{optJSON}},
 	{name: "version", summary: "Show build version"},
 }
 
@@ -291,6 +294,8 @@ func dispatch(args []string) (int, error) {
 		return exitOK, nil
 	case "register":
 		return cliRegister(p)
+	case "admin":
+		return cliAdmin(p, os.Stdin, os.Stdout, os.Stderr)
 	case "config":
 		if p.pos[0] != "set" {
 			return 0, usagef("config: unknown subcommand %q (only 'set')", p.pos[0])
