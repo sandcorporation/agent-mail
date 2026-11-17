@@ -56,6 +56,7 @@ type Server struct {
 	labelStall       time.Duration    // AGENT_MAIL_LABEL_STALL; 0 means defaultLabelStall
 	permissionTTL    time.Duration    // AGENT_MAIL_PERMISSION_TTL; 0 means defaultPermissionTTL
 	bossRoles        map[string]bool  // AGENT_MAIL_BOSS_ROLES; may answer any permission request
+	discord          *discordNotifier // AGENT_MAIL_DISCORD_WEBHOOK; nil sends no question notices
 }
 
 var version = "dev"
@@ -99,6 +100,7 @@ func runServer() {
 	if e = configureStall(s, os.Getenv); e != nil {
 		log.Fatal(e)
 	}
+	configureDiscord(s, os.Getenv)
 	for _, pair := range strings.Split(os.Getenv("AGENT_MAIL_TOKENS"), ",") {
 		p := strings.SplitN(strings.TrimSpace(pair), "=", 2)
 		if len(p) == 2 && p[0] != "" && p[1] != "" {
