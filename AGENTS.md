@@ -6,3 +6,10 @@
 - Render user-provided content as text; do not inject it as HTML.
 - Run `go test ./...` for Go changes. GitHub Actions is the CI and release system.
 - Keep deployment private and avoid modifying unrelated services.
+
+## Package map
+
+- `cmd/agent-mail` holds `main` only. The server is assembled in `internal/server` (settings, router, role auth, admin guard, sweep).
+- Domain packages: `identity` (roles, slots, groups, invites), `adminauth`, `mail`, `presence`, `asks` (questions, decisions, permissions), `insight` (metrics, alerts, Discord), `dashboard` (admin page, collaborators view). Leaves: `cli`, `wire`, `store`, `config`.
+- Domain packages never import `server` or `dashboard`. Pass cross-domain effects in as functions instead of importing upward. Read env and header names through `internal/config`; do not hard-code a prefix.
+- Full table and import rules: ARCHITECTURE.md, "Package map".
