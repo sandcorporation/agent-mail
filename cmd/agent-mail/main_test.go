@@ -151,7 +151,7 @@ func TestDashboardUsesSameOriginAndNoRoleCredentials(t *testing.T) {
 			t.Fatalf("dashboard uses %s", banned)
 		}
 	}
-	for _, want := range []string{`lang="ko"`, "열기", "닫기", "스레드 보기", "aria-expanded"} {
+	for _, want := range []string{`lang="ko"`, "열기", "닫기", "스레드 보기", "aria-expanded", "긴급", "m.priority==='urgent'"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("dashboard missing %q", want)
 		}
