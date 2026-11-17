@@ -609,30 +609,39 @@ func (s *Server) queryQuestions(p principal, q string, args ...any) ([]questionV
 
 func (s *Server) listQuestions(w http.ResponseWriter, r *http.Request, p principal) {
 	q, args := s.visibleQuestions(p)
-	switch st := r.URL.Query().Get("status"); st {
-	case "":
-	case "pending", "answered", "withdrawn":
-		q += ` AND status=?`
-		args = append(args, st)
-	default:
-		http.Error(w, "status must be pending, answered or withdrawn", 400)
+	where, wargs, limit, err := questionListFilter(r)
+	if err != nil {
+		questionError(w, err)
 		return
 	}
-	limit := defaultQuestionList
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil || n < 1 {
-			http.Error(w, "invalid limit", 400)
-			return
-		}
-		limit = min(n, maxQuestionList)
-	}
-	out, err := s.queryQuestions(p, q+` ORDER BY created_at DESC, seq DESC LIMIT ?`, append(args, limit)...)
+	out, err := s.queryQuestions(p, q+where+` ORDER BY created_at DESC, seq DESC LIMIT ?`, append(append(args, wargs...), limit)...)
 	if err != nil {
 		http.Error(w, "could not list questions", 500)
 		return
 	}
 	writeJSON(w, questionList{Questions: out})
+}
+
+// questionListFilter reads ?status= and ?limit= of a question list: an
+// " AND status=?" clause (empty without a status) and the row limit. A bad
+// value is a questionInputError.
+func questionListFilter(r *http.Request) (where string, args []any, limit int, err error) {
+	switch st := r.URL.Query().Get("status"); st {
+	case "":
+	case "pending", "answered", "withdrawn":
+		where, args = ` AND status=?`, []any{st}
+	default:
+		return "", nil, 0, badQuestion("status must be pending, answered or withdrawn")
+	}
+	limit = defaultQuestionList
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 {
+			return "", nil, 0, badQuestion("invalid limit")
+		}
+		limit = min(n, maxQuestionList)
+	}
+	return where, args, limit, nil
 }
 
 // pollQuestions answers at once with the questions visible to p whose seq is
