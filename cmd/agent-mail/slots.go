@@ -359,6 +359,9 @@ func freeNumber(tx *sql.Tx, base string, now int64, skip map[int]bool) (int, err
 		if leased[n] || skip[n] || roleExists(tx, slotRole(base, n)) {
 			continue
 		}
+		if err = logPresenceOffline(tx, base, n, fromMS(now)); err != nil {
+			return 0, err
+		}
 		if _, err = tx.Exec(`DELETE FROM slots WHERE base=? AND number=?`, base, n); err != nil {
 			return 0, err
 		}
@@ -405,6 +408,9 @@ func (s *Server) claimSlot(ctx context.Context, base string, req slotRequest, ta
 			}
 			g.Reclaimed = has && own.Number == 1
 			if has && own.Number != 1 {
+				if err = logPresenceOffline(tx, base, own.Number, now); err != nil {
+					return err
+				}
 				if _, err = tx.Exec(`DELETE FROM slots WHERE base=? AND number=?`, base, own.Number); err != nil {
 					return err
 				}
@@ -460,6 +466,9 @@ func displaceFirst(tx *sql.Tx, base string, now int64) (*slotView, error) {
 		return nil, err
 	}
 	drop := func() (*slotView, error) {
+		if err := logPresenceOffline(tx, base, 1, fromMS(now)); err != nil {
+			return nil, err
+		}
 		_, err := tx.Exec(`DELETE FROM slots WHERE base=? AND number=1`, base)
 		return nil, err
 	}
@@ -475,6 +484,9 @@ func displaceFirst(tx *sql.Tx, base string, now int64) (*slotView, error) {
 	}
 	// Renumber in place so every column (presence included) moves along.
 	if _, err = tx.Exec(`UPDATE slots SET number=? WHERE base=? AND number=1`, n, base); err != nil {
+		return nil, err
+	}
+	if err = movePresenceLog(tx, base, 1, n, fromMS(now)); err != nil {
 		return nil, err
 	}
 	cur.Number, cur.Role = n, slotRole(base, n)
@@ -513,6 +525,11 @@ func (s *Server) renewSlot(ctx context.Context, base string, req slotRequest, re
 		}
 		if _, err = tx.Exec(`UPDATE slots SET `+set+` WHERE base=? AND number=?`, append(args, base, own.Number)...); err != nil {
 			return err
+		}
+		if release {
+			if err = logPresenceOffline(tx, base, own.Number, now); err != nil {
+				return err
+			}
 		}
 		if !release {
 			if err = applyPresence(tx, base, own.Number, req, now, false); err != nil {

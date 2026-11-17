@@ -163,7 +163,7 @@ func (q slotRequest) presence() (last time.Time, err error) {
 
 // applyPresence records a report on a slot row. A fresh claim (register or
 // takeover) starts from the given fields only; a heartbeat keeps fields it
-// does not send.
+// does not send. A change of state is written to presence_log.
 func applyPresence(tx *sql.Tx, base string, number int, req slotRequest, now time.Time, fresh bool) error {
 	last, err := req.presence()
 	if err != nil {
@@ -185,8 +185,10 @@ func applyPresence(tx *sql.Tx, base string, number int, req slotRequest, now tim
 		set += `,last_turn_at=?`
 		args = append(args, ms(last))
 	}
-	_, err = tx.Exec(`UPDATE slots SET `+set+` WHERE base=? AND number=?`, append(args, base, number)...)
-	return err
+	if _, err = tx.Exec(`UPDATE slots SET `+set+` WHERE base=? AND number=?`, append(args, base, number)...); err != nil {
+		return err
+	}
+	return logPresenceReport(tx, base, number, now)
 }
 
 // presenceView is one session in GET /api/presence. It never carries tokens.

@@ -57,6 +57,7 @@ type Server struct {
 	permissionTTL    time.Duration    // AGENT_MAIL_PERMISSION_TTL; 0 means defaultPermissionTTL
 	bossRoles        map[string]bool  // AGENT_MAIL_BOSS_ROLES; may answer any permission request
 	discord          *discordNotifier // AGENT_MAIL_DISCORD_WEBHOOK; nil sends no question notices
+	alerts           *alertThresholds // AGENT_MAIL_ALERT_*; nil means defaultAlertThresholds
 }
 
 var version = "dev"
@@ -98,6 +99,9 @@ func runServer() {
 		log.Fatal(e)
 	}
 	if e = configureStall(s, os.Getenv); e != nil {
+		log.Fatal(e)
+	}
+	if e = configureAlerts(s, os.Getenv); e != nil {
 		log.Fatal(e)
 	}
 	configureDiscord(s, os.Getenv)
@@ -162,6 +166,9 @@ func initSchema(db *sql.DB) error {
 		return e
 	}
 	if e = migratePresence(db); e != nil {
+		return e
+	}
+	if e = migratePresenceLog(db); e != nil {
 		return e
 	}
 	if e = migratePermissions(db); e != nil {
@@ -266,6 +273,10 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	}
 	if path == "presence" {
 		s.presenceAPI(w, r)
+		return
+	}
+	if path == "metrics" {
+		s.metricsAPI(w, r, s.isBoss(who))
 		return
 	}
 	if path == "slots" || strings.HasPrefix(path, "slots/") {
@@ -385,6 +396,8 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, out)
 	case "presence":
 		s.presenceAPI(w, r)
+	case "metrics":
+		s.metricsAPI(w, r, true)
 	case "messages":
 		adminList(w, r, s.db)
 	case "decisions":

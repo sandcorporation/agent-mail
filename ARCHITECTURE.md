@@ -34,6 +34,12 @@ A message to `label:<base>/<label>` is resolved inside the send transaction: if 
 
 Labels are scoped to a base because a base token can register any label for its own slots; the sender names the base, so a label can only ever be collected by sessions holding that base's token.
 
+## Presence history and metrics
+
+`slots` holds only the current state, so `presence_log(base, number, role, state, started_at, ended_at)` (Unix ms, `ended_at` NULL for the open row; added by `initSchema`, additive) keeps the stretches. `applyPresence` ends with `logPresenceReport`, which compares the slot's effective state (`unknown` when none was reported) with the open row and, only when they differ, closes it and opens a new one (`logPresenceState`). Going offline goes through `logPresenceOffline`: the sweep on a lapsed lease (at `lease_until`), a release, and the slot-row deletions in `freeNumber`, takeover and `displaceFirst`; a slot with no open row is left alone. Takeover's renumbering calls `movePresenceLog` so the displaced session's open state continues at its new number. The sweep prunes closed rows that ended more than 60 days ago (`prunePresenceLog`).
+
+`Server.metrics(days)` (metrics.go) builds the report served at `GET /api/metrics` (boss roles) and `GET /api/admin/metrics`. The parts are separate so the alert sweep can reuse them: `Server.pendingAges(now, threshold)`, `Server.currentSessionStates(now)`, `Server.sessionStateTime(from, to)`, and the pure `firstReplies` / `threadRoundTrips` over `windowMail(from)`. Mail is grouped by base (`baseResolver`: `baseOf`, else the part before `-N`), so any numbered slot of a base answers for it. `created_at` is RFC 3339 text with a variable fraction, so the window is cut on parsed times rather than in SQL. Alert thresholds come from `configureAlerts` / `Server.alertLimits()`.
+
 ## Stall notices
 
 One goroutine started by `runServer` calls `Server.sweep` every `AGENT_MAIL_SWEEP_INTERVAL` (30s) and stops when the server's `done` channel closes; shutdown waits for it before closing the database. `sweep` is a plain function on the server clock so tests drive it directly. It sends two kinds of ordinary (`normal`) mail from the system sender `agent-mail/system`:
