@@ -41,8 +41,10 @@ type Server struct {
 	adminProxyToken string
 	hub             mailHub
 	eventKeepAlive  time.Duration
-	pollMax         time.Duration // cap on a long poll's wait; 0 means defaultPollMax
-	done            chan struct{} // closed on shutdown; ends event streams
+	pollMax         time.Duration    // cap on a long poll's wait; 0 means defaultPollMax
+	done            chan struct{}    // closed on shutdown; ends event streams
+	slotLease       time.Duration    // slot lease length; 0 means defaultSlotLease
+	clock           func() time.Time // nil means time.Now; tests move time forward
 }
 
 var version = "dev"
@@ -72,6 +74,13 @@ func runServer() {
 			log.Fatal("AGENT_MAIL_POLL_MAX must be a positive whole number of seconds such as 55")
 		}
 		s.pollMax = time.Duration(n) * time.Second
+	}
+	if v := os.Getenv("AGENT_MAIL_SLOT_LEASE"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < time.Second {
+			log.Fatal("AGENT_MAIL_SLOT_LEASE must be a duration of at least 1s such as 3m")
+		}
+		s.slotLease = d
 	}
 	for _, pair := range strings.Split(os.Getenv("AGENT_MAIL_TOKENS"), ",") {
 		p := strings.SplitN(strings.TrimSpace(pair), "=", 2)
@@ -115,7 +124,7 @@ func runServer() {
 // initSchema creates the tables when missing and upgrades databases created by
 // older versions in place. It is safe to run on every start.
 func initSchema(db *sql.DB) error {
-	if _, e := db.Exec(`PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT,sender TEXT NOT NULL,recipient TEXT NOT NULL,subject TEXT NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL,task_id TEXT,thread_id INTEGER,reply_to INTEGER,status TEXT NOT NULL DEFAULT 'pending',idem TEXT,priority TEXT NOT NULL DEFAULT 'normal', UNIQUE(sender,idem)); CREATE INDEX IF NOT EXISTS idx_recipient ON messages(recipient,id); CREATE INDEX IF NOT EXISTS idx_sender ON messages(sender,id); CREATE TABLE IF NOT EXISTS role_states(role TEXT NOT NULL,message_id INTEGER NOT NULL,status TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(role,message_id)); CREATE TABLE IF NOT EXISTS roles(role TEXT PRIMARY KEY, token TEXT NOT NULL, created_at TEXT NOT NULL);`); e != nil {
+	if _, e := db.Exec(`PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT,sender TEXT NOT NULL,recipient TEXT NOT NULL,subject TEXT NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL,task_id TEXT,thread_id INTEGER,reply_to INTEGER,status TEXT NOT NULL DEFAULT 'pending',idem TEXT,priority TEXT NOT NULL DEFAULT 'normal', UNIQUE(sender,idem)); CREATE INDEX IF NOT EXISTS idx_recipient ON messages(recipient,id); CREATE INDEX IF NOT EXISTS idx_sender ON messages(sender,id); CREATE TABLE IF NOT EXISTS role_states(role TEXT NOT NULL,message_id INTEGER NOT NULL,status TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(role,message_id)); CREATE TABLE IF NOT EXISTS roles(role TEXT PRIMARY KEY, token TEXT NOT NULL, created_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS slots(base TEXT NOT NULL,number INTEGER NOT NULL,machine TEXT NOT NULL,directory TEXT NOT NULL,session_id TEXT NOT NULL DEFAULT '',label TEXT NOT NULL DEFAULT '',parent TEXT NOT NULL DEFAULT '',registered_at INTEGER NOT NULL,lease_until INTEGER NOT NULL,PRIMARY KEY(base,number),UNIQUE(base,machine,directory));`); e != nil {
 		return e
 	}
 	has, e := hasColumn(db, "messages", "priority")
@@ -179,17 +188,11 @@ func secureHeaders(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+// auth returns the mailbox name of an authenticated request (see authenticate).
 func (s *Server) auth(r *http.Request) (string, bool) {
-	t := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	expected := r.Header.Get("X-Agent-Mail-Role")
-	var role string
-	if t == "" || expected == "" || !validRole(expected) {
-		return "", false
-	}
-	if s.db.QueryRow(`SELECT role FROM roles WHERE token=?`, t).Scan(&role) == nil && role == expected {
-		return role, true
-	}
-	return "", false
+	p, ok := s.authenticate(r)
+	return p.Role, ok
 }
 func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/api/admin/") {
@@ -200,13 +203,18 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		s.register(w, r)
 		return
 	}
-	role, ok := s.auth(r)
+	who, ok := s.authenticate(r)
 	if !ok {
 		http.Error(w, "unauthorized", 401)
 		return
 	}
+	role := who.Role
 	w.Header().Set("Content-Type", "application/json")
 	path := strings.TrimPrefix(r.URL.Path, "/api/")
+	if path == "slots" || strings.HasPrefix(path, "slots/") {
+		s.slotAPI(w, r, who, strings.TrimPrefix(strings.TrimPrefix(path, "slots"), "/"))
+		return
+	}
 	if path == "messages" {
 		switch r.Method {
 		case "POST":
@@ -286,6 +294,13 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		writeJSON(w, roles)
+	case "slots":
+		out, err := s.activeSlots("")
+		if err != nil {
+			http.Error(w, "query failed", 500)
+			return
+		}
+		writeJSON(w, out)
 	case "messages":
 		adminList(w, r, s.db)
 	default:
@@ -296,6 +311,9 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 func adminList(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	q, status, role, box := strings.TrimSpace(r.URL.Query().Get("q")), r.URL.Query().Get("status"), r.URL.Query().Get("role"), r.URL.Query().Get("box")
 	thread := strings.TrimSpace(r.URL.Query().Get("thread"))
+	if mb, ok := mailbox(db, role); ok {
+		role = mb
+	}
 	if box != "inbox" && box != "outbox" {
 		box = "all"
 	}
@@ -420,11 +438,12 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request, role string) {
 		return
 	}
 	m.Priority = priority
-	var allowed int
-	if s.db.QueryRow(`SELECT 1 FROM roles WHERE role=?`, m.Recipient).Scan(&allowed) != nil {
+	box, ok := mailbox(s.db, m.Recipient)
+	if !ok {
 		http.Error(w, "unknown recipient role", 403)
 		return
 	}
+	m.Recipient = box
 	if m.Recipient == role { /* allowed */
 	}
 	key := r.Header.Get("Idempotency-Key")
