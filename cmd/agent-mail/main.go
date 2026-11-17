@@ -52,6 +52,10 @@ type Server struct {
 	presenceMissed   int              // heartbeats a session may miss; 0 means defaultPresenceMissed
 	presenceRetain   *time.Duration   // how long offline sessions stay listed; nil means defaultPresenceRetain
 	clock            func() time.Time // nil means time.Now; tests move time forward
+	sweepEvery       time.Duration    // AGENT_MAIL_SWEEP_INTERVAL; 0 means defaultSweepInterval
+	labelStall       time.Duration    // AGENT_MAIL_LABEL_STALL; 0 means defaultLabelStall
+	permissionTTL    time.Duration    // AGENT_MAIL_PERMISSION_TTL; 0 means defaultPermissionTTL
+	bossRoles        map[string]bool  // AGENT_MAIL_BOSS_ROLES; may answer any permission request
 }
 
 var version = "dev"
@@ -92,6 +96,9 @@ func runServer() {
 	if e = configurePresence(s, os.Getenv); e != nil {
 		log.Fatal(e)
 	}
+	if e = configureStall(s, os.Getenv); e != nil {
+		log.Fatal(e)
+	}
 	for _, pair := range strings.Split(os.Getenv("AGENT_MAIL_TOKENS"), ",") {
 		p := strings.SplitN(strings.TrimSpace(pair), "=", 2)
 		if len(p) == 2 && p[0] != "" && p[1] != "" {
@@ -116,6 +123,7 @@ func runServer() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	stopped := make(chan struct{})
+	waitSweeper := s.startSweeper()
 	go func() {
 		<-stop
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -128,6 +136,7 @@ func runServer() {
 		log.Fatal(e)
 	}
 	<-stopped
+	waitSweeper()
 	_ = db.Close()
 }
 
@@ -150,7 +159,10 @@ func initSchema(db *sql.DB) error {
 	if e = migrateLabels(db); e != nil {
 		return e
 	}
-	return migratePresence(db)
+	if e = migratePresence(db); e != nil {
+		return e
+	}
+	return migratePermissions(db)
 }
 
 func hasColumn(db *sql.DB, table, column string) (bool, error) {
@@ -185,6 +197,10 @@ func normalizePriority(p string) (string, bool) {
 
 func migrateConfiguredRoles(s *Server) error {
 	for role, token := range s.tokens {
+		if reservedRole(role) {
+			log.Printf("AGENT_MAIL_TOKENS: %s is reserved for system notices; ignored", role)
+			continue
+		}
 		if _, err := s.db.Exec(`INSERT OR IGNORE INTO roles(role,token,created_at) VALUES(?,?,?)`, role, token, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return err
 		}
@@ -228,6 +244,10 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	role := who.Role
 	w.Header().Set("Content-Type", "application/json")
 	path := strings.TrimPrefix(r.URL.Path, "/api/")
+	if path == "permissions" || strings.HasPrefix(path, "permissions/") {
+		s.permissionAPI(w, r, who, strings.TrimPrefix(strings.TrimPrefix(path, "permissions"), "/"))
+		return
+	}
 	if path == "presence" {
 		s.presenceAPI(w, r)
 		return
@@ -264,6 +284,10 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		id, e := parseID(parts[1])
 		if e != nil {
 			http.Error(w, "invalid id", 400)
+			return
+		}
+		if box, other := s.otherSlotMailbox(who, id); other {
+			http.Error(w, "message belongs to "+box+"; send X-Agent-Mail-Role: "+box+" (CLI: agent-mail --role "+box+" or AGENT_MAIL_ROLE)", 403)
 			return
 		}
 		if len(parts) == 2 && r.Method == "GET" {
@@ -399,6 +423,10 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "role and credential required", 400)
 		return
 	}
+	if reservedRole(req.Role) {
+		http.Error(w, "role name is reserved", 403)
+		return
+	}
 	var existing string
 	err := s.db.QueryRow(`SELECT token FROM roles WHERE role=?`, req.Role).Scan(&existing)
 	if err == nil {
@@ -494,7 +522,7 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request, role string) {
 			return
 		}
 	}
-	now := time.Now().UTC()
+	now := s.now().UTC()
 	if m.ThreadID == 0 && m.ReplyTo > 0 {
 		m.ThreadID = m.ReplyTo
 	}

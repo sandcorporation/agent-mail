@@ -101,7 +101,7 @@ func sameSecret(a, b string) bool {
 func (s *Server) authenticate(r *http.Request) (principal, bool) {
 	t := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	h := r.Header.Get("X-Agent-Mail-Role")
-	if t == "" || h == "" || !validRole(h) {
+	if t == "" || h == "" || !validRole(h) || reservedRole(h) {
 		return principal{}, false
 	}
 	if token, ok := roleToken(s.db, h); ok {
@@ -129,6 +129,9 @@ func (s *Server) authenticate(r *http.Request) (principal, bool) {
 // "<base>-1" as <base>, "<base>-N" as itself. ok is false when no role row
 // backs the address.
 func mailbox(q queryer, name string) (string, bool) {
+	if reservedRole(name) {
+		return "", false
+	}
 	if roleExists(q, name) {
 		return name, true
 	}
@@ -140,6 +143,24 @@ func mailbox(q queryer, name string) (string, bool) {
 		return base, true
 	}
 	return name, true
+}
+
+// otherSlotMailbox returns the mailbox message id belongs to when that is
+// another mailbox of the caller's base (for example mail of <base>-2 while
+// the header names <base>). Mailboxes of one base are kept apart: such
+// requests are refused with 403 naming the role to act as, rather than
+// showing the body while the state stays with the other mailbox.
+func (s *Server) otherSlotMailbox(p principal, id int64) (string, bool) {
+	m, err := s.get(id)
+	if err != nil || m.Recipient == p.Role || m.Sender == p.Role {
+		return "", false
+	}
+	for _, box := range []string{m.Recipient, m.Sender} {
+		if baseOf(s.db, box) == p.Base {
+			return box, true
+		}
+	}
+	return "", false
 }
 
 // slotRequest is the body of the slot endpoints. Machine and Directory form
@@ -481,6 +502,11 @@ func (s *Server) renewSlot(ctx context.Context, base string, req slotRequest, re
 			return errNoSlot
 		}
 		set, args := `lease_until=?`, []any{ms(until)}
+		if release {
+			// An intended stop: no offline notice (see stall.go).
+			set += `,offline_noticed_at=?`
+			args = append(args, ms(now))
+		}
 		if !release {
 			set += `,session_id=?,label=?,parent=?`
 			args = append(args, req.SessionID, req.Label, req.Parent)
