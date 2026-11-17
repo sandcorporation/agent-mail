@@ -78,11 +78,33 @@ tr.offline td{color:#889}
 .dec{border-bottom:1px solid #e3e7ee;padding:.5rem 0}
 .dec p{margin:.15rem 0;overflow-wrap:anywhere}
 .dec .pill{background:#1e5bb8}
+.metgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,26rem),1fr));gap:.8rem;margin-top:.6rem}
+.mcard{border:1px solid #dde;border-radius:6px;padding:.7rem;min-width:0}
+.mcard.full{grid-column:1/-1}
+.mcard h3{margin:0 0 .3rem}.mcard h4{margin:.8rem 0 .2rem;font-size:.95em}
+.mcard p{margin:.2rem 0 .5rem}
+.stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(6rem,1fr));gap:.4rem;margin:.4rem 0}
+.stat{background:#f1f3f7;border-radius:6px;padding:.4rem .5rem}
+.stat b{display:block;font-size:1.25em}.stat span{font-size:.8em;color:#556}
+.chart svg{display:block;width:100%;max-width:26rem;height:auto;margin:.4rem 0}
+.chart .bar{fill:#1e5bb8}.chart .axis{stroke:#99a}.chart text{font:11px system-ui,sans-serif;fill:#334}
+tr.over td{background:#fdecea}tr.over td:first-child{box-shadow:inset 4px 0 #c62828}
+td.num,th.num{text-align:right}
+table.stack td.wrap{white-space:normal;overflow-wrap:anywhere}
+.mthreads{margin:.2rem 0;padding-left:1.4rem}
+.mthreads li{margin:.3rem 0}
+.mthreads button{margin:0;padding:.3rem .4rem;border:1px solid #c9d3e3;border-radius:4px;background:#fff;color:#1e5bb8;text-align:left;width:100%;overflow-wrap:anywhere}
+.mthreads small{display:block;color:#556}
 @media (max-width:600px){
 body{margin:1rem auto}
 .decfilters>*{flex:1 1 100%;box-sizing:border-box}
 .decfilters a.button,.decfilters button{text-align:center}
 td.dir{max-width:11rem}
+table.stack thead{display:none}
+table.stack tr{display:block;border-bottom:1px solid #dde;padding:.3rem 0}
+table.stack td{display:block;border:0;padding:.1rem .2rem;white-space:normal;overflow-wrap:anywhere;text-align:left}
+table.stack td[data-label]::before{content:attr(data-label) ": ";color:#667}
+table.stack td:first-child{font-weight:600}
 #settingsTbl thead{display:none}
 #settingsTbl tr{display:block;border-bottom:1px solid #dde;padding:.4rem 0}
 #settingsTbl td{display:block;border:0;padding:.15rem .2rem;white-space:normal;overflow-wrap:anywhere}
@@ -95,6 +117,7 @@ td.dir{max-width:11rem}
 <p class="muted">등록된 모든 역할과 메일함을 봅니다. 바꿀 수 있는 것은 질문 답과 질문 설정뿐입니다.</p>
 <nav id="tabs" class="tabs" role="tablist" aria-label="관리자 보기 탭">
 <button type="button" role="tab" id="tab-sessions" data-tab="sessions" aria-controls="panel-sessions" aria-selected="true" tabindex="0"><span class="tab-name">세션</span><span class="tab-count"></span></button>
+<button type="button" role="tab" id="tab-metrics" data-tab="metrics" aria-controls="panel-metrics" aria-selected="false" tabindex="-1"><span class="tab-name">지표</span><span class="tab-count"></span></button>
 <button type="button" role="tab" id="tab-mail" data-tab="mail" aria-controls="panel-mail" aria-selected="false" tabindex="-1"><span class="tab-name">메일</span><span class="tab-count"></span></button>
 <button type="button" role="tab" id="tab-permissions" data-tab="permissions" aria-controls="panel-permissions" aria-selected="false" tabindex="-1"><span class="tab-name">권한 요청</span><span class="tab-count"></span></button>
 <button type="button" role="tab" id="tab-questions" data-tab="questions" aria-controls="panel-questions" aria-selected="false" tabindex="-1"><span class="tab-name">질문</span><span class="tab-count"></span></button>
@@ -103,6 +126,33 @@ td.dir{max-width:11rem}
 <section id="panel-sessions" role="tabpanel" aria-labelledby="tab-sessions" tabindex="0" class="card">
 <div class="row"><h2 style="margin:0">세션</h2><button id="reloadSessions">새로 고침</button><span id="sessionsNote" class="muted"></span></div>
 <div class="wide"><table><thead><tr><th>역할</th><th>상태</th><th>컨텍스트</th><th>마지막 턴</th><th>기계</th><th>폴더</th><th>라벨</th><th>부모</th><th>마지막 보고</th></tr></thead><tbody id="sessions"></tbody></table></div>
+</section>
+<section id="panel-metrics" role="tabpanel" aria-labelledby="tab-metrics" tabindex="0" class="card" hidden>
+<div class="row"><h2 style="margin:0">지표</h2>
+<div class="viewswitch" role="group" aria-label="기간 고르기"><button type="button" id="metDays7" data-days="7" aria-pressed="true">7일</button><button type="button" id="metDays30" data-days="30" aria-pressed="false">30일</button></div>
+<button id="reloadMetrics">새로 고침</button><span id="metricsNote" class="muted" role="status" aria-live="polite"></span></div>
+<div class="metgrid">
+<div class="mcard full"><h3>첫 답장</h3>
+<p class="muted">스레드를 연 메일이 받는 쪽에서 첫 답을 받기까지 걸린 시간입니다.</p>
+<div id="mFirstStats" class="stats"></div>
+<div id="mFirstChart" class="chart"></div>
+<table id="mFirstTbl" class="stack"><thead><tr><th>받는 쪽</th><th>메일</th><th>답 받음</th><th>답 없음</th><th>p50</th><th>p90</th><th>최장</th></tr></thead><tbody id="mFirstByRecipient"></tbody></table>
+</div>
+<div class="mcard"><h3>안 읽힌 메일</h3>
+<p id="mPendingNote" class="muted"></p>
+<table id="mPendingTbl" class="stack"><thead><tr><th>역할</th><th>안 읽음</th><th>가장 오래된 것</th></tr></thead><tbody id="mPending"></tbody></table>
+</div>
+<div class="mcard"><h3>되물음</h3>
+<p id="mThreadsNote" class="muted"></p>
+<ol id="mThreads" class="mthreads"></ol>
+</div>
+<div class="mcard full"><h3>세션 상태</h3>
+<p id="mSessionsNote" class="muted"></p>
+<table id="mStateTbl" class="stack"><thead><tr><th>역할</th><th>오류</th><th>막힘</th><th>많았던 상태</th></tr></thead><tbody id="mStates"></tbody></table>
+<h4>지금 오류·막힘</h4>
+<table id="mCurrentTbl" class="stack"><thead><tr><th>역할</th><th>상태</th><th>시작</th><th>지난 시간</th></tr></thead><tbody id="mCurrent"></tbody></table>
+</div>
+</div>
 </section>
 <section id="panel-mail" role="tabpanel" aria-labelledby="tab-mail" tabindex="0" hidden>
 <div class="card row">
@@ -262,15 +312,141 @@ function card(m){
 // Each tab's loader runs once, the first time the tab is shown; after that the
 // tab's own 「새로 고침」 button reloads it. #33 sets tabLoaders.permissions and
 // #42 sets tabLoaders.questions / tabLoaders.settings (null = nothing to load).
-const tabNames=['sessions','mail','permissions','questions','settings'];
-const tabLoaders={sessions:loadSessions,mail:initMail,permissions:null,questions:null,settings:null};
+const tabNames=['sessions','metrics','mail','permissions','questions','settings'];
+const tabLoaders={sessions:loadSessions,metrics:null,mail:initMail,permissions:null,questions:null,settings:null};
 const tabLoaded=new Set();
 // setTabCount(name,n) shows 「이름 (n)」 on a tab; n null/undefined hides the number.
-// #42 calls it for 'questions' (open questions), #33 for 'permissions' (pending requests).
+// #42 calls it for 'questions' (open questions), #33 for 'permissions' (pending requests),
+// #51 for 'metrics' (alert thresholds crossed now; 0 hides the number).
 function setTabCount(name,n){
   const t=$('tab-'+name);if(!t)return;
   t.querySelector('.tab-count').textContent=(n===null||n===undefined)?'':' ('+n+')';
 }
+// ---- 지표 ----
+// One GET /api/admin/metrics?days=N fills the four cards. metricsSeq drops a
+// slow answer for a period the user has already switched away from.
+let metricsDays=7,metricsSeq=0;
+function dur(s){
+  if(s===null||s===undefined)return '-';
+  if(s<60)return s+'초';
+  if(s<3600)return Math.round(s/60)+'분';
+  if(s<86400){const h=s/3600;return (h<10?h.toFixed(1).replace(/\.0$/,''):Math.round(h))+'시간'}
+  const d=s/86400;return (d<10?d.toFixed(1).replace(/\.0$/,''):Math.round(d))+'일';
+}
+const bucketLabel={'<10m':'<10분','<1h':'<1시간','<4h':'<4시간','<1d':'<1일','>=1d':'≥1일'};
+function stateText(st){return sessionStatus(st)[0]}
+// metricsBreaches counts what is over an alert threshold now: pending mail the
+// server flagged, plus current error/blocked sessions past their limit (0 = off).
+function metricsBreaches(m){
+  const t=m.thresholds||{};
+  let n=(m.pending||[]).filter(p=>p.over_threshold).length;
+  for(const c of (m.sessions&&m.sessions.current)||[])if(sessionOver(c,t))n++;
+  return n;
+}
+function sessionOver(c,t){
+  const lim=/^error:/.test(c.state)?t.error_s:/^blocked:/.test(c.state)?t.blocked_s:0;
+  return lim>0&&c.seconds>=lim;
+}
+function cells(tr,labels,values,classes){
+  values.forEach((v,i)=>{const td=node('td',v,(classes&&classes[i])||'');if(i>0)td.dataset.label=labels[i];tr.append(td)});
+  return tr;
+}
+function emptyRow(body,cols,text){const tr=node('tr','');const td=node('td',text,'muted');td.colSpan=cols;tr.append(td);body.append(tr)}
+const SVG='http://www.w3.org/2000/svg';
+function svgEl(tag,attrs,text){const e=document.createElementNS(SVG,tag);for(const k in attrs)e.setAttribute(k,attrs[k]);if(text!==undefined)e.textContent=text;return e}
+// bucketChart draws buckets as bars, each with its count above and label below.
+function bucketChart(buckets){
+  const W=320,H=140,top=18,bottom=24,gap=10,n=Math.max(buckets.length,1);
+  const bw=(W-gap*(n+1))/n,max=Math.max(1,...buckets.map(b=>b.count)),plot=H-top-bottom;
+  const svg=svgEl('svg',{viewBox:'0 0 '+W+' '+H,role:'img','aria-label':'첫 답장 분포: '+buckets.map(b=>(bucketLabel[b.label]||b.label)+' '+b.count+'통').join(', ')});
+  svg.append(svgEl('title',{},'첫 답장까지 걸린 시간 분포'));
+  buckets.forEach((b,i)=>{
+    const x=gap+i*(bw+gap),h=Math.round(plot*b.count/max),y=top+plot-h;
+    const g=svgEl('g',{});
+    g.append(svgEl('rect',{class:'bar',x:x,y:y,width:bw,height:Math.max(h,b.count?1:0)}));
+    g.append(svgEl('text',{x:x+bw/2,y:y-4,'text-anchor':'middle'},String(b.count)));
+    g.append(svgEl('text',{x:x+bw/2,y:H-8,'text-anchor':'middle'},bucketLabel[b.label]||b.label));
+    svg.append(g);
+  });
+  svg.append(svgEl('line',{class:'axis',x1:0,x2:W,y1:top+plot+.5,y2:top+plot+.5}));
+  return svg;
+}
+function statTile(label,value){const d=node('div','','stat');d.append(node('b',value),node('span',label));return d}
+function renderFirstReply(f){
+  $('mFirstStats').replaceChildren(statTile('스레드 시작',String(f.count)),statTile('답 받음',String(f.answered)),statTile('답 없음',String(f.unanswered)),statTile('p50',dur(f.p50_s)),statTile('p90',dur(f.p90_s)),statTile('최장',dur(f.max_s)));
+  $('mFirstChart').replaceChildren(f.count?bucketChart(f.buckets||[]):node('p','이 기간에 스레드를 연 메일이 없습니다.','muted'));
+  const body=$('mFirstByRecipient');body.replaceChildren();
+  const labels=['받는 쪽','메일','답 받음','답 없음','p50','p90','최장'],num=['','num','num','num','num','num','num'];
+  for(const r of f.by_recipient||[])body.append(cells(node('tr',''),labels,[r.base,String(r.count),String(r.answered),String(r.unanswered),dur(r.p50_s),dur(r.p90_s),dur(r.max_s)],num));
+  if(!body.children.length)emptyRow(body,7,'받는 쪽이 없습니다.');
+}
+function renderPending(list,t){
+  $('mPendingNote').textContent=t.pending_s>0?'가장 오래된 메일이 '+dur(t.pending_s)+' 넘게 안 읽힌 역할을 강조합니다.':'안 읽힌 메일 알림이 꺼져 있습니다.';
+  const body=$('mPending');body.replaceChildren();
+  for(const p of list){
+    const tr=cells(node('tr','',p.over_threshold?'over':''),['역할','안 읽음','가장 오래된 것'],[p.role,p.pending+'통',dur(p.oldest_s)+(p.over_threshold?' · 문턱 넘음':'')],['','num','num']);
+    body.append(tr);
+  }
+  if(!list.length)emptyRow(body,3,'안 읽힌 메일이 없습니다.');
+}
+function renderThreads(th){
+  $('mThreadsNote').textContent='두 쪽이 두 번 넘게 주고받은 스레드 '+th.multi_round+'개'+(th.top&&th.top.length?' · 많은 순으로 '+th.top.length+'개, 누르면 메일 탭에서 그 스레드를 엽니다.':'');
+  const ol=$('mThreads');ol.replaceChildren();
+  for(const x of th.top||[]){
+    const li=node('li',''),b=node('button','');
+    b.type='button';
+    b.append(document.createTextNode('#'+x.thread_id+' '+(x.subject||'(제목 없음)')),node('small',(x.parties||[]).join(' ↔ ')+' · 왕복 '+x.round_trips+'번'));
+    b.onclick=()=>openThread(x.thread_id);
+    li.append(b);ol.append(li);
+  }
+}
+function renderSessionStates(ss,t){
+  const lim=[t.error_s>0?'오류 '+dur(t.error_s):'',t.blocked_s>0?'막힘 '+dur(t.blocked_s):''].filter(Boolean);
+  $('mSessionsNote').textContent='기간 안에 오류·막힘 상태로 있던 시간입니다.'+(lim.length?' 지금 상태가 '+lim.join(', ')+'을 넘으면 강조합니다.':' 세션 알림이 꺼져 있습니다.');
+  const body=$('mStates');body.replaceChildren();
+  for(const r of ss.by_role||[]){
+    const kinds=(r.top_kinds||[]).map(k=>stateText(k.state)+' '+dur(k.seconds)).join(', ')||'-';
+    body.append(cells(node('tr',''),['역할','오류','막힘','많았던 상태'],[r.role,dur(r.error_s),dur(r.blocked_s),kinds],['','num','num','wrap']));
+  }
+  if(!body.children.length)emptyRow(body,4,'기간 안에 오류·막힘이 없었습니다.');
+  const cur=$('mCurrent');cur.replaceChildren();
+  for(const c of ss.current||[]){
+    const over=sessionOver(c,t),[text,cls]=sessionStatus(c.state);
+    cur.append(cells(node('tr','',over?'over':''),['역할','상태','시작','지난 시간'],[c.role,text,when(c.since),dur(c.seconds)+(over?' · 문턱 넘음':'')],['',cls,'','num']));
+  }
+  if(!cur.children.length)emptyRow(cur,4,'지금 오류·막힘인 세션이 없습니다.');
+}
+async function loadMetrics(){
+  const seq=++metricsSeq;
+  $('metricsNote').textContent='불러오는 중…';
+  try{
+    const m=await api('metrics?days='+metricsDays);
+    if(seq!==metricsSeq)return;
+    const t=m.thresholds||{};
+    renderFirstReply(m.first_reply);renderPending(m.pending||[],t);renderThreads(m.threads||{multi_round:0,top:[]});renderSessionStates(m.sessions||{},t);
+    const n=metricsBreaches(m);setTabCount('metrics',n||null);
+    $('metricsNote').textContent='최근 '+m.window.days+'일 · '+when(m.window.from)+' ~ '+when(m.window.to)+(n?' · 문턱 넘은 것 '+n+'개':'');
+  }catch(e){if(seq===metricsSeq)$('metricsNote').textContent=e.message}
+}
+// refreshMetricsCount fills the tab number before the tab is first opened.
+async function refreshMetricsCount(){
+  try{const m=await api('metrics?days=1');if(!tabLoaded.has('metrics')){const n=metricsBreaches(m);setTabCount('metrics',n||null)}}catch(e){}
+}
+function setMetricsDays(d){
+  metricsDays=d;
+  for(const b of [$('metDays7'),$('metDays30')])b.setAttribute('aria-pressed',Number(b.dataset.days)===d?'true':'false');
+  loadMetrics();
+}
+// openThread shows the 메일 tab filtered to one thread (the 「스레드 보기」 filter),
+// clearing the other filters so the whole thread shows.
+function openThread(id){
+  $('thread').value=id;$('search').value='';$('status').value='';$('role').value='';$('box').value='all';
+  const fresh=!tabLoaded.has('mail');
+  selectTab('mail');
+  if(!fresh)load();
+  window.scrollTo({top:0});
+}
+tabLoaders.metrics=loadMetrics;
 // ---- 질문 ----
 const qStatusLabel={pending:'대기',answered:'답함',withdrawn:'거둠'};
 let questionCards=new Map(),questionsLoaded=false,wantFocus=null,formSeq=0;
@@ -498,7 +674,7 @@ function showTab(name){
   }
   if(!tabLoaded.has(name)){tabLoaded.add(name);if(tabLoaders[name])tabLoaders[name]()}
 }
-// Routes: #sessions #mail #permissions #questions #settings, #decisions (질문 tab,
+// Routes: #sessions #metrics #mail #permissions #questions #settings, #decisions (질문 tab,
 // 결정 view) and #q=<id> (질문 + focusQuestion). No hash or an unknown one shows 세션.
 function route(){
   const h=location.hash.slice(1);
@@ -535,6 +711,9 @@ window.addEventListener('hashchange',route);
 $('go').onclick=load;
 $('reloadMail').onclick=load;
 $('reloadSessions').onclick=loadSessions;
+$('reloadMetrics').onclick=loadMetrics;
+$('metDays7').onclick=()=>setMetricsDays(7);
+$('metDays30').onclick=()=>setMetricsDays(30);
 $('reloadQuestions').onclick=()=>{setMsg($('questionsMsg'),'');loadQuestions()};
 $('reloadSettings').onclick=loadSettings;
 $('reset').onclick=()=>{$('thread').value='';$('search').value='';$('status').value='';$('role').value='';$('box').value='all';load()};
@@ -542,6 +721,7 @@ $('search').addEventListener('keydown',e=>{if(e.key==='Enter')load()});
 $('thread').addEventListener('keydown',e=>{if(e.key==='Enter')load()});
 route();
 if(!tabLoaded.has('questions'))refreshQuestionCount();
+if(!tabLoaded.has('metrics'))refreshMetricsCount();
 </script>
 </body>
 </html>
