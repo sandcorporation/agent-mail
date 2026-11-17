@@ -61,7 +61,7 @@ func TestDynamicRegistrationResumeAndMigration(t *testing.T) {
 	if w = call(s, "POST", "/api/messages", "worker-credential-long-enough", map[string]string{"recipient": "b", "subject": "spoof", "body": "x", "sender": "a"}, ""); w.Code != 201 {
 		t.Fatalf("dynamic role send=%d %s", w.Code, w.Body)
 	}
-	var msg Message
+	var msg wire.Message
 	_ = json.Unmarshal(w.Body.Bytes(), &msg)
 	if msg.Sender != "team/worker" {
 		t.Fatalf("sender spoofed: %q", msg.Sender)
@@ -315,7 +315,7 @@ func TestPersistenceRetryAndStatus(t *testing.T) {
 	if w.Code != 200 || w.Body.String() == "" {
 		t.Fatalf("retry %d %s", w.Code, w.Body)
 	}
-	var a, b Message
+	var a, b wire.Message
 	_ = json.Unmarshal([]byte(first), &a)
 	_ = json.Unmarshal(w.Body.Bytes(), &b)
 	if a.ID != b.ID {

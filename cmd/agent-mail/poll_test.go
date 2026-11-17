@@ -11,13 +11,14 @@ import (
 	"time"
 
 	"github.com/sandcorporation/agent-mail/internal/cli"
+	"github.com/sandcorporation/agent-mail/internal/mail"
 )
 
 type pollResult struct {
 	status  int
 	header  http.Header
 	body    string
-	resp    pollResponse
+	resp    mail.PollResponse
 	elapsed time.Duration
 }
 
@@ -55,9 +56,7 @@ func pollIDs(r pollResult) []int64 {
 
 // subscribers reports how many long polls or streams wait for role.
 func subscribers(s *Server, role string) int {
-	s.hub.mu.Lock()
-	defer s.hub.mu.Unlock()
-	return len(s.hub.subs[role])
+	return s.hub.Subscribers(role)
 }
 
 func waitSubscribers(t *testing.T, s *Server, role string, n int) {
@@ -75,7 +74,7 @@ func waitSubscribers(t *testing.T, s *Server, role string, n int) {
 // before the server starts.
 func pollServer(t *testing.T, max time.Duration) (*Server, string) {
 	s := testServer(t)
-	s.pollMax = max
+	s.mailCfg.PollMax = max
 	s.done = make(chan struct{})
 	if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES('c','secret-c','now')`); err != nil {
 		t.Fatal(err)
@@ -235,7 +234,7 @@ func TestPollUrgentEventCarriesBody(t *testing.T) {
 }
 
 func TestEventsCommand(t *testing.T) {
-	h := newCLIHarnessWith(t, func(s *Server) { s.pollMax = 2 * time.Second })
+	h := newCLIHarnessWith(t, func(s *Server) { s.mailCfg.PollMax = 2 * time.Second })
 	h.configure(nil, "b")
 	r := h.run(nil, "events", "--timeout", "0")
 	if r.code != cli.ExitTimeout || r.stdout != "" || !strings.Contains(r.stderr, "cursor 0") {

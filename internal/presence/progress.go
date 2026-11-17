@@ -1,4 +1,4 @@
-package main
+package presence
 
 import (
 	"net/http"
@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/sandcorporation/agent-mail/internal/identity"
+	"github.com/sandcorporation/agent-mail/internal/mail"
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 // Progress view (the dashboard's 진행 tab, GET /api/progress for boss roles).
@@ -45,7 +47,7 @@ func badgeRank(state string) (int, string) {
 	}
 }
 
-func progressBadge(sessions []progressSession) string {
+func progressBadge(sessions []wire.ProgressSession) string {
 	best, badge := 0, "none"
 	for _, v := range sessions {
 		if r, b := badgeRank(v.State); r > best {
@@ -57,9 +59,12 @@ func progressBadge(sessions []progressSession) string {
 
 func isOpenStatus(status string) bool { return status != "complete" && status != "completed" }
 
-// progressAPI serves GET /api/progress (boss roles) and, with allowed true,
-// GET /api/admin/progress.
-func (s *Server) progressAPI(w http.ResponseWriter, r *http.Request, allowed bool) {
+func isErrorState(state string) bool   { return strings.HasPrefix(state, "error:") }
+func isBlockedState(state string) bool { return strings.HasPrefix(state, "blocked:") }
+
+// ProgressAPI serves GET /api/progress (boss roles) and, with allowed true,
+// GET /api/admin/progress. pending and base are as for Progress.
+func (s *Service) ProgressAPI(w http.ResponseWriter, r *http.Request, allowed bool, pending time.Duration, base func(string) string) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -68,7 +73,7 @@ func (s *Server) progressAPI(w http.ResponseWriter, r *http.Request, allowed boo
 		http.Error(w, "progress is for boss roles (AGENT_MAIL_BOSS_ROLES)", http.StatusForbidden)
 		return
 	}
-	out, err := s.progress()
+	out, err := s.Progress(pending, base)
 	if err != nil {
 		http.Error(w, "query failed", 500)
 		return
@@ -87,7 +92,7 @@ type progressMailRow struct {
 	ThreadID, ReplyTo          int64
 }
 
-func (s *Server) progressMailQuery(where string, args ...any) ([]progressMailRow, error) {
+func (s *Service) progressMailQuery(where string, args ...any) ([]progressMailRow, error) {
 	rows, err := s.db.Query(`SELECT m.id,m.sender,m.recipient,m.subject,COALESCE(m.task_id,''),COALESCE(rs.status,m.status,'pending'),m.created_at,COALESCE(m.thread_id,0),COALESCE(m.reply_to,0) FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=m.recipient WHERE `+where+` ORDER BY m.id`, args...)
 	if err != nil {
 		return nil, err
@@ -108,7 +113,7 @@ func (s *Server) progressMailQuery(where string, args ...any) ([]progressMailRow
 
 // distinctNames lists the distinct values of a messages column (sender or
 // recipient), read from its index.
-func (s *Server) distinctNames(col string) ([]string, error) {
+func (s *Service) distinctNames(col string) ([]string, error) {
 	rows, err := s.db.Query(`SELECT DISTINCT ` + col + ` FROM messages`)
 	if err != nil {
 		return nil, err
@@ -135,19 +140,18 @@ func anySlice(xs []string) []any {
 	return out
 }
 
-// progress builds the report as of now.
-func (s *Server) progress() (progressReport, error) {
+// Progress builds the report as of now. pending is the pending-mail alert
+// limit (0 means none) and base maps a mailbox name to its base role.
+func (s *Service) Progress(pending time.Duration, base func(string) string) (wire.ProgressReport, error) {
 	now := s.now().UTC()
-	lim := s.alertLimits()
-	out := progressReport{GeneratedAt: now, PendingAlertS: int64(lim.Pending / time.Second), Services: []serviceProgress{}}
-	bases := newBaseResolver(s.db)
-	isBossName := s.ids().IsBossName(bases.of)
-	svcs := map[string]*serviceProgress{}
-	get := func(name string) *serviceProgress {
+	out := wire.ProgressReport{GeneratedAt: now, PendingAlertS: int64(pending / time.Second), Services: []wire.ServiceProgress{}}
+	isBossName := s.ids.IsBossName(base)
+	svcs := map[string]*wire.ServiceProgress{}
+	get := func(name string) *wire.ServiceProgress {
 		svc := serviceOf(name)
 		p := svcs[svc]
 		if p == nil {
-			p = &serviceProgress{Service: svc, Sessions: []progressSession{}, OpenDirectives: []progressDirective{}, OpenTasks: []progressTask{}}
+			p = &wire.ServiceProgress{Service: svc, Sessions: []wire.ProgressSession{}, OpenDirectives: []wire.ProgressDirective{}, OpenTasks: []wire.ProgressTask{}}
 			svcs[svc] = p
 		}
 		return p
@@ -161,7 +165,7 @@ func (s *Server) progress() (progressReport, error) {
 	for rows.Next() {
 		var base string
 		var number int
-		var v progressSession
+		var v wire.ProgressSession
 		var reg, reported, since int64
 		if err = rows.Scan(&base, &number, &v.Directory, &v.State, &reg, &reported, &since); err != nil {
 			rows.Close()
@@ -215,13 +219,13 @@ func (s *Server) progress() (progressReport, error) {
 		for _, m := range reports {
 			p := get(m.Sender)
 			if p.LastReport == nil || m.ID > p.LastReport.ID {
-				p.LastReport = &progressMail{ID: m.ID, From: m.Sender, To: m.Recipient, Subject: m.Subject, At: m.At}
+				p.LastReport = &wire.ProgressMail{ID: m.ID, From: m.Sender, To: m.Recipient, Subject: m.Subject, At: m.At}
 			}
 		}
 	}
 
 	// Open directives: mail from a boss role, neither completed nor answered
-	// (answers in answered.go), oldest first.
+	// (mail.Answers), oldest first.
 	senders, err := s.distinctNames("sender")
 	if err != nil {
 		return out, err
@@ -237,15 +241,15 @@ func (s *Server) progress() (progressReport, error) {
 		if err != nil {
 			return out, err
 		}
-		ds := make([]flowMail, len(directives))
+		ds := make([]mail.FlowMail, len(directives))
 		for i, m := range directives {
-			ds[i] = flowMail{ID: m.ID, Sender: m.Sender, Recipient: m.Recipient, Created: m.At, TaskID: m.TaskID, ThreadID: m.ThreadID, ReplyTo: m.ReplyTo}
+			ds[i] = mail.FlowMail{ID: m.ID, Sender: m.Sender, Recipient: m.Recipient, Created: m.At, TaskID: m.TaskID, ThreadID: m.ThreadID, ReplyTo: m.ReplyTo}
 		}
-		candidates, err := s.answerCandidates(ds)
+		candidates, err := mail.AnswerCandidates(s.db, ds)
 		if err != nil {
 			return out, err
 		}
-		byThread, byTask := map[int64][]flowMail{}, map[string][]flowMail{}
+		byThread, byTask := map[int64][]mail.FlowMail{}, map[string][]mail.FlowMail{}
 		for _, c := range candidates {
 			byThread[c.ThreadID] = append(byThread[c.ThreadID], c)
 			if c.TaskID != "" {
@@ -255,20 +259,20 @@ func (s *Server) progress() (progressReport, error) {
 	directive:
 		for i, m := range directives {
 			d := ds[i]
-			var near []flowMail
+			var near []mail.FlowMail
 			if d.TaskID != "" {
 				near = byTask[d.TaskID]
 			}
-			for _, group := range [][]flowMail{byThread[d.thread()], byThread[d.ID], near} {
+			for _, group := range [][]mail.FlowMail{byThread[d.Thread()], byThread[d.ID], near} {
 				for _, c := range group {
-					if answers(d, c, bases.of, isBossName) {
+					if mail.Answers(d, c, base, isBossName) {
 						continue directive
 					}
 				}
 			}
 			age := max(0, int64(now.Sub(m.At)/time.Second))
 			p := get(m.Recipient)
-			p.OpenDirectives = append(p.OpenDirectives, progressDirective{ID: m.ID, To: m.Recipient, Subject: m.Subject, Status: m.Status, AgeS: age, OverThreshold: lim.Pending > 0 && age >= int64(lim.Pending/time.Second)})
+			p.OpenDirectives = append(p.OpenDirectives, wire.ProgressDirective{ID: m.ID, To: m.Recipient, Subject: m.Subject, Status: m.Status, AgeS: age, OverThreshold: pending > 0 && age >= int64(pending/time.Second)})
 		}
 	}
 
@@ -283,7 +287,7 @@ func (s *Server) progress() (progressReport, error) {
 		return out, err
 	}
 	type taskKey struct{ svc, task string }
-	tasks := map[taskKey]*progressTask{}
+	tasks := map[taskKey]*wire.ProgressTask{}
 	open := map[taskKey]bool{}
 	for _, m := range taskMail {
 		if m.At.Before(from) || identity.Reserved(m.Sender) {
@@ -298,7 +302,7 @@ func (s *Server) progress() (progressReport, error) {
 			k := taskKey{serviceOf(name), m.TaskID}
 			t := tasks[k]
 			if t == nil {
-				t = &progressTask{TaskID: m.TaskID}
+				t = &wire.ProgressTask{TaskID: m.TaskID}
 				tasks[k] = t
 			}
 			t.Messages++

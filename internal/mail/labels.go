@@ -1,4 +1,4 @@
-package main
+package mail
 
 import (
 	"database/sql"
@@ -92,9 +92,9 @@ func labelTarget(tx *sql.Tx, a labelAddr, now time.Time) (string, error) {
 	return box, nil
 }
 
-// deliverHeld moves the mail held for label:<base>/<label> to the mailbox of
+// DeliverHeld moves the mail held for label:<base>/<label> to the mailbox of
 // slot number under base. It returns that mailbox and how many messages moved.
-func deliverHeld(tx *sql.Tx, base string, number int, label string, now time.Time) (string, int, error) {
+func DeliverHeld(tx *sql.Tx, base string, number int, label string, now time.Time) (string, int, error) {
 	if !validLabel(label) {
 		return "", 0, nil
 	}
@@ -152,8 +152,8 @@ func messageCols(status string) string {
 	return `m.id,m.sender,m.recipient,m.subject,m.body,m.created_at,COALESCE(m.task_id,''),COALESCE(m.thread_id,0),COALESCE(m.reply_to,0),` + status + `,COALESCE(m.priority,'normal'),COALESCE(m.addressed_to,''),COALESCE(m.held_id,0),COALESCE(m.held_at,''),COALESCE(m.delivered_at,'')`
 }
 
-func scanMessage(sc interface{ Scan(...any) error }) (Message, error) {
-	var m Message
+func scanMessage(sc interface{ Scan(...any) error }) (wire.Message, error) {
+	var m wire.Message
 	var created, held, delivered string
 	err := sc.Scan(&m.ID, &m.Sender, &m.Recipient, &m.Subject, &m.Body, &created, &m.TaskID, &m.ThreadID, &m.ReplyTo, &m.Status, &m.Priority, &m.AddressedTo, &m.HeldID, &held, &delivered)
 	m.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)

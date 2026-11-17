@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/sandcorporation/agent-mail/internal/identity"
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 func sweepOnce(t *testing.T, s *Server) sweepResult {
@@ -19,9 +20,9 @@ func sweepOnce(t *testing.T, s *Server) sweepResult {
 }
 
 // systemMail is the mail from the system sender in role's inbox.
-func systemMail(t *testing.T, s *Server, token, role string) []Message {
+func systemMail(t *testing.T, s *Server, token, role string) []wire.Message {
 	t.Helper()
-	var out []Message
+	var out []wire.Message
 	for _, m := range listAs(t, s, token, role, "inbox") {
 		if m.Sender == identity.SystemSender {
 			out = append(out, m)
@@ -30,7 +31,7 @@ func systemMail(t *testing.T, s *Server, token, role string) []Message {
 	return out
 }
 
-func withParent(machine, dir, label, parent string) slotRequest {
+func withParent(machine, dir, label, parent string) wire.SlotRequest {
 	r := labeled(machine, dir, label)
 	r.Parent = parent
 	r.State = "busy"
@@ -43,7 +44,7 @@ func TestStallOfflineNoticeOncePerTransition(t *testing.T) {
 	if got := sweepOnce(t, s); got.Offline != 0 {
 		t.Fatalf("online session noticed: %+v", got)
 	}
-	wake, stop := s.hub.subscribe("a")
+	wake, stop := s.hub.Subscribe("a")
 	defer stop()
 	clock.add(31 * time.Second)
 	total := 0
@@ -146,7 +147,7 @@ func TestStallLabelNoticeToSender(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("sender inbox: %+v", got)
 	}
-	var n22 Message
+	var n22 wire.Message
 	for _, m := range got {
 		if m.Subject == "label not connected: "+label22 {
 			n22 = m
@@ -239,7 +240,7 @@ func TestStallSettings(t *testing.T) {
 func TestSweeperRunsAndStopsOnShutdown(t *testing.T) {
 	s, _ := presenceServer(t)
 	s.clock = nil
-	s.slotLease = time.Second
+	s.presenceCfg.SlotLease = time.Second
 	s.sweepEvery = 20 * time.Millisecond
 	s.done = make(chan struct{})
 	slotDo(t, s, "register", withParent("m", "/w", "", "a"))

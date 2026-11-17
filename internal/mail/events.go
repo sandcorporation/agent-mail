@@ -1,4 +1,4 @@
-package main
+package mail
 
 import (
 	"encoding/json"
@@ -12,18 +12,20 @@ import (
 	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
-// mailHub wakes event subscribers when mail is stored for their role. A wake-up
+// Hub wakes event subscribers when mail is stored for their role. A wake-up
 // carries no message data: subscribers re-read SQLite, which stays the only
 // source of truth. Each subscriber channel holds at most one pending wake-up,
 // so publishing never blocks a sender and a slow subscriber loses nothing (the
 // next query covers every message stored since its cursor). The zero value is
 // ready to use.
-type mailHub struct {
+type Hub struct {
 	mu   sync.Mutex
 	subs map[string]map[chan struct{}]struct{}
 }
 
-func (h *mailHub) subscribe(role string) (<-chan struct{}, func()) {
+// Subscribe registers a wake-up channel for role; the returned function
+// removes it.
+func (h *Hub) Subscribe(role string) (<-chan struct{}, func()) {
 	ch := make(chan struct{}, 1)
 	h.mu.Lock()
 	if h.subs == nil {
@@ -44,7 +46,8 @@ func (h *mailHub) subscribe(role string) (<-chan struct{}, func()) {
 	}
 }
 
-func (h *mailHub) publish(role string) {
+// Publish wakes every subscriber of role.
+func (h *Hub) Publish(role string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for ch := range h.subs[role] {
@@ -55,12 +58,26 @@ func (h *mailHub) publish(role string) {
 	}
 }
 
+// Subscribers is how many streams or long polls wait for role.
+func (h *Hub) Subscribers(role string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.subs[role])
+}
+
+// Waiting is how many roles have at least one subscriber.
+func (h *Hub) Waiting() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.subs)
+}
+
 const defaultEventKeepAlive = 20 * time.Second
 const eventBatch = 200
 
-func (s *Server) keepAliveInterval() time.Duration {
-	if s.eventKeepAlive > 0 {
-		return s.eventKeepAlive
+func (s *Service) keepAliveInterval() time.Duration {
+	if s.cfg.KeepAlive > 0 {
+		return s.cfg.KeepAlive
 	}
 	return defaultEventKeepAlive
 }
@@ -80,11 +97,11 @@ func eventCursor(r *http.Request) (int64, bool) {
 	return id, e == nil && id >= 0
 }
 
-// events streams new pending mail for the authenticated role as server-sent
+// Events streams new pending mail for the authenticated role as server-sent
 // events. Without a cursor it first sends every message currently pending for
 // the role; with Last-Event-ID (or ?after=) it sends pending messages with a
 // larger ID. It then sends each new pending message as it is stored.
-func (s *Server) events(w http.ResponseWriter, r *http.Request, role string) {
+func (s *Service) Events(w http.ResponseWriter, r *http.Request, role string) {
 	cursor, ok := eventCursor(r)
 	if !ok {
 		http.Error(w, "invalid Last-Event-ID", 400)
@@ -93,7 +110,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, role string) {
 	rc := http.NewResponseController(w)
 	// Subscribe before the first query so mail stored between the query and the
 	// wait still wakes this stream.
-	wake, unsubscribe := s.hub.subscribe(role)
+	wake, unsubscribe := s.hub.Subscribe(role)
 	defer unsubscribe()
 
 	h := w.Header()
@@ -143,7 +160,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, role string) {
 			}
 		case <-ticker.C:
 			// A role revoked while streaming loses the stream at the next ping.
-			if _, ok := s.authenticate(r); !ok {
+			if !s.authorized(r) {
 				return
 			}
 			if _, e := fmt.Fprint(w, ": ping\n\n"); e != nil || rc.Flush() != nil {
@@ -157,15 +174,15 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, role string) {
 // whose recipient state is still pending, oldest first. SQLite IDs are
 // assigned and committed in order on the single connection, so no message with
 // a smaller ID can appear after a larger one has been seen.
-func (s *Server) pendingAfter(role string, cursor int64) ([]mailEvent, error) {
+func (s *Service) pendingAfter(role string, cursor int64) ([]wire.MailEvent, error) {
 	rows, e := s.db.Query(`SELECT m.id,m.sender,m.recipient,m.subject,m.created_at,COALESCE(m.task_id,''),COALESCE(m.thread_id,0),COALESCE(m.priority,'normal'),COALESCE(m.addressed_to,''),m.body FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=m.recipient WHERE m.recipient=? AND m.id>? AND COALESCE(rs.status,m.status,'pending')='pending' ORDER BY m.id LIMIT ?`, role, cursor, eventBatch)
 	if e != nil {
 		return nil, e
 	}
 	defer rows.Close()
-	out := []mailEvent{}
+	out := []wire.MailEvent{}
 	for rows.Next() {
-		var ev mailEvent
+		var ev wire.MailEvent
 		var created, body string
 		if e = rows.Scan(&ev.ID, &ev.Sender, &ev.Recipient, &ev.Subject, &created, &ev.TaskID, &ev.ThreadID, &ev.Priority, &ev.AddressedTo, &body); e != nil {
 			return nil, e
@@ -182,23 +199,23 @@ func (s *Server) pendingAfter(role string, cursor int64) ([]mailEvent, error) {
 const defaultPollWait = 25 * time.Second
 const defaultPollMax = 55 * time.Second
 
-// pollResponse is the body of GET /api/events/poll. Cursor is the ID of the
+// PollResponse is the body of GET /api/events/poll. Cursor is the ID of the
 // last event returned, or the request cursor when there are none.
-type pollResponse struct {
-	Events []mailEvent `json:"events"`
-	Cursor int64       `json:"cursor"`
+type PollResponse struct {
+	Events []wire.MailEvent `json:"events"`
+	Cursor int64            `json:"cursor"`
 }
 
-func (s *Server) pollMaxWait() time.Duration {
-	if s.pollMax > 0 {
-		return s.pollMax
+func (s *Service) pollMaxWait() time.Duration {
+	if s.cfg.PollMax > 0 {
+		return s.cfg.PollMax
 	}
 	return defaultPollMax
 }
 
-// pollWait reads ?timeout= seconds for a long-poll: default 25, capped by
+// PollWait reads ?timeout= seconds for a long-poll: default 25, capped by
 // the server maximum. ok is false for a malformed or negative value.
-func (s *Server) pollWait(r *http.Request) (time.Duration, bool) {
+func (s *Service) PollWait(r *http.Request) (time.Duration, bool) {
 	wait := defaultPollWait
 	if raw := strings.TrimSpace(r.URL.Query().Get("timeout")); raw != "" {
 		n, e := strconv.ParseInt(raw, 10, 64)
@@ -216,29 +233,29 @@ func (s *Server) pollWait(r *http.Request) (time.Duration, bool) {
 	return wait, true
 }
 
-// pollEvents is the long-poll form of events for clients that can only read a
+// PollEvents is the long-poll form of events for clients that can only read a
 // complete response. It answers at once with the pending messages after the
 // cursor (same cursor rules and event shape as the stream). When there are
 // none it waits up to ?timeout= seconds (default 25, capped by the server) for
 // new mail and answers with whatever arrived, or an empty list.
-func (s *Server) pollEvents(w http.ResponseWriter, r *http.Request, role string) {
+func (s *Service) PollEvents(w http.ResponseWriter, r *http.Request, role string) {
 	cursor, ok := eventCursor(r)
 	if !ok {
 		http.Error(w, "invalid cursor", 400)
 		return
 	}
-	wait, ok := s.pollWait(r)
+	wait, ok := s.PollWait(r)
 	if !ok {
 		http.Error(w, "invalid timeout", 400)
 		return
 	}
 	// Subscribe before the first query so mail stored between the query and the
 	// wait still wakes this request.
-	wake, unsubscribe := s.hub.subscribe(role)
+	wake, unsubscribe := s.hub.Subscribe(role)
 	defer unsubscribe()
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
-	evs := []mailEvent{}
+	evs := []wire.MailEvent{}
 	for {
 		var e error
 		if evs, e = s.pendingAfter(role, cursor); e != nil {
@@ -264,5 +281,5 @@ func (s *Server) pollEvents(w http.ResponseWriter, r *http.Request, role string)
 	h := w.Header()
 	h.Set("Content-Type", "application/json")
 	h.Set("Cache-Control", "no-store")
-	writeJSON(w, pollResponse{Events: evs, Cursor: cursor})
+	writeJSON(w, PollResponse{Events: evs, Cursor: cursor})
 }

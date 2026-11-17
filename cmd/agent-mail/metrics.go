@@ -10,6 +10,7 @@ import (
 
 	"github.com/sandcorporation/agent-mail/internal/config"
 	"github.com/sandcorporation/agent-mail/internal/identity"
+	"github.com/sandcorporation/agent-mail/internal/mail"
 	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
@@ -147,40 +148,20 @@ func (s *Server) metrics(days int) (metricsReport, error) {
 	return out, err
 }
 
-// flowMail is the part of a message the flow metrics read.
-type flowMail struct {
-	ID        int64
-	Sender    string
-	Recipient string
-	Subject   string
-	Created   time.Time
-	TaskID    string
-	ThreadID  int64
-	ReplyTo   int64
-}
-
-// thread is the thread a message belongs to: its root's ID.
-func (m flowMail) thread() int64 {
-	if m.ThreadID != 0 {
-		return m.ThreadID
-	}
-	return m.ID
-}
-
 // windowMail loads the mail created at or after from, oldest first.
 // created_at is RFC 3339 text whose fraction length varies, so the SQL bound
 // is one second early and the exact cut is made on the parsed time.
-func (s *Server) windowMail(from time.Time) ([]flowMail, error) {
+func (s *Server) windowMail(from time.Time) ([]mail.FlowMail, error) {
 	rows, err := s.db.Query(`SELECT id,sender,recipient,subject,created_at,COALESCE(task_id,''),COALESCE(thread_id,0),COALESCE(reply_to,0) FROM messages WHERE created_at>=? ORDER BY id`,
 		from.Add(-time.Second).UTC().Format("2006-01-02T15:04:05"))
 	if err != nil {
 		return nil, err
 	}
-	all, err := scanFlowMail(rows)
+	all, err := mail.ScanFlowMail(rows)
 	if err != nil {
 		return nil, err
 	}
-	var out []flowMail
+	var out []mail.FlowMail
 	for _, m := range all {
 		if !m.Created.Before(from) {
 			out = append(out, m)
@@ -230,10 +211,10 @@ var latencyBucketBounds = []struct {
 // firstReplies measures thread-starting mail in msgs (sorted oldest first):
 // no thread_id or reply_to, not from the system, and not carrying a task_id
 // an earlier message in the window already carried.
-func firstReplies(msgs []flowMail, base func(string) string, isBoss func(string) bool) firstReplyMetrics {
-	byThread, byTask := map[int64][]flowMail{}, map[string][]flowMail{}
+func firstReplies(msgs []mail.FlowMail, base func(string) string, isBoss func(string) bool) firstReplyMetrics {
+	byThread, byTask := map[int64][]mail.FlowMail{}, map[string][]mail.FlowMail{}
 	for _, m := range msgs {
-		byThread[m.thread()] = append(byThread[m.thread()], m)
+		byThread[m.Thread()] = append(byThread[m.Thread()], m)
 		if m.TaskID != "" {
 			byTask[m.TaskID] = append(byTask[m.TaskID], m)
 		}
@@ -252,13 +233,13 @@ func firstReplies(msgs []flowMail, base func(string) string, isBoss func(string)
 			continue
 		}
 		to := base(root.Recipient)
-		var first *flowMail
+		var first *mail.FlowMail
 		candidates := byThread[root.ID]
 		if root.TaskID != "" {
-			candidates = append(append([]flowMail{}, candidates...), byTask[root.TaskID]...)
+			candidates = append(append([]mail.FlowMail{}, candidates...), byTask[root.TaskID]...)
 		}
 		for i := range candidates {
-			if m := candidates[i]; answers(root, m, base, isBoss) && (first == nil || m.Created.Before(first.Created) || (m.Created.Equal(first.Created) && m.ID < first.ID)) {
+			if m := candidates[i]; mail.Answers(root, m, base, isBoss) && (first == nil || m.Created.Before(first.Created) || (m.Created.Equal(first.Created) && m.ID < first.ID)) {
 				first = &candidates[i]
 			}
 		}
@@ -325,17 +306,17 @@ func latencySummary(ds []int64) latencyStats {
 
 // threadRoundTrips counts direction changes between each thread's two main
 // bases (the two that appear most, by sender and recipient) over msgs.
-func threadRoundTrips(msgs []flowMail, base func(string) string) threadMetrics {
-	byThread := map[int64][]flowMail{}
+func threadRoundTrips(msgs []mail.FlowMail, base func(string) string) threadMetrics {
+	byThread := map[int64][]mail.FlowMail{}
 	var order []int64
 	for _, m := range msgs {
 		if identity.IsSystemSender(m.Sender) || identity.IsSystemSender(m.Recipient) {
 			continue
 		}
-		if _, ok := byThread[m.thread()]; !ok {
-			order = append(order, m.thread())
+		if _, ok := byThread[m.Thread()]; !ok {
+			order = append(order, m.Thread())
 		}
-		byThread[m.thread()] = append(byThread[m.thread()], m)
+		byThread[m.Thread()] = append(byThread[m.Thread()], m)
 	}
 	out := threadMetrics{Top: []threadRounds{}}
 	var multi []threadRounds

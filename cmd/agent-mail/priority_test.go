@@ -11,11 +11,12 @@ import (
 	"testing"
 
 	"github.com/sandcorporation/agent-mail/internal/store"
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
-func decodeMessage(t *testing.T, raw []byte) Message {
+func decodeMessage(t *testing.T, raw []byte) wire.Message {
 	t.Helper()
-	var m Message
+	var m wire.Message
 	if err := json.Unmarshal(raw, &m); err != nil {
 		t.Fatalf("decode %s: %v", raw, err)
 	}
@@ -49,11 +50,11 @@ func TestSendPriorityDefaultsUrgentAndValidation(t *testing.T) {
 	}
 
 	// Every Message view carries priority.
-	var inbox []Message
+	var inbox []wire.Message
 	_ = json.Unmarshal(call(s, "GET", "/api/messages?box=inbox", "secret-b", nil, "").Body.Bytes(), &inbox)
-	var outbox []Message
+	var outbox []wire.Message
 	_ = json.Unmarshal(call(s, "GET", "/api/messages?box=outbox", "secret-a", nil, "").Body.Bytes(), &outbox)
-	for name, list := range map[string][]Message{"inbox": inbox, "outbox": outbox} {
+	for name, list := range map[string][]wire.Message{"inbox": inbox, "outbox": outbox} {
 		if len(list) != 3 {
 			t.Fatalf("%s: %+v", name, list)
 		}
@@ -75,7 +76,7 @@ func TestSendPriorityDefaultsUrgentAndValidation(t *testing.T) {
 	r.Header.Set("X-Agent-Mail-Admin", "proxy-secret")
 	aw := httptest.NewRecorder()
 	s.api(aw, r)
-	var admin []Message
+	var admin []wire.Message
 	if err := json.Unmarshal(aw.Body.Bytes(), &admin); err != nil || len(admin) != 3 || admin[1].Priority != "urgent" || admin[0].Priority != "normal" {
 		t.Fatalf("admin list: %d %s", aw.Code, aw.Body)
 	}
@@ -227,7 +228,7 @@ func TestCLIUrgentSendReplyAndMarkers(t *testing.T) {
 	h.mustRun(nil, "reply", "2", "--subject", "re: fire", "--body", "on it", "--urgent")
 	h.mustRun(nil, "reply", "1", "--subject", "re: plain", "--body", "ok")
 	outbox := h.mustRun(nil, "outbox", "--json")
-	var sent []Message
+	var sent []wire.Message
 	if err := json.Unmarshal([]byte(outbox), &sent); err != nil || len(sent) != 2 || sent[0].Priority != "normal" || sent[1].Priority != "urgent" {
 		t.Fatalf("reply priorities: %s", outbox)
 	}

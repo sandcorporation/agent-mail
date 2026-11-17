@@ -15,6 +15,7 @@ import (
 
 	"github.com/sandcorporation/agent-mail/internal/cli"
 	"github.com/sandcorporation/agent-mail/internal/store"
+	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
 // fakeClock is a settable clock for lease tests.
@@ -38,7 +39,7 @@ func slotServer(t *testing.T) (*Server, *fakeClock) {
 	s := testServer(t)
 	clock := &fakeClock{t: time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)}
 	s.clock = clock.now
-	s.slotLease = time.Minute
+	s.presenceCfg.SlotLease = time.Minute
 	if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES('team/worker',?,'now')`, workerToken); err != nil {
 		t.Fatal(err)
 	}
@@ -59,15 +60,17 @@ func callAs(s *Server, method, path, token, role string, body any) *httptest.Res
 	return w
 }
 
-func ident(machine, dir string) slotRequest { return slotRequest{Machine: machine, Directory: dir} }
+func ident(machine, dir string) wire.SlotRequest {
+	return wire.SlotRequest{Machine: machine, Directory: dir}
+}
 
-func slotDo(t *testing.T, s *Server, action string, req slotRequest) slotGrant {
+func slotDo(t *testing.T, s *Server, action string, req wire.SlotRequest) wire.SlotGrant {
 	t.Helper()
 	w := callAs(s, "POST", "/api/slots/"+action, workerToken, "team/worker", req)
 	if w.Code != 200 {
 		t.Fatalf("%s %+v: %d %s", action, req, w.Code, w.Body)
 	}
-	var g slotGrant
+	var g wire.SlotGrant
 	if err := json.Unmarshal(w.Body.Bytes(), &g); err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +83,7 @@ func slotTable(t *testing.T, s *Server) map[string]string {
 	if w.Code != 200 {
 		t.Fatalf("slots: %d %s", w.Code, w.Body)
 	}
-	var out []slotView
+	var out []wire.SlotView
 	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +100,7 @@ func inboxSubjects(t *testing.T, s *Server, role string) []string {
 	if w.Code != 200 {
 		t.Fatalf("inbox %s: %d %s", role, w.Code, w.Body)
 	}
-	var ms []Message
+	var ms []wire.Message
 	_ = json.Unmarshal(w.Body.Bytes(), &ms)
 	out := []string{}
 	for _, m := range ms {
@@ -118,7 +121,7 @@ func TestSlotConcurrentRegistrationNeverSharesANumber(t *testing.T) {
 			defer wg.Done()
 			w := callAs(s, "POST", "/api/slots/register", workerToken, "team/worker", ident("host", "/w/"+itoa(int64(i))))
 			codes[i] = w.Code
-			var g slotGrant
+			var g wire.SlotGrant
 			_ = json.Unmarshal(w.Body.Bytes(), &g)
 			got[i] = g.Number
 		}(i)
@@ -138,7 +141,7 @@ func TestSlotConcurrentRegistrationNeverSharesANumber(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			w := callAs(s, "POST", "/api/slots/register", workerToken, "team/worker", ident("other", "/same"))
-			var g slotGrant
+			var g wire.SlotGrant
 			_ = json.Unmarshal(w.Body.Bytes(), &g)
 			same[i] = g.Number
 		}(i)
@@ -163,7 +166,7 @@ func TestSlotSameIdentityReclaimsOthersGetNextFree(t *testing.T) {
 	}
 	// Reconnect before the lease ends: same number, lease extended.
 	clock.add(30 * time.Second)
-	again := slotDo(t, s, "register", slotRequest{Machine: "m1", Directory: "/a", SessionID: "s-2", Label: "issue-9", Parent: "team/lead"})
+	again := slotDo(t, s, "register", wire.SlotRequest{Machine: "m1", Directory: "/a", SessionID: "s-2", Label: "issue-9", Parent: "team/lead"})
 	if again.Number != 1 || !again.Reclaimed || again.SessionID != "s-2" || again.Label != "issue-9" || again.Parent != "team/lead" || !again.LeaseExpiresAt.Equal(clock.now().Add(time.Minute)) {
 		t.Fatalf("reclaim: %+v", again)
 	}
@@ -185,7 +188,7 @@ func TestSlotSameIdentityReclaimsOthersGetNextFree(t *testing.T) {
 	if a3 := slotDo(t, s, "register", ident("m1", "/a")); a3.Number != 1 || !a3.Reclaimed || a3.OtherActive != 0 {
 		t.Fatalf("reclaim after expiry: %+v", a3)
 	}
-	for _, bad := range []slotRequest{{Machine: "m"}, {Directory: "/d"}, {Machine: "m", Directory: strings.Repeat("x", 513)}} {
+	for _, bad := range []wire.SlotRequest{{Machine: "m"}, {Directory: "/d"}, {Machine: "m", Directory: strings.Repeat("x", 513)}} {
 		if w := callAs(s, "POST", "/api/slots/register", workerToken, "team/worker", bad); w.Code != 400 {
 			t.Fatalf("bad identity %+v: %d", bad, w.Code)
 		}
@@ -359,7 +362,7 @@ func TestSlotPrefixTokenRules(t *testing.T) {
 	}
 	for _, want := range []string{"team/lead-1", "team/lead-3"} {
 		w := callAs(s, "POST", "/api/slots/register", "secret-lead", "team/lead", ident("m", want))
-		var g slotGrant
+		var g wire.SlotGrant
 		_ = json.Unmarshal(w.Body.Bytes(), &g)
 		if g.Role != want {
 			t.Fatalf("lead registration: %d %s, want %s", w.Code, w.Body, want)
