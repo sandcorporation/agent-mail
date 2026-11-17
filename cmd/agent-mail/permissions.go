@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -18,24 +19,28 @@ import (
 // A session asks for permission to use a tool (POST /api/permissions); the
 // server gives the request an opaque ID and an expiry
 // (AGENT_MAIL_PERMISSION_TTL, default 10m). Exactly one allow or deny answer
-// is accepted, from:
+// is accepted, and only from a boss role listed in AGENT_MAIL_BOSS_ROLES
+// (matched by base or role). Sessions on one machine can read each other's
+// profile files, so any other role, the requester's parent included, is no
+// independent check; the boss credential lives on a separate machine. The
+// requester's own base never answers its own request, even when it is a
+// boss: every holder of a base token can act as any <base>-N. Authority is
+// per base: any <base>-N of a boss base may answer, since one token covers
+// them all.
 //
-//   - the requester's parent: the parent reported on the requester's active
-//     slot, read once when the request is made and fixed on the request, so
-//     changing the slot afterwards cannot redirect it; or
-//   - a boss role listed in AGENT_MAIL_BOSS_ROLES.
+// The parent reported on the requester's active slot is read once when the
+// request is made and fixed on the request, so changing the slot afterwards
+// cannot redirect it. It is only trusted when it belongs to a different
+// base (a same-base parent is the requester itself or a sibling slot). A
+// trusted parent may read the request and is told about it, but cannot
+// answer.
 //
-// The parent is self-reported by the requester at registration, so it is
-// only trusted when it belongs to a different base: every holder of a base
-// token can act as any <base>-N, so a same-base parent (the requester itself
-// or a sibling slot) is no independent check and is ignored. For the same
-// reason the requester's base never answers its own request, even when it is
-// a boss. Authority is per base: any <base>-N of the parent or boss base may
-// answer, since one token covers them all.
-//
-// The answerers are told by urgent mail from the system sender (the parent,
-// or every boss when there is no trusted parent); the requester gets urgent
-// mail with the answer and can also read GET /api/permissions/{id}.
+// Every boss of another base gets urgent mail from the system sender with
+// the answer command; a trusted parent also gets urgent mail saying a boss
+// must answer, without the command. With no boss of another base the
+// request is refused (409) and the session falls back to its local prompt.
+// The requester gets urgent mail with the answer and can also read
+// GET /api/permissions/{id}.
 
 const (
 	defaultPermissionTTL = 10 * time.Minute
@@ -129,16 +134,14 @@ func baseOf(q queryer, name string) string {
 
 func (s *Server) isBoss(p principal) bool { return s.bossRoles[p.Base] || s.bossRoles[p.Role] }
 
-// mayAnswer: the parent base or a boss, never the requester's own base.
+// mayAnswer: a boss, never the requester's own base.
 func (s *Server) mayAnswer(p principal, v permissionView) bool {
-	if p.Base == v.requesterBase {
-		return false
-	}
-	return (v.parentBase != "" && p.Base == v.parentBase) || s.isBoss(p)
+	return p.Base != v.requesterBase && s.isBoss(p)
 }
 
+// mayRead: the requester's base, the recorded parent base, or a boss.
 func (s *Server) mayRead(p principal, v permissionView) bool {
-	return p.Base == v.requesterBase || s.mayAnswer(p, v)
+	return p.Base == v.requesterBase || (v.parentBase != "" && p.Base == v.parentBase) || s.mayAnswer(p, v)
 }
 
 // permissionAPI serves /api/permissions and /api/permissions/{id}[/answer].
@@ -221,20 +224,24 @@ func (s *Server) requestPermission(w http.ResponseWriter, r *http.Request, p pri
 			parent, _ = mailbox(tx, declared)
 			parentBase = pb
 		}
-		switch {
-		case parent != "":
-			notify = []string{parent}
-		default:
-			// Registered bosses of another base; the requester's own base
-			// cannot answer.
-			for _, boss := range sortedKeys(s.bossRoles) {
-				if b := baseOf(tx, boss); b != "" && b != p.Base {
-					box, _ := mailbox(tx, boss)
-					notify = append(notify, box)
-				}
+		// Registered bosses of another base answer; the requester's own base
+		// cannot.
+		for _, boss := range sortedKeys(s.bossRoles) {
+			if b := baseOf(tx, boss); b != "" && b != p.Base {
+				box, _ := mailbox(tx, boss)
+				notify = append(notify, box)
 			}
-			if len(notify) == 0 {
-				return errNobody
+		}
+		if len(notify) == 0 {
+			return errNobody
+		}
+		// A trusted parent is told, but cannot answer unless it is a boss.
+		var inform []string
+		if parent != "" && !slices.Contains(notify, parent) {
+			if s.isBoss(principal{Role: parent, Base: parentBase}) {
+				notify = append(notify, parent)
+			} else {
+				inform = []string{parent}
 			}
 		}
 		if _, e := tx.Exec(`INSERT INTO permissions(id,requester,requester_base,tool,summary,declared_parent,parent,parent_base,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?)`,
@@ -242,19 +249,28 @@ func (s *Server) requestPermission(w http.ResponseWriter, r *http.Request, p pri
 			return e
 		}
 		subject := "permission: " + req.Tool + " for " + p.Role
+		deadline := expires.UTC().Format(time.RFC3339)
 		body := fmt.Sprintf("%s asks to use %s: %s\nAnswer before %s: agent-mail permission answer %s --decision allow|deny",
-			p.Role, req.Tool, req.Summary, expires.UTC().Format(time.RFC3339), id)
+			p.Role, req.Tool, req.Summary, deadline, id)
+		info := fmt.Sprintf("%s asks to use %s: %s\nRequest %s expires at %s. A boss role must answer it; you are told as the parent and cannot answer.",
+			p.Role, req.Tool, req.Summary, id, deadline)
 		for _, box := range notify {
 			if e := insertSystemMail(tx, box, subject, body, id, "urgent", "", now); e != nil {
 				return e
 			}
 		}
+		for _, box := range inform {
+			if e := insertSystemMail(tx, box, subject, info, id, "urgent", "", now); e != nil {
+				return e
+			}
+		}
+		notify = append(notify, inform...)
 		var e error
 		v, e = scanPermission(tx.QueryRow(`SELECT `+permissionCols()+` FROM permissions WHERE id=?`, id), now)
 		return e
 	})
 	if errors.Is(err, errNobody) {
-		http.Error(w, "nobody can answer: no parent of another base on an active slot and no boss role configured", http.StatusConflict)
+		http.Error(w, "nobody can answer: no boss role of another base configured", http.StatusConflict)
 		return
 	}
 	if err != nil {
