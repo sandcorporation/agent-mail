@@ -47,7 +47,7 @@ func sortedKeys(m map[string]bool) []string {
 	return out
 }
 
-// principal is an authenticated caller. Role is the mailbox name used for
+// Principal is an authenticated caller. Role is the mailbox name used for
 // storage (slot 1 is stored as its base); Base is the role whose token
 // authorised the request; Number is the slot number in the header (0 when
 // the header named a role row exactly).
@@ -103,7 +103,7 @@ func (s *Service) Authenticate(t, h string) (Principal, bool) {
 	return p, true
 }
 
-// mailbox returns the stored name for an address: an exact role row as is,
+// Mailbox returns the stored name for an address: an exact role row as is,
 // "<base>-1" as <base>, "<base>-N" as itself. ok is false when no role row
 // backs the address.
 func Mailbox(q Queryer, name string) (string, bool) {

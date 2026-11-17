@@ -31,7 +31,7 @@ import (
 // With no groups every role is internal, BossesFor is the global list, and
 // all of this reduces to the behaviour from before groups.
 
-// group is one row of the groups table.
+// Group is one row of the groups table.
 type Group struct {
 	Prefix    string  `json:"prefix"`
 	BossRole  string  `json:"boss_role"`
@@ -191,7 +191,7 @@ func (s *Service) AnswerableSQL(p Principal, col string) (string, []any) {
 	return strings.Join(conds, ` OR `), args
 }
 
-// whoami is GET /api/whoami: who the caller is and whether it is a boss.
+// Whoami is GET /api/whoami: who the caller is and whether it is a boss.
 // The switchboard plugin shows its boss panel when is_boss is true.
 type Whoami struct {
 	Role       string   `json:"role"`

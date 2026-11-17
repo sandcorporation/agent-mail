@@ -45,7 +45,7 @@ var argonCost = argonParams{time: 2, memory: 64 * 1024, threads: 2}
 const (
 	argonKeyLen    = 32
 	argonSaltLen   = 16
-	TOTPStep       = 30
+	TOTPStep       = 30 // seconds per TOTP code
 	totpDigits     = 6
 	minPasswordLen = 12
 )
@@ -54,6 +54,7 @@ const (
 // same time as a wrong password.
 var dummyHash = func() string { h, _ := HashPassword("unused password for timing"); return h }()
 
+// HashPassword returns the argon2id PHC string of pw with a random salt.
 func HashPassword(pw string) (string, error) {
 	salt := make([]byte, argonSaltLen)
 	if _, err := rand.Read(salt); err != nil {
