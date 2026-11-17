@@ -50,6 +50,7 @@ var (
 	optBody    = option{"--body", "TEXT", "message body"}
 	optBodyF   = option{"--body-file", "PATH", "read the message body from a file (stdin is used when neither is given)"}
 	optSubject = option{"--subject", "TEXT", "message subject"}
+	optUrgent  = option{"--urgent", "", "mark the message urgent (default priority is normal)"}
 )
 
 var commands = []command{
@@ -75,6 +76,7 @@ var commands = []command{
 			{"--to", "ROLE", "recipient role"},
 			optSubject, optBody, optBodyF,
 			{"--task", "ID", "task identifier to attach"},
+			optUrgent,
 			{"--idempotency-key", "KEY", "retry-safe key; resending with the same key returns the first message"},
 			optJSON, optProfile,
 		}},
@@ -106,6 +108,7 @@ var commands = []command{
 		options: []option{
 			optSubject, optBody, optBodyF,
 			{"--to", "ROLE", "send the reply to ROLE instead of the original sender"},
+			optUrgent,
 			optJSON, optProfile,
 		}},
 	{name: "ack", args: "ID", nargs: 1, summary: "Acknowledge a message", options: []option{optJSON, optProfile}},
@@ -258,7 +261,7 @@ func dispatch(args []string) (int, error) {
 		if e != nil {
 			return 0, e
 		}
-		b, _ := json.Marshal(map[string]any{"subject": p.values["--subject"], "body": body, "recipient": p.values["--to"]})
+		b, _ := json.Marshal(withPriority(p, map[string]any{"subject": p.values["--subject"], "body": body, "recipient": p.values["--to"]}))
 		req, _ := http.NewRequest("POST", endpoint(c, "/api/messages/"+p.pos[0]+"/reply"), bytes.NewReader(b))
 		req.Header.Set("Content-Type", "application/json")
 		return doRequest(c, req, p.bool("--json"))
@@ -535,7 +538,7 @@ func cliSend(c Config, p parsedArgs) (int, error) {
 	if e != nil {
 		return 0, e
 	}
-	b, _ := json.Marshal(map[string]any{"recipient": p.values["--to"], "subject": p.values["--subject"], "body": body, "task_id": p.values["--task"]})
+	b, _ := json.Marshal(withPriority(p, map[string]any{"recipient": p.values["--to"], "subject": p.values["--subject"], "body": body, "task_id": p.values["--task"]}))
 	req, _ := http.NewRequest("POST", endpoint(c, "/api/messages"), bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
 	if key := p.values["--idempotency-key"]; key != "" {
@@ -553,6 +556,15 @@ func listURL(c Config, box, q, status string) string {
 		v.Set("status", status)
 	}
 	return endpoint(c, "/api/messages?"+v.Encode())
+}
+
+// withPriority adds "priority":"urgent" for --urgent. Normal mail omits the
+// field so servers that predate message priority accept the request unchanged.
+func withPriority(p parsedArgs, req map[string]any) map[string]any {
+	if p.bool("--urgent") {
+		req["priority"] = "urgent"
+	}
+	return req
 }
 
 func cliList(c Config, box string, p parsedArgs) (int, error) {
@@ -617,7 +629,11 @@ func pretty(v any) {
 			fmt.Println()
 		}
 	case map[string]any:
-		fmt.Printf("#%v %v\n%s → %s · %s\n%s\n", x["id"], x["subject"], x["sender"], x["recipient"], x["status"], x["body"])
+		mark := ""
+		if x["priority"] == "urgent" {
+			mark = "[urgent] "
+		}
+		fmt.Printf("#%v %s%v\n%v → %v · %s\n%s\n", x["id"], mark, x["subject"], x["sender"], x["recipient"], x["status"], x["body"])
 	default:
 		fmt.Println(v)
 	}
@@ -662,6 +678,9 @@ func fetchPending(client *http.Client, c Config) ([]Message, error) {
 	for _, m := range all {
 		// Older servers ignore the status filter; filter here as well.
 		if m.Status == "pending" {
+			if m.Priority == "" { // servers that predate message priority
+				m.Priority = "normal"
+			}
 			pending = append(pending, m)
 		}
 	}
@@ -703,6 +722,9 @@ func cliWait(c Config, p parsedArgs) (int, error) {
 					line := fmt.Sprintf("#%d %s | %s", m.ID, m.Sender, oneLine(m.Subject))
 					if m.TaskID != "" {
 						line += " | task=" + m.TaskID
+					}
+					if m.Priority == "urgent" {
+						line += " | urgent"
 					}
 					fmt.Println(line)
 				}

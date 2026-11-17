@@ -32,6 +32,7 @@ type Message struct {
 	ThreadID       int64     `json:"thread_id,omitempty"`
 	ReplyTo        int64     `json:"reply_to,omitempty"`
 	Status         string    `json:"status"`
+	Priority       string    `json:"priority"` // "normal" or "urgent"
 	IdempotencyKey string    `json:"-"`
 }
 type Server struct {
@@ -53,8 +54,7 @@ func runServer() {
 		log.Fatal(e)
 	}
 	db.SetMaxOpenConns(1)
-	_, e = db.Exec(`PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT,sender TEXT NOT NULL,recipient TEXT NOT NULL,subject TEXT NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL,task_id TEXT,thread_id INTEGER,reply_to INTEGER,status TEXT NOT NULL DEFAULT 'pending',idem TEXT, UNIQUE(sender,idem)); CREATE INDEX IF NOT EXISTS idx_recipient ON messages(recipient,id); CREATE INDEX IF NOT EXISTS idx_sender ON messages(sender,id); CREATE TABLE IF NOT EXISTS role_states(role TEXT NOT NULL,message_id INTEGER NOT NULL,status TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(role,message_id)); CREATE TABLE IF NOT EXISTS roles(role TEXT PRIMARY KEY, token TEXT NOT NULL, created_at TEXT NOT NULL);`)
-	if e != nil {
+	if e = initSchema(db); e != nil {
 		log.Fatal(e)
 	}
 	s := &Server{db: db, tokens: map[string]string{}, adminProxyToken: os.Getenv("AGENT_MAIL_ADMIN_PROXY_TOKEN"), done: make(chan struct{})}
@@ -102,6 +102,52 @@ func runServer() {
 	<-stopped
 	_ = db.Close()
 }
+
+// initSchema creates the tables when missing and upgrades databases created by
+// older versions in place. It is safe to run on every start.
+func initSchema(db *sql.DB) error {
+	if _, e := db.Exec(`PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT,sender TEXT NOT NULL,recipient TEXT NOT NULL,subject TEXT NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL,task_id TEXT,thread_id INTEGER,reply_to INTEGER,status TEXT NOT NULL DEFAULT 'pending',idem TEXT,priority TEXT NOT NULL DEFAULT 'normal', UNIQUE(sender,idem)); CREATE INDEX IF NOT EXISTS idx_recipient ON messages(recipient,id); CREATE INDEX IF NOT EXISTS idx_sender ON messages(sender,id); CREATE TABLE IF NOT EXISTS role_states(role TEXT NOT NULL,message_id INTEGER NOT NULL,status TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(role,message_id)); CREATE TABLE IF NOT EXISTS roles(role TEXT PRIMARY KEY, token TEXT NOT NULL, created_at TEXT NOT NULL);`); e != nil {
+		return e
+	}
+	has, e := hasColumn(db, "messages", "priority")
+	if e != nil || has {
+		return e
+	}
+	// Databases from before message priority: existing mail becomes normal.
+	_, e = db.Exec(`ALTER TABLE messages ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`)
+	return e
+}
+
+func hasColumn(db *sql.DB, table, column string) (bool, error) {
+	rows, e := db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if e != nil {
+		return false, e
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if e = rows.Scan(&name); e != nil {
+			return false, e
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
+// normalizePriority returns the stored priority for a request value: empty
+// means normal; anything other than normal or urgent is rejected.
+func normalizePriority(p string) (string, bool) {
+	switch p {
+	case "":
+		return "normal", true
+	case "normal", "urgent":
+		return p, true
+	}
+	return "", false
+}
+
 func migrateConfiguredRoles(s *Server) error {
 	for role, token := range s.tokens {
 		if _, err := s.db.Exec(`INSERT OR IGNORE INTO roles(role,token,created_at) VALUES(?,?,?)`, role, token, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
@@ -240,7 +286,7 @@ func adminList(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	if box != "inbox" && box != "outbox" {
 		box = "all"
 	}
-	query := `SELECT m.id,m.sender,m.recipient,m.subject,m.body,m.created_at,COALESCE(m.task_id,''),COALESCE(m.thread_id,0),COALESCE(m.reply_to,0),COALESCE(rs.status,m.status,'pending') FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=m.recipient WHERE 1=1`
+	query := `SELECT m.id,m.sender,m.recipient,m.subject,m.body,m.created_at,COALESCE(m.task_id,''),COALESCE(m.thread_id,0),COALESCE(m.reply_to,0),COALESCE(rs.status,m.status,'pending'),COALESCE(m.priority,'normal') FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=m.recipient WHERE 1=1`
 	args := []any{}
 	if role != "" {
 		query += ` AND (m.sender=? OR m.recipient=?)`
@@ -279,7 +325,7 @@ func adminList(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	for rows.Next() {
 		var m Message
 		var created string
-		if rows.Scan(&m.ID, &m.Sender, &m.Recipient, &m.Subject, &m.Body, &created, &m.TaskID, &m.ThreadID, &m.ReplyTo, &m.Status) == nil {
+		if rows.Scan(&m.ID, &m.Sender, &m.Recipient, &m.Subject, &m.Body, &created, &m.TaskID, &m.ThreadID, &m.ReplyTo, &m.Status, &m.Priority) == nil {
 			m.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 			out = append(out, m)
 		}
@@ -355,6 +401,12 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request, role string) {
 		http.Error(w, "recipient and subject required", 400)
 		return
 	}
+	priority, ok := normalizePriority(m.Priority)
+	if !ok {
+		http.Error(w, `priority must be "normal" or "urgent"`, 400)
+		return
+	}
+	m.Priority = priority
 	var allowed int
 	if s.db.QueryRow(`SELECT 1 FROM roles WHERE role=?`, m.Recipient).Scan(&allowed) != nil {
 		http.Error(w, "unknown recipient role", 403)
@@ -369,7 +421,7 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request, role string) {
 	if key != "" {
 		var existing Message
 		var created string
-		e := s.db.QueryRow(`SELECT id,sender,recipient,subject,body,created_at,COALESCE(task_id,''),COALESCE(thread_id,0),COALESCE(reply_to,0),status FROM messages WHERE sender=? AND idem=?`, role, key).Scan(&existing.ID, &existing.Sender, &existing.Recipient, &existing.Subject, &existing.Body, &created, &existing.TaskID, &existing.ThreadID, &existing.ReplyTo, &existing.Status)
+		e := s.db.QueryRow(`SELECT id,sender,recipient,subject,body,created_at,COALESCE(task_id,''),COALESCE(thread_id,0),COALESCE(reply_to,0),status,COALESCE(priority,'normal') FROM messages WHERE sender=? AND idem=?`, role, key).Scan(&existing.ID, &existing.Sender, &existing.Recipient, &existing.Subject, &existing.Body, &created, &existing.TaskID, &existing.ThreadID, &existing.ReplyTo, &existing.Status, &existing.Priority)
 		if e == nil {
 			existing.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 			w.WriteHeader(200)
@@ -381,7 +433,7 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request, role string) {
 	if m.ThreadID == 0 && m.ReplyTo > 0 {
 		m.ThreadID = m.ReplyTo
 	}
-	res, e := s.db.Exec(`INSERT INTO messages(sender,recipient,subject,body,created_at,task_id,thread_id,reply_to,idem) VALUES(?,?,?,?,?,?,?,?,?)`, role, m.Recipient, m.Subject, m.Body, now.Format(time.RFC3339Nano), m.TaskID, nullInt(m.ThreadID), nullInt(m.ReplyTo), nullable(key))
+	res, e := s.db.Exec(`INSERT INTO messages(sender,recipient,subject,body,created_at,task_id,thread_id,reply_to,idem,priority) VALUES(?,?,?,?,?,?,?,?,?,?)`, role, m.Recipient, m.Subject, m.Body, now.Format(time.RFC3339Nano), m.TaskID, nullInt(m.ThreadID), nullInt(m.ReplyTo), nullable(key), m.Priority)
 	if e != nil {
 		http.Error(w, "could not store message", 500)
 		return
@@ -413,7 +465,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request, role string) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	status := r.URL.Query().Get("status")
 	limit := 100
-	query := `SELECT m.id,m.sender,m.recipient,m.subject,m.body,m.created_at,COALESCE(m.task_id,''),COALESCE(m.thread_id,0),COALESCE(m.reply_to,0),COALESCE(CASE WHEN rs.status IS NOT NULL THEN rs.status ELSE m.status END,'pending') FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=CASE WHEN m.sender=? THEN m.recipient ELSE ? END WHERE `
+	query := `SELECT m.id,m.sender,m.recipient,m.subject,m.body,m.created_at,COALESCE(m.task_id,''),COALESCE(m.thread_id,0),COALESCE(m.reply_to,0),COALESCE(CASE WHEN rs.status IS NOT NULL THEN rs.status ELSE m.status END,'pending'),COALESCE(m.priority,'normal') FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=CASE WHEN m.sender=? THEN m.recipient ELSE ? END WHERE `
 	args := []any{role, role}
 	if box == "outbox" {
 		query += `m.sender=? `
@@ -443,7 +495,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request, role string) {
 	for rows.Next() {
 		var m Message
 		var created string
-		if rows.Scan(&m.ID, &m.Sender, &m.Recipient, &m.Subject, &m.Body, &created, &m.TaskID, &m.ThreadID, &m.ReplyTo, &m.Status) == nil {
+		if rows.Scan(&m.ID, &m.Sender, &m.Recipient, &m.Subject, &m.Body, &created, &m.TaskID, &m.ThreadID, &m.ReplyTo, &m.Status, &m.Priority) == nil {
 			m.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 			out = append(out, m)
 		}
@@ -465,7 +517,7 @@ func (s *Server) read(w http.ResponseWriter, r *http.Request, role string, id in
 func (s *Server) get(id int64) (Message, error) {
 	var m Message
 	var c string
-	e := s.db.QueryRow(`SELECT id,sender,recipient,subject,body,created_at,COALESCE(task_id,''),COALESCE(thread_id,0),COALESCE(reply_to,0),status FROM messages WHERE id=?`, id).Scan(&m.ID, &m.Sender, &m.Recipient, &m.Subject, &m.Body, &c, &m.TaskID, &m.ThreadID, &m.ReplyTo, &m.Status)
+	e := s.db.QueryRow(`SELECT id,sender,recipient,subject,body,created_at,COALESCE(task_id,''),COALESCE(thread_id,0),COALESCE(reply_to,0),status,COALESCE(priority,'normal') FROM messages WHERE id=?`, id).Scan(&m.ID, &m.Sender, &m.Recipient, &m.Subject, &m.Body, &c, &m.TaskID, &m.ThreadID, &m.ReplyTo, &m.Status, &m.Priority)
 	m.CreatedAt, _ = time.Parse(time.RFC3339Nano, c)
 	return m, e
 }
