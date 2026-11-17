@@ -19,7 +19,7 @@ import (
 // online without a reported state is logged as "unknown". Closed rows older
 // than presenceLogRetain are pruned by the sweep.
 //
-// The metrics (cmd/agent-mail/metrics.go) read error:* and blocked:* time from this table.
+// The metrics (internal/insight/metrics.go) read error:* and blocked:* time from this table.
 
 const (
 	presenceLogRetain = 60 * 24 * time.Hour
