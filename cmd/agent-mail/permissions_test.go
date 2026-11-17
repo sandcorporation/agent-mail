@@ -12,7 +12,7 @@ import (
 
 const bossToken = "secret-boss"
 
-// permissionServer: roles a (the worker's parent), b (a bystander),
+// permissionServer: roles a (the worker's parent, not a boss), b (a bystander),
 // sandcorp/boss (a boss) and team/worker; permission TTL 10m.
 func permissionServer(t *testing.T) (*Server, *fakeClock) {
 	t.Helper()
@@ -78,38 +78,52 @@ func registerWorker(t *testing.T, s *Server, dir, parent string) {
 	slotDo(t, s, "register", r)
 }
 
-func TestPermissionParentAnswers(t *testing.T) {
+func TestPermissionParentIsToldButCannotAnswer(t *testing.T) {
 	s, _ := permissionServer(t)
 	registerWorker(t, s, "/w", "a")
-	wake, stop := s.hub.subscribe("a")
-	defer stop()
+	wakeParent, stopParent := s.hub.subscribe("a")
+	defer stopParent()
+	wakeBoss, stopBoss := s.hub.subscribe("sandcorp/boss")
+	defer stopBoss()
 	v := askAs(t, s, workerToken, "team/worker-1", 201)
 	if !strings.HasPrefix(v.ID, "perm_") || len(v.ID) != 37 || v.Status != "pending" || v.Parent != "a" || v.Requester != "team/worker" ||
 		v.Tool != "Bash" || v.Summary != "rm -rf build/" || !v.ExpiresAt.Equal(v.CreatedAt.Add(10*time.Minute)) {
 		t.Fatalf("request: %+v", v)
 	}
-	select {
-	case <-wake:
-	default:
-		t.Fatal("parent not woken")
+	for name, wake := range map[string]<-chan struct{}{"parent": wakeParent, "boss": wakeBoss} {
+		select {
+		case <-wake:
+		default:
+			t.Fatalf("%s not woken", name)
+		}
+	}
+	// The boss gets the answer command; the parent only an informational mail.
+	boss := systemMail(t, s, bossToken, "sandcorp/boss")
+	if len(boss) != 1 || boss[0].Priority != "urgent" || boss[0].TaskID != v.ID || !strings.Contains(boss[0].Body, "rm -rf build/") ||
+		!strings.Contains(boss[0].Body, "agent-mail permission answer "+v.ID) {
+		t.Fatalf("boss notice: %+v", boss)
 	}
 	notes := systemMail(t, s, "secret-a", "a")
-	if len(notes) != 1 || notes[0].Priority != "urgent" || notes[0].TaskID != v.ID || !strings.Contains(notes[0].Body, "rm -rf build/") || !strings.Contains(notes[0].Body, v.ID) {
+	if len(notes) != 1 || notes[0].Priority != "urgent" || notes[0].TaskID != v.ID || !strings.Contains(notes[0].Body, "rm -rf build/") ||
+		!strings.Contains(notes[0].Body, v.ID) || !strings.Contains(notes[0].Body, "boss") || strings.Contains(notes[0].Body, "permission answer") {
 		t.Fatalf("parent notice: %+v", notes)
 	}
-	if got := systemMail(t, s, bossToken, "sandcorp/boss"); len(got) != 0 {
-		t.Fatalf("boss told although a parent exists: %+v", got)
-	}
-	if got := listPermissionsAs(t, s, "secret-a", "a", "?pending=1"); len(got) != 1 || got[0].ID != v.ID || !got[0].CanAnswer {
+	// The parent still sees it, but cannot answer.
+	if got := listPermissionsAs(t, s, "secret-a", "a", "?pending=1"); len(got) != 1 || got[0].ID != v.ID || got[0].CanAnswer {
 		t.Fatalf("parent pending list: %+v", got)
+	}
+	if got := showAs(t, s, "secret-a", "a-2", v.ID, 200); got.Parent != "a" || got.CanAnswer {
+		t.Fatalf("parent view: %+v", got)
 	}
 	if got := listPermissionsAs(t, s, "secret-b", "b", ""); len(got) != 0 {
 		t.Fatalf("bystander list: %+v", got)
 	}
+	answerAs(t, s, "secret-a", "a", v.ID, "allow", 403)
+	answerAs(t, s, "secret-a", "a-2", v.ID, "allow", 403)
 
-	// Any number of the parent's base may answer: one token covers them all.
-	a := answerAs(t, s, "secret-a", "a-2", v.ID, "allow", 200)
-	if a.Status != "allowed" || a.Decision != "allow" || a.AnsweredBy != "a-2" || a.Note != "ok by me" || a.AnsweredAt == nil {
+	// Any number of the boss base may answer: one token covers them all.
+	a := answerAs(t, s, bossToken, "sandcorp/boss-2", v.ID, "allow", 200)
+	if a.Status != "allowed" || a.Decision != "allow" || a.AnsweredBy != "sandcorp/boss-2" || a.Note != "ok by me" || a.AnsweredAt == nil {
 		t.Fatalf("answer: %+v", a)
 	}
 	got := showAs(t, s, workerToken, "team/worker-1", v.ID, 200)
@@ -121,11 +135,23 @@ func TestPermissionParentAnswers(t *testing.T) {
 		t.Fatalf("requester notice: %+v", told)
 	}
 	// A second answer, even the same one, is a conflict.
-	answerAs(t, s, "secret-a", "a", v.ID, "deny", 409)
 	answerAs(t, s, bossToken, "sandcorp/boss", v.ID, "allow", 409)
 	if got := listPermissionsAs(t, s, "secret-a", "a", "?pending=1"); len(got) != 0 {
 		t.Fatalf("answered request still pending: %+v", got)
 	}
+}
+
+func TestPermissionBossParentGetsTheAnswerMail(t *testing.T) {
+	s, _ := permissionServer(t)
+	s.bossRoles["a"] = true
+	registerWorker(t, s, "/w", "a")
+	v := askAs(t, s, workerToken, "team/worker-1", 201)
+	for _, c := range []struct{ token, role string }{{"secret-a", "a"}, {bossToken, "sandcorp/boss"}} {
+		if got := systemMail(t, s, c.token, c.role); len(got) != 1 || !strings.Contains(got[0].Body, "agent-mail permission answer "+v.ID) {
+			t.Fatalf("%s notice: %+v", c.role, got)
+		}
+	}
+	answerAs(t, s, "secret-a", "a", v.ID, "allow", 200)
 }
 
 func TestPermissionBossAnswers(t *testing.T) {
@@ -148,7 +174,8 @@ func TestPermissionBossAnswers(t *testing.T) {
 	if w.Parent != "" {
 		t.Fatalf("parent without a slot: %+v", w)
 	}
-	if got := systemMail(t, s, bossToken, "sandcorp/boss"); len(got) != 1 || got[0].TaskID != w.ID || got[0].Priority != "urgent" {
+	// The boss was told of both requests, the newest first.
+	if got := systemMail(t, s, bossToken, "sandcorp/boss"); len(got) != 2 || got[0].TaskID != w.ID || got[0].Priority != "urgent" || got[1].TaskID != v.ID {
 		t.Fatalf("boss notice: %+v", got)
 	}
 	answerAs(t, s, "secret-a", "a", w.ID, "allow", 403)
@@ -177,7 +204,9 @@ func TestPermissionRejectsOtherAnswerers(t *testing.T) {
 	// The requester's base never answers, even when it is a boss.
 	s.bossRoles["team/worker"] = true
 	answerAs(t, s, workerToken, "team/worker-2", v.ID, "allow", 403)
-	answerAs(t, s, "secret-a", "a", v.ID, "allow", 200)
+	answerAs(t, s, workerToken, "team/worker", v.ID, "allow", 403)
+	answerAs(t, s, "secret-a", "a", v.ID, "allow", 403) // the parent
+	answerAs(t, s, bossToken, "sandcorp/boss", v.ID, "allow", 200)
 }
 
 func TestPermissionSameBaseParentIsIgnored(t *testing.T) {
@@ -199,6 +228,21 @@ func TestPermissionSameBaseParentIsIgnored(t *testing.T) {
 	if w := callAs(s, "POST", "/api/permissions", workerToken, "team/worker-2", map[string]string{"tool": "Bash", "summary": "x"}); w.Code != 409 {
 		t.Fatalf("request nobody can answer: %d %s", w.Code, w.Body)
 	}
+	// A trusted parent does not help: only a boss can answer.
+	registerWorker(t, s, "/w4", "a")
+	if w := callAs(s, "POST", "/api/permissions", workerToken, "team/worker-4", map[string]string{"tool": "Bash", "summary": "x"}); w.Code != 409 ||
+		!strings.Contains(w.Body.String(), "nobody can answer") {
+		t.Fatalf("parent but no boss: %d %s", w.Code, w.Body)
+	}
+	if got := systemMail(t, s, "secret-a", "a"); len(got) != 0 {
+		t.Fatalf("parent told about a refused request: %+v", got)
+	}
+	// A boss of the requester's own base is no answerer either.
+	s.bossRoles = map[string]bool{"team/worker": true}
+	if w := callAs(s, "POST", "/api/permissions", workerToken, "team/worker-4", map[string]string{"tool": "Bash", "summary": "x"}); w.Code != 409 {
+		t.Fatalf("only own-base boss: %d %s", w.Code, w.Body)
+	}
+	s.bossRoles = map[string]bool{}
 	// A parent that is not a registered role is ignored too.
 	registerWorker(t, s, "/w3", "ghost/lead")
 	if w := callAs(s, "POST", "/api/permissions", workerToken, "team/worker-3", map[string]string{"tool": "Bash", "summary": "x"}); w.Code != 409 {
@@ -214,8 +258,10 @@ func TestPermissionParentIsFixedAtRequestTime(t *testing.T) {
 	r := ident("m", "/w")
 	r.Parent = "b"
 	slotDo(t, s, "heartbeat", r)
-	answerAs(t, s, "secret-b", "b", v.ID, "allow", 403)
-	answerAs(t, s, "secret-a", "a", v.ID, "allow", 200)
+	showAs(t, s, "secret-b", "b", v.ID, 403)
+	if got := showAs(t, s, "secret-a", "a", v.ID, 200); got.Parent != "a" {
+		t.Fatalf("fixed parent: %+v", got)
+	}
 	// New requests use the new parent.
 	w := askAs(t, s, workerToken, "team/worker-1", 201)
 	if w.Parent != "b" {
@@ -229,11 +275,12 @@ func TestPermissionExpires(t *testing.T) {
 	registerWorker(t, s, "/w", "a")
 	v := askAs(t, s, workerToken, "team/worker-1", 201)
 	done := askAs(t, s, workerToken, "team/worker-1", 201)
-	answerAs(t, s, "secret-a", "a", done.ID, "deny", 200)
+	answerAs(t, s, bossToken, "sandcorp/boss", done.ID, "deny", 200)
 	clock.add(time.Minute)
-	answerAs(t, s, "secret-a", "a", v.ID, "allow", 410)
+	answerAs(t, s, bossToken, "sandcorp/boss", v.ID, "allow", 410)
 	answerAs(t, s, "secret-b", "b", v.ID, "allow", 403) // still not theirs
-	answerAs(t, s, "secret-a", "a", done.ID, "allow", 409)
+	answerAs(t, s, "secret-a", "a", v.ID, "allow", 403) // nor the parent's
+	answerAs(t, s, bossToken, "sandcorp/boss", done.ID, "allow", 409)
 	if got := showAs(t, s, workerToken, "team/worker-1", v.ID, 200); got.Status != "expired" || got.Decision != "" {
 		t.Fatalf("expired view: %+v", got)
 	}
@@ -338,9 +385,9 @@ func TestPermissionConcurrentAnswersAndSweepsActOnce(t *testing.T) {
 	v := askAs(t, s, workerToken, "team/worker-1", 201)
 	codes := make(chan int, 8)
 	for i := 0; i < 8; i++ {
-		token, role := "secret-a", "a"
+		token, role := bossToken, "sandcorp/boss"
 		if i%2 == 1 {
-			token, role = bossToken, "sandcorp/boss"
+			role = "sandcorp/boss-2"
 		}
 		go func() {
 			codes <- callAs(s, "POST", "/api/permissions/"+v.ID+"/answer", token, role, map[string]string{"decision": "allow"}).Code
