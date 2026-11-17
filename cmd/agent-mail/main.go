@@ -36,15 +36,18 @@ type Message struct {
 	IdempotencyKey string    `json:"-"`
 }
 type Server struct {
-	db              *sql.DB
-	tokens          map[string]string
-	adminProxyToken string
-	hub             mailHub
-	eventKeepAlive  time.Duration
-	pollMax         time.Duration    // cap on a long poll's wait; 0 means defaultPollMax
-	done            chan struct{}    // closed on shutdown; ends event streams
-	slotLease       time.Duration    // slot lease length; 0 means defaultSlotLease
-	clock           func() time.Time // nil means time.Now; tests move time forward
+	db               *sql.DB
+	tokens           map[string]string
+	adminProxyToken  string
+	hub              mailHub
+	eventKeepAlive   time.Duration
+	pollMax          time.Duration    // cap on a long poll's wait; 0 means defaultPollMax
+	done             chan struct{}    // closed on shutdown; ends event streams
+	slotLease        time.Duration    // AGENT_MAIL_SLOT_LEASE; 0 means presence interval × missed
+	presenceInterval time.Duration    // expected heartbeat interval; 0 means defaultPresenceInterval
+	presenceMissed   int              // heartbeats a session may miss; 0 means defaultPresenceMissed
+	presenceRetain   *time.Duration   // how long offline sessions stay listed; nil means defaultPresenceRetain
+	clock            func() time.Time // nil means time.Now; tests move time forward
 }
 
 var version = "dev"
@@ -81,6 +84,9 @@ func runServer() {
 			log.Fatal("AGENT_MAIL_SLOT_LEASE must be a duration of at least 1s such as 3m")
 		}
 		s.slotLease = d
+	}
+	if e = configurePresence(s, os.Getenv); e != nil {
+		log.Fatal(e)
 	}
 	for _, pair := range strings.Split(os.Getenv("AGENT_MAIL_TOKENS"), ",") {
 		p := strings.SplitN(strings.TrimSpace(pair), "=", 2)
@@ -128,12 +134,16 @@ func initSchema(db *sql.DB) error {
 		return e
 	}
 	has, e := hasColumn(db, "messages", "priority")
-	if e != nil || has {
+	if e != nil {
 		return e
 	}
-	// Databases from before message priority: existing mail becomes normal.
-	_, e = db.Exec(`ALTER TABLE messages ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`)
-	return e
+	if !has {
+		// Databases from before message priority: existing mail becomes normal.
+		if _, e = db.Exec(`ALTER TABLE messages ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`); e != nil {
+			return e
+		}
+	}
+	return migratePresence(db)
 }
 
 func hasColumn(db *sql.DB, table, column string) (bool, error) {
@@ -211,6 +221,10 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	role := who.Role
 	w.Header().Set("Content-Type", "application/json")
 	path := strings.TrimPrefix(r.URL.Path, "/api/")
+	if path == "presence" {
+		s.presenceAPI(w, r)
+		return
+	}
 	if path == "slots" || strings.HasPrefix(path, "slots/") {
 		s.slotAPI(w, r, who, strings.TrimPrefix(strings.TrimPrefix(path, "slots"), "/"))
 		return
@@ -301,6 +315,8 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, out)
+	case "presence":
+		s.presenceAPI(w, r)
 	case "messages":
 		adminList(w, r, s.db)
 	default:

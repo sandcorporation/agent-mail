@@ -36,6 +36,12 @@ button{cursor:pointer}
 pre{white-space:pre-wrap;overflow-wrap:anywhere;font:15px/1.5 ui-monospace,monospace;margin:0}
 .muted{color:#667}
 #notice{margin:.4rem 0}
+.wide{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.9em}
+th,td{text-align:left;padding:.3rem .5rem;border-bottom:1px solid #dde;white-space:nowrap}
+td.dir{white-space:normal;overflow-wrap:anywhere;min-width:10rem}
+tr.offline td{color:#889}
+.st-busy{color:#b26a00;font-weight:600}.st-compacting{color:#6a1b9a;font-weight:600}.st-idle{color:#2e7d32}
 </style>
 </head>
 <body>
@@ -51,9 +57,14 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:15px/1.5 ui-monospace,monos
 <button id="reset">초기화</button>
 <span id="conn">연결 중…</span>
 </section>
+<section class="card">
+<div class="row"><h2 style="margin:0">세션</h2><button id="reloadSessions">새로 고침</button><span id="sessionsNote" class="muted"></span></div>
+<div class="wide"><table><thead><tr><th>역할</th><th>상태</th><th>컨텍스트</th><th>마지막 턴</th><th>기계</th><th>폴더</th><th>라벨</th><th>부모</th><th>마지막 보고</th></tr></thead><tbody id="sessions"></tbody></table></div>
+</section>
 <div id="notice" class="muted"></div>
 <div id="list"></div>
 <script>
+const sessionLabel={idle:'유휴',busy:'바쁨',compacting:'compact 중',unknown:'모름',offline:'오프라인'};
 const statusLabel={pending:'안 읽음',read:'읽음',acknowledged:'확인함',complete:'완료',completed:'완료'};
 const $=id=>document.getElementById(id);
 async function api(path){
@@ -66,8 +77,26 @@ async function api(path){
 }
 function node(tag,text,cls){const n=document.createElement(tag);n.textContent=text;if(cls)n.className=cls;return n}
 async function init(){
+  loadSessions();
   try{for(const role of await api('roles'))$('role').append(new Option(role,role));await load()}
   catch(e){$('conn').textContent=e.message}
+}
+function kTokens(n){if(n===null||n===undefined)return '-';return n<10000?(n/1000).toFixed(1)+'k':Math.round(n/1000)+'k'}
+function when(t){return t?new Date(t).toLocaleString('ko-KR'):'-'}
+function ago(now,t){if(!t)return '-';const s=Math.max(0,Math.round((new Date(now)-new Date(t))/1000));return s<120?s+'초 전':s<7200?Math.round(s/60)+'분 전':Math.round(s/3600)+'시간 전'}
+async function loadSessions(){
+  $('sessionsNote').textContent='불러오는 중…';
+  try{
+    const p=await api('presence');
+    const body=$('sessions');body.replaceChildren();
+    for(const v of p.sessions){
+      const tr=node('tr','',v.online?'':'offline');
+      const cells=[v.role,sessionLabel[v.status]||v.status,kTokens(v.context_tokens),when(v.last_turn_at),v.machine,v.directory,v.label||'-',v.parent||'-',ago(p.now,v.reported_at)];
+      cells.forEach((text,i)=>tr.append(node('td',text,i===1?'st-'+v.status:(i===5?'dir':''))));
+      body.append(tr);
+    }
+    $('sessionsNote').textContent=p.sessions.length+'개 · 심장박동 '+p.interval_seconds+'초, '+p.missed+'번 놓치면 오프라인';
+  }catch(e){$('sessionsNote').textContent=e.message}
 }
 async function load(){
   $('conn').textContent='불러오는 중…';
@@ -110,6 +139,7 @@ function card(m){
   return c;
 }
 $('go').onclick=load;
+$('reloadSessions').onclick=loadSessions;
 $('reset').onclick=()=>{$('thread').value='';$('search').value='';$('status').value='';$('role').value='';$('box').value='all';load()};
 $('search').addEventListener('keydown',e=>{if(e.key==='Enter')load()});
 $('thread').addEventListener('keydown',e=>{if(e.key==='Enter')load()});

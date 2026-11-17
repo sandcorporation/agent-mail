@@ -50,11 +50,14 @@ func (s *Server) now() time.Time {
 	return time.Now()
 }
 
+// leaseLength is AGENT_MAIL_SLOT_LEASE when set, otherwise the presence
+// heartbeat interval times the number of heartbeats a session may miss
+// (60s × 3 = defaultSlotLease). Offline means the lease has ended.
 func (s *Server) leaseLength() time.Duration {
 	if s.slotLease > 0 {
 		return s.slotLease
 	}
-	return defaultSlotLease
+	return s.heartbeatInterval() * time.Duration(s.missedHeartbeats())
 }
 
 // splitSlot parses "<base>-N" with N a positive number without leading zeros.
@@ -140,14 +143,18 @@ func mailbox(q queryer, name string) (string, bool) {
 }
 
 // slotRequest is the body of the slot endpoints. Machine and Directory form
-// the identity; the rest is stored for display (and for presence and label
-// routing later).
+// the identity; session, label and parent are stored for display (and label
+// routing later). State, ContextTokens and LastTurnAt are the presence report
+// (see presence.go); release ignores them.
 type slotRequest struct {
-	Machine   string `json:"machine"`
-	Directory string `json:"directory"`
-	SessionID string `json:"session_id"`
-	Label     string `json:"label"`
-	Parent    string `json:"parent"`
+	Machine       string `json:"machine"`
+	Directory     string `json:"directory"`
+	SessionID     string `json:"session_id"`
+	Label         string `json:"label"`
+	Parent        string `json:"parent"`
+	State         string `json:"state,omitempty"`          // idle | busy | compacting
+	ContextTokens *int64 `json:"context_tokens,omitempty"` // >= 0
+	LastTurnAt    string `json:"last_turn_at,omitempty"`   // RFC 3339
 }
 
 func (q slotRequest) valid() bool {
@@ -219,8 +226,16 @@ func (s *Server) slotAPI(w http.ResponseWriter, r *http.Request, p principal, ac
 		return
 	}
 	var req slotRequest
-	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&req) != nil || !req.valid() {
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&req) != nil {
+		http.Error(w, "invalid JSON body", 400)
+		return
+	}
+	if !req.valid() {
 		http.Error(w, "machine and directory required (each field at most 512 bytes)", 400)
+		return
+	}
+	if _, err := req.presence(); err != nil && action != "release" {
+		http.Error(w, err.Error(), 400)
 		return
 	}
 	var (
@@ -391,6 +406,9 @@ func (s *Server) claimSlot(ctx context.Context, base string, req slotRequest, ta
 		if err != nil {
 			return err
 		}
+		if err = applyPresence(tx, base, number, req, now, true); err != nil {
+			return err
+		}
 		return s.fillGrant(tx, &g, base, number)
 	})
 	return g, err
@@ -405,20 +423,22 @@ func displaceFirst(tx *sql.Tx, base string, now int64) (*slotView, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err = tx.Exec(`DELETE FROM slots WHERE base=? AND number=1`, base); err != nil {
+	drop := func() (*slotView, error) {
+		_, err := tx.Exec(`DELETE FROM slots WHERE base=? AND number=1`, base)
 		return nil, err
 	}
 	if ms(cur.LeaseExpiresAt) <= now {
-		return nil, nil
+		return drop()
 	}
 	n, err := freeNumber(tx, base, now, map[int]bool{1: true})
 	if errors.Is(err, errSlotsFull) {
-		return nil, nil // nowhere to go: the old holder is released
+		return drop() // nowhere to go: the old holder is released
 	}
 	if err != nil {
 		return nil, err
 	}
-	if _, err = tx.Exec(`INSERT INTO slots(`+slotCols()+`) VALUES(?,?,?,?,?,?,?,?,?)`, base, n, cur.Machine, cur.Directory, cur.SessionID, cur.Label, cur.Parent, ms(cur.RegisteredAt), ms(cur.LeaseExpiresAt)); err != nil {
+	// Renumber in place so every column (presence included) moves along.
+	if _, err = tx.Exec(`UPDATE slots SET number=? WHERE base=? AND number=1`, n, base); err != nil {
 		return nil, err
 	}
 	cur.Number, cur.Role = n, slotRole(base, n)
@@ -451,6 +471,11 @@ func (s *Server) renewSlot(ctx context.Context, base string, req slotRequest, re
 		}
 		if _, err = tx.Exec(`UPDATE slots SET `+set+` WHERE base=? AND number=?`, append(args, base, own.Number)...); err != nil {
 			return err
+		}
+		if !release {
+			if err = applyPresence(tx, base, own.Number, req, now, false); err != nil {
+				return err
+			}
 		}
 		g.Reclaimed = true
 		return s.fillGrant(tx, &g, base, own.Number)

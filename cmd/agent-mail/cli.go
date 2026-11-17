@@ -38,7 +38,8 @@ type option struct {
 type command struct {
 	name     string
 	args     string // positional synopsis, e.g. "ID"
-	nargs    int    // exact number of positional arguments
+	nargs    int    // exact number of positional arguments (at most, with optArgs)
+	optArgs  bool   // the positional arguments may be left out
 	synopsis string // extra usage text after the positional arguments
 	summary  string
 	options  []option
@@ -130,8 +131,14 @@ var commands = []command{
 			{"--session-id", "ID", "session id to record with the slot"},
 			{"--label", "TEXT", "label to record with the slot"},
 			{"--parent", "ROLE", "parent role to record with the slot"},
+			{"--state", "STATE", "presence state to report: idle, busy or compacting (register, heartbeat, takeover)"},
+			{"--context-tokens", "N", "context size in tokens to report (register, heartbeat, takeover)"},
+			{"--last-turn-at", "TIME", "time the last turn ended, RFC 3339 (register, heartbeat, takeover)"},
 			optJSON, optProfile,
 		}},
+	{name: "status", args: "[ROLE]", nargs: 1, optArgs: true,
+		summary: "Show session presence: every session, a base and its numbers, one numbered role, or a prefix ending in *",
+		options: []option{optJSON, optProfile}},
 	{name: "version", summary: "Show build version"},
 }
 
@@ -274,6 +281,8 @@ func dispatch(args []string) (int, error) {
 		return cliSlots(c, p)
 	case "slot":
 		return cliSlot(c, p)
+	case "status":
+		return cliStatus(c, p)
 	case "read", "ack", "complete":
 		method, u := "GET", endpoint(c, "/api/messages/"+p.pos[0])
 		if name != "read" {
@@ -340,7 +349,7 @@ func parseCommandArgs(cmd command, args []string) (parsedArgs, error) {
 		}
 		p.values[name] = value
 	}
-	if len(p.pos) != cmd.nargs {
+	if len(p.pos) != cmd.nargs && !(cmd.optArgs && len(p.pos) < cmd.nargs) {
 		if cmd.nargs == 0 {
 			return p, fmt.Errorf("unexpected argument %q", p.pos[0])
 		}
@@ -934,7 +943,18 @@ func cliSlot(c Config, p parsedArgs) (int, error) {
 	default:
 		return 0, usagef("slot: unknown action %q (register, heartbeat, takeover, release)", action)
 	}
-	req := slotRequest{Machine: p.values["--machine"], Directory: p.values["--directory"], SessionID: p.values["--session-id"], Label: p.values["--label"], Parent: p.values["--parent"]}
+	req := slotRequest{Machine: p.values["--machine"], Directory: p.values["--directory"], SessionID: p.values["--session-id"], Label: p.values["--label"], Parent: p.values["--parent"],
+		State: p.values["--state"], LastTurnAt: p.values["--last-turn-at"]}
+	if v, ok := p.values["--context-tokens"]; ok {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 0 {
+			return 0, usagef("slot: --context-tokens must be a whole number of at least 0")
+		}
+		req.ContextTokens = &n
+	}
+	if _, err := req.presence(); err != nil {
+		return 0, usagef("slot: %s", err.Error())
+	}
 	if req.Machine == "" {
 		req.Machine, _ = os.Hostname()
 	}
