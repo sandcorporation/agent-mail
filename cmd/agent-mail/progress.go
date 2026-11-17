@@ -319,8 +319,10 @@ func (s *Server) progress() (progressReport, error) {
 	}
 
 	// Open tasks: task ids on mail to or from the service in the window
-	// with at least one message not completed. The SQL bound is a second
-	// early (created_at fractions vary); the exact cut is on the parsed time.
+	// with at least one message not completed. System mail never counts: a
+	// task id carried only by it (alert:*, q_*) is not a task. The SQL bound
+	// is a second early (created_at fractions vary); the exact cut is on the
+	// parsed time.
 	from := now.Add(-progressTaskWindow)
 	taskMail, err := s.progressMailQuery(`m.task_id IS NOT NULL AND m.task_id<>'' AND m.created_at>=?`, from.Add(-time.Second).Format("2006-01-02T15:04:05"))
 	if err != nil {
@@ -330,12 +332,12 @@ func (s *Server) progress() (progressReport, error) {
 	tasks := map[taskKey]*progressTask{}
 	open := map[taskKey]bool{}
 	for _, m := range taskMail {
-		if m.At.Before(from) {
+		if m.At.Before(from) || reservedRole(m.Sender) {
 			continue
 		}
 		seen := map[string]bool{}
 		for _, name := range []string{m.Sender, m.Recipient} {
-			if name == systemSender || seen[serviceOf(name)] {
+			if reservedRole(name) || seen[serviceOf(name)] {
 				continue
 			}
 			seen[serviceOf(name)] = true
