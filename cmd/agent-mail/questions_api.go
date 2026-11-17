@@ -402,6 +402,9 @@ func (s *Server) askQuestion(w http.ResponseWriter, r *http.Request, p principal
 		return
 	}
 	s.publishQuestion(told)
+	if settings.Discord {
+		s.discord.noticeQuestion(id, p.Role, v.Questions[0].Header)
+	}
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, s.forCaller(p, v))
 }
