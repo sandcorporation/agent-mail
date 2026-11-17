@@ -351,6 +351,15 @@ func migrateQuestions(db *sql.DB) error {
 CREATE UNIQUE INDEX IF NOT EXISTS idx_questions_seq ON questions(seq);
 CREATE INDEX IF NOT EXISTS idx_questions_asker ON questions(asker_base,created_at);
 CREATE INDEX IF NOT EXISTS idx_questions_answered ON questions(status,answered_at);`)
+	if err != nil {
+		return err
+	}
+	// answerer: 'owner' when no boss role could answer at ask time.
+	has, err := HasColumn(db, "questions", "answerer")
+	if err != nil || has {
+		return err
+	}
+	_, err = db.Exec(`ALTER TABLE questions ADD COLUMN answerer TEXT NOT NULL DEFAULT ''`)
 	return err
 }
 

@@ -329,10 +329,17 @@ func TestGroupQuestionsGoToGroupBoss(t *testing.T) {
 	}
 
 	// The group boss cannot answer its own question, and a group whose boss
-	// role is not registered has nobody: 409.
-	askQuestionAs(t, s, partnerBossToken, partnerBossRole, 409)
+	// role is not registered has nobody: both go to the dashboard owner.
+	if v := askQuestionAs(t, s, partnerBossToken, partnerBossRole, 201); v.Answerer != wire.AnswererOwner {
+		t.Fatalf("group boss question: %+v", v)
+	}
 	putGroup(t, s, "partner-b", "")
-	askQuestionAs(t, s, partnerBDevToken, partnerBDevRole, 409)
+	if v := askQuestionAs(t, s, partnerBDevToken, partnerBDevRole, 201); v.Answerer != wire.AnswererOwner {
+		t.Fatalf("bossless group question: %+v", v)
+	}
+	if q.Answerer != "" {
+		t.Fatalf("group question with a boss: %+v", q)
+	}
 }
 
 func TestGroupPermissionsGoToGroupBoss(t *testing.T) {

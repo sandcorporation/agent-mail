@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,7 +98,7 @@ func questionMail(t *testing.T, s *Server, id string) []mailRow {
 	return out
 }
 
-func TestQuestionAskRequiresCanAskAndABoss(t *testing.T) {
+func TestQuestionAskRequiresCanAsk(t *testing.T) {
 	s := questionServer(t)
 	if _, err := s.db.Exec(`UPDATE question_settings SET can_ask=0`); err != nil {
 		t.Fatal(err)
@@ -107,14 +108,79 @@ func TestQuestionAskRequiresCanAskAndABoss(t *testing.T) {
 		t.Fatal(err)
 	}
 	v := askQuestionAs(t, s, workerToken, "team/worker-2", 201)
-	if !strings.HasPrefix(v.ID, "q_") || v.Asker != "team/worker-2" || v.Status != "pending" || v.CanAnswer || v.Answers != nil || v.AnsweredAt != nil || v.Seq != 1 || len(v.Questions) != 2 {
+	if !strings.HasPrefix(v.ID, "q_") || v.Asker != "team/worker-2" || v.Status != "pending" || v.CanAnswer || v.Answers != nil || v.AnsweredAt != nil || v.Seq != 1 || len(v.Questions) != 2 || v.Answerer != "" {
 		t.Fatalf("created: %+v", v)
 	}
-	// The asker's own base being a boss does not count.
+	// With no boss of another base (the asker's own base being a boss does
+	// not count) the question is stored for the dashboard.
 	s.bossRoles = map[string]bool{"team/worker": true}
-	askQuestionAs(t, s, workerToken, "team/worker", 409)
+	if v = askQuestionAs(t, s, workerToken, "team/worker", 201); v.Answerer != wire.AnswererOwner {
+		t.Fatalf("own-base boss: %+v", v)
+	}
 	s.bossRoles = nil
-	askQuestionAs(t, s, workerToken, "team/worker", 409)
+	if v = askQuestionAs(t, s, workerToken, "team/worker", 201); v.Answerer != wire.AnswererOwner {
+		t.Fatalf("no boss: %+v", v)
+	}
+}
+
+// A boss role's question has nobody to answer it but a person on the
+// dashboard: it is stored (201, answerer "owner") and answered there.
+func TestQuestionByBossGoesToOwner(t *testing.T) {
+	s := questionServer(t)
+	s.admin.ProxyToken = "proxy-secret"
+
+	// An ordinary question carries no answerer field at all.
+	w := callAs(s, "POST", "/api/questions", workerToken, "team/worker", map[string]any{"questions": sampleQuestions()})
+	if w.Code != 201 || strings.Contains(w.Body.String(), `"answerer"`) {
+		t.Fatalf("ordinary ask: %d %s", w.Code, w.Body)
+	}
+
+	w = callAs(s, "POST", "/api/questions", bossToken, "sandcorp/boss", map[string]any{"questions": sampleQuestions()})
+	if w.Code != 201 || !strings.Contains(w.Body.String(), `"answerer":"owner"`) {
+		t.Fatalf("boss ask: %d %s", w.Code, w.Body)
+	}
+	v := decodeQuestion(t, w.Body.Bytes())
+	if v.Status != "pending" || v.CanAnswer || v.Asker != "sandcorp/boss" {
+		t.Fatalf("boss question: %+v", v)
+	}
+	// Another boss (none here) is the only role path; the asker cannot answer.
+	answerQuestionAs(t, s, bossToken, "sandcorp/boss", v.ID, sampleAnswers(), 403)
+
+	var listed bool
+	for _, q := range adminQuestionList(t, s, "") {
+		listed = listed || (q.ID == v.ID && q.Answerer == wire.AnswererOwner)
+	}
+	if !listed {
+		t.Fatal("owner question missing from the admin list")
+	}
+
+	// The asker's long poll wakes on the dashboard answer.
+	cursor := pollAs(t, s, bossToken, "sandcorp/boss", "?after=0").Cursor
+	done := make(chan asks.QuestionPoll, 1)
+	go func() { done <- pollAs(t, s, bossToken, "sandcorp/boss", fmt.Sprintf("?after=%d&timeout=20", cursor)) }()
+
+	if w := adminWrite(s, "POST", "/api/admin/questions/"+v.ID+"/answer", adminAnswerBody(t)); w.Code != 200 {
+		t.Fatalf("dashboard answer: %d %s", w.Code, w.Body)
+	}
+	select {
+	case got := <-done:
+		if len(got.Questions) != 1 || got.Questions[0].ID != v.ID || got.Questions[0].Status != "answered" || got.Questions[0].Answerer != wire.AnswererOwner {
+			t.Fatalf("woken poll: %+v", got)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("poll was not woken")
+	}
+	r := callAs(s, "GET", "/api/questions/"+v.ID, bossToken, "sandcorp/boss", nil)
+	if got := decodeQuestion(t, r.Body.Bytes()); r.Code != 200 || got.Status != "answered" || got.AnsweredBy != "dashboard" || len(got.Answers) != 2 {
+		t.Fatalf("asker GET: %d %+v", r.Code, got)
+	}
+	var mailed bool
+	for _, m := range systemMail(t, s, bossToken, "sandcorp/boss") {
+		mailed = mailed || (m.TaskID == v.ID && strings.HasPrefix(m.Subject, "[질문 답] "+v.ID))
+	}
+	if !mailed {
+		t.Fatal("answer mail did not reach the asker's inbox")
+	}
 }
 
 func TestQuestionAskValidation(t *testing.T) {
