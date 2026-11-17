@@ -260,6 +260,10 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		s.questionAPI(w, r, who, strings.TrimPrefix(strings.TrimPrefix(path, "questions"), "/"))
 		return
 	}
+	if path == "decisions" {
+		s.decisionsAPI(w, r, &who)
+		return
+	}
 	if path == "presence" {
 		s.presenceAPI(w, r)
 		return
@@ -383,6 +387,8 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 		s.presenceAPI(w, r)
 	case "messages":
 		adminList(w, r, s.db)
+	case "decisions":
+		s.decisionsAPI(w, r, nil)
 	default:
 		http.NotFound(w, r)
 	}
