@@ -1,10 +1,14 @@
-FROM golang:1.25-alpine AS build
+# The build stage runs on the build platform and cross-compiles for the target (pure-Go SQLite, no CGO),
+# so only the small runtime stage runs under emulation in multi-arch builds.
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build
 ARG VERSION=dev
+ARG TARGETOS=linux
+ARG TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /agent-mail ./cmd/agent-mail
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /agent-mail ./cmd/agent-mail
 FROM alpine:3.22
 RUN addgroup -S agentmail && adduser -S -G agentmail agentmail && mkdir -p /data && chown agentmail:agentmail /data
 COPY --from=build /agent-mail /usr/local/bin/agent-mail

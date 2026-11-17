@@ -82,7 +82,7 @@ The Compose file binds to loopback by default (`127.0.0.1:8097`). For private ne
 `docker compose up -d --build` above builds locally (the image is tagged `agent-mail:local`). The production path never builds on the server:
 
 1. A pull request runs `CI` (tests, vet, build).
-2. A push to `main` runs `promote`: the same checks in parallel with `image`, which builds `linux/amd64` and pushes `ghcr.io/sandcorporation/switchboard:<commit sha>` and the same tag under the old `ghcr.io/sandcorporation/agent-mail`, which the deployment still pulls. When both pass, `production` is fast-forwarded to that commit (`scripts/ci/promote.sh`). `production` only moves forward; roll back with a revert PR.
+2. A push to `main` runs `promote`: the same checks in parallel with `image`, which builds a multi-arch image (`linux/amd64`, `linux/arm64`; Docker pulls the host's architecture) and pushes `ghcr.io/sandcorporation/switchboard:<commit sha>` and the same tag under the old `ghcr.io/sandcorporation/agent-mail`, which the deployment still pulls. When both pass, `production` is fast-forwarded to that commit (`scripts/ci/promote.sh`). `production` only moves forward; roll back with a revert PR.
 3. A Jenkins job using the `Jenkinsfile` watches `production` only. Through the `sandcorp` shared library (`sandcorpDeploy`) it waits for the GHCR image of the `production` head, pulls it on the node labelled `agent-mail-deploy`, recreates the `agent-mail` service with `AGENT_MAIL_IMAGE` set to that image (`--no-build`), waits for the container health check and runs `/health` inside the container. If the new container does not become healthy it switches back to the previous successfully deployed image. The `ROLLBACK_SHA` job parameter deploys an older published image.
 
 Nothing deploys until such a job exists. Host-specific values are not in this repository: the deploy node is chosen by its Jenkins label, and secrets plus `MAIL_BIND_ADDRESS` come from the `.env` file in the job workspace on that node (mode `0600`, same keys as above), or, optionally, from an env file outside the workspace named by the node's `DEPLOY_ENV_FILE` environment variable. The workspace `.env` is the default; note that Jenkins can wipe the workspace when a checkout fails, so keep a copy of it. The deploy stops before replacing anything if `SWITCHBOARD_TOKENS` or `MAIL_BIND_ADDRESS` is empty. Keep the Compose project name `agent-mail` so the existing `agent-mail_agent_mail_data` volume is reused; moving from a manual deployment only recreates the container. The deploy node needs Docker with Compose and pull access to the GHCR package.
@@ -113,7 +113,7 @@ docker compose start
 # Restore: stop service, copy a verified backup back to /data/mail.db, then start.
 ```
 
-Use the actual volume name from `docker volume ls` if Compose prefixes it differently. Retain and protect the token file separately from database backups. For safe online backups use SQLite's backup API or briefly stop the container as above.
+Use the actual volume name from `docker volume ls` if Compose prefixes it differently. Retain and protect the token file separately from database backups. For safe online backups use SQLite's backup API or briefly stop the container as above. Moving to another host: [docs/move-host.md](docs/move-host.md).
 
 ## API
 
