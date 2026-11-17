@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sandcorporation/agent-mail/internal/adminauth"
+	"github.com/sandcorporation/agent-mail/internal/identity"
 	"github.com/sandcorporation/agent-mail/internal/store"
 	"github.com/sandcorporation/agent-mail/internal/wire"
 )
@@ -23,7 +25,7 @@ import (
 // runs `switchboard join`, which makes the role token on their own machine and
 // sends it once to POST /api/join with the code; the server keeps only the
 // hash of the code and of the token. Group scope and boss decisions stay in
-// groups.go: this file only creates groups and roles.
+// internal/identity/groups.go: this file only creates groups and roles.
 
 const (
 	defaultInviteTTL = 72 * time.Hour
@@ -104,10 +106,10 @@ func parseInviteTTL(v string) (time.Duration, error) {
 // under the prefix: they would become group roles and lose access.
 func (s *Server) createInvite(ctx context.Context, req inviteRequest, createdBy string) (inviteCreated, error) {
 	var out inviteCreated
-	if !validGroupPrefix(req.Prefix) {
+	if !identity.ValidGroupPrefix(req.Prefix) {
 		return out, apiError{400, "invalid prefix"}
 	}
-	if req.Role != "" && (!wire.ValidRole(req.Role) || !strings.HasPrefix(req.Role, req.Prefix+"/") || reservedRole(req.Role) || s.bossRoles[req.Role]) {
+	if req.Role != "" && (!wire.ValidRole(req.Role) || !strings.HasPrefix(req.Role, req.Prefix+"/") || identity.Reserved(req.Role) || s.bossRoles[req.Role]) {
 		return out, apiError{400, "role must be a role name under " + req.Prefix + "/"}
 	}
 	ttl, err := parseInviteTTL(req.TTL)
@@ -161,7 +163,7 @@ func (s *Server) createInvite(ctx context.Context, req inviteRequest, createdBy 
 		case revoked.Valid:
 			return apiError{409, "group " + req.Prefix + " is revoked"}
 		}
-		if req.Role != "" && roleExists(tx, req.Role) {
+		if req.Role != "" && identity.RoleExists(tx, req.Role) {
 			return apiError{409, "role already registered"}
 		}
 		res, err := tx.Exec(`INSERT INTO invites(code_hash,prefix,role,expires_at,created_by,created_at) VALUES(?,?,?,?,?,?)`,
@@ -176,12 +178,12 @@ func (s *Server) createInvite(ctx context.Context, req inviteRequest, createdBy 
 		return inviteCreated{}, err
 	}
 	if out.GroupCreated {
-		if err = s.loadGroups(); err != nil {
+		if err = s.ids().LoadGroups(); err != nil {
 			return inviteCreated{}, err
 		}
 	}
 	if req.Role != "" {
-		if g, _ := s.groupOf(req.Role); g.Prefix != req.Prefix {
+		if g, _ := s.ids().GroupOf(req.Role); g.Prefix != req.Prefix {
 			// A deeper group owns the role; the invite could never be used.
 			_, _ = s.db.Exec(`UPDATE invites SET cancelled_at=? WHERE id=?`, out.CreatedAt, out.ID)
 			return inviteCreated{}, apiError{409, "role belongs to group " + g.Prefix}
@@ -200,12 +202,12 @@ func decodeInviteRequest(w http.ResponseWriter, r *http.Request) (inviteRequest,
 }
 
 // invitesAPI is POST /api/invites {prefix, role?, ttl?}, for global bosses.
-func (s *Server) invitesAPI(w http.ResponseWriter, r *http.Request, p principal) {
+func (s *Server) invitesAPI(w http.ResponseWriter, r *http.Request, p identity.Principal) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !s.isGlobalBoss(p) {
+	if !s.ids().IsGlobalBoss(p) {
 		http.Error(w, "only a global boss may invite", 403)
 		return
 	}
@@ -228,7 +230,7 @@ func (s *Server) invitesAPI(w http.ResponseWriter, r *http.Request, p principal)
 //	GET    /api/admin/invites        open invites (unused, not cancelled, not expired)
 //	POST   /api/admin/invites        {prefix, role?, ttl?}
 //	DELETE /api/admin/invites/{id}   cancels an open invite
-func (s *Server) adminInvitesAPI(w http.ResponseWriter, r *http.Request, who adminIdentity, rest string) {
+func (s *Server) adminInvitesAPI(w http.ResponseWriter, r *http.Request, who adminauth.Identity, rest string) {
 	if rest == "" {
 		switch r.Method {
 		case http.MethodGet:
@@ -313,8 +315,8 @@ func (s *Server) join(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := s.now()
-	ipKey := "join:" + s.clientIP(r)
-	if s.joinLimits.blocked(now, ipKey) {
+	ipKey := "join:" + s.adminAuth().ClientIP(r)
+	if s.joinLimits.Blocked(now, ipKey) {
 		http.Error(w, "too many failed joins; try later", http.StatusTooManyRequests)
 		return
 	}
@@ -363,13 +365,13 @@ func (s *Server) join(w http.ResponseWriter, r *http.Request) {
 		if want == "" {
 			return apiError{400, "role required (a name under " + prefix + "/)"}
 		}
-		if !wire.ValidRole(want) || !strings.HasPrefix(want, prefix+"/") || reservedRole(want) || s.bossRoles[want] {
+		if !wire.ValidRole(want) || !strings.HasPrefix(want, prefix+"/") || identity.Reserved(want) || s.bossRoles[want] {
 			return apiError{403, "role must be a role name under " + prefix + "/"}
 		}
-		if g, _ := s.groupOf(want); g.Prefix != prefix {
+		if g, _ := s.ids().GroupOf(want); g.Prefix != prefix {
 			return apiError{403, "role must be a role name under " + prefix + "/"}
 		}
-		if roleExists(tx, want) {
+		if identity.RoleExists(tx, want) {
 			return apiError{409, "role already registered"}
 		}
 		if _, err = tx.Exec(`INSERT INTO roles(role,token,created_at) VALUES(?,?,?)`, want, store.TokenHash(req.Credential), stamp); err != nil {
@@ -388,7 +390,7 @@ func (s *Server) join(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var ae apiError
 		if errors.As(err, &ae) && ae.status == 410 {
-			s.joinLimits.fail(now, ipKey)
+			s.joinLimits.Fail(now, ipKey)
 		}
 		writeAPIError(w, err, "join failed")
 		return
@@ -400,7 +402,7 @@ func (s *Server) join(w http.ResponseWriter, r *http.Request) {
 
 // collaboratorGroup is one group in GET /api/admin/collaborators.
 type collaboratorGroup struct {
-	group
+	identity.Group
 	Roles   []collaboratorRole `json:"roles"`
 	Invites []invite           `json:"invites"`
 }
@@ -416,11 +418,11 @@ type collaboratorRole struct {
 // collaborators lists every group with its roles (last seen from presence)
 // and open invites.
 func (s *Server) collaborators() ([]collaboratorGroup, error) {
-	groups, err := s.listGroups()
+	groups, err := s.ids().ListGroups()
 	if err != nil {
 		return nil, err
 	}
-	roles, err := s.listRoles()
+	roles, err := s.ids().ListRoles()
 	if err != nil {
 		return nil, err
 	}
@@ -451,7 +453,7 @@ func (s *Server) collaborators() ([]collaboratorGroup, error) {
 	at := map[string]int{}
 	for _, g := range groups {
 		at[g.Prefix] = len(out)
-		out = append(out, collaboratorGroup{group: g, Roles: []collaboratorRole{}, Invites: []invite{}})
+		out = append(out, collaboratorGroup{Group: g, Roles: []collaboratorRole{}, Invites: []invite{}})
 	}
 	for _, v := range roles {
 		i, ok := at[v.Group]

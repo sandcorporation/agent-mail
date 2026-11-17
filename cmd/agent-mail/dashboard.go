@@ -3,6 +3,8 @@ package main
 import (
 	"io"
 	"net/http"
+
+	"github.com/sandcorporation/agent-mail/internal/config"
 )
 
 // dashboard serves the admin overview. It only calls same-origin /api/admin/*
@@ -20,10 +22,10 @@ func dashboard(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.WriteString(w, dashboardHTML)
 }
 
-// productName and headerText are the only places the product name and the
-// dashboard header live, so a rename is a one-line change.
+// headerText is the only place the dashboard header lives; the product name
+// is config.ProductName.
 const (
-	productName = "Switchboard"
+	productName = config.ProductName
 	headerText  = productName
 )
 

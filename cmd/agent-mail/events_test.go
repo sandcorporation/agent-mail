@@ -292,7 +292,7 @@ func TestEventsStreamEndsAfterRevoke(t *testing.T) {
 	s.eventKeepAlive = 30 * time.Millisecond
 	st := openEvents(t, base, "secret-b", "b", nil, "")
 	st.untilReady(t)
-	if _, err := s.setRevoked(context.Background(), "b", true); err != nil {
+	if _, err := s.ids().SetRevoked(context.Background(), "b", true); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.After(3 * time.Second)

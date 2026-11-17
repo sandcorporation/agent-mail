@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sandcorporation/agent-mail/internal/cli"
+	"github.com/sandcorporation/agent-mail/internal/identity"
 	"github.com/sandcorporation/agent-mail/internal/store"
 )
 
@@ -47,7 +48,7 @@ func TestInviteJoinSendWithinGroup(t *testing.T) {
 	if !inv.GroupCreated || len(inv.Code) != 32 || strings.Count(inv.Code, "-") != 6 {
 		t.Fatalf("invite = %+v", inv)
 	}
-	if g, ok := s.groupOf("partner-c/dev"); !ok || g.BossRole != "partner-c/boss" {
+	if g, ok := s.ids().GroupOf("partner-c/dev"); !ok || g.BossRole != "partner-c/boss" {
 		t.Fatalf("group not created: %+v %v", g, ok)
 	}
 	// The code is stored hashed only.
@@ -86,7 +87,7 @@ func TestInviteRefusesGroupOverExistingRoles(t *testing.T) {
 		if w.Code != 409 {
 			t.Fatalf("invite prefix=%s: %d %s", prefix, w.Code, w.Body)
 		}
-		if _, ok := s.groupOf(prefix + "/x"); ok {
+		if _, ok := s.ids().GroupOf(prefix + "/x"); ok {
 			t.Fatalf("group %s created", prefix)
 		}
 	}
@@ -94,7 +95,7 @@ func TestInviteRefusesGroupOverExistingRoles(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT (SELECT COUNT(*) FROM invites)+(SELECT COUNT(*) FROM groups)`).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("rows left behind: %d %v", n, err)
 	}
-	if !s.unrestricted(principal{Role: internalWorkerRol, Base: internalWorkerRol}) {
+	if !s.ids().Unrestricted(identity.Principal{Role: internalWorkerRol, Base: internalWorkerRol}) {
 		t.Fatal("team/worker lost access")
 	}
 	// An existing group takes invites even though its roles exist.
@@ -170,7 +171,7 @@ func TestJoinReuseExpiryAndCancel(t *testing.T) {
 			t.Fatalf("410 bodies differ: %q", bodies)
 		}
 	}
-	if roleExists(s.db, "partner-c/two") {
+	if identity.RoleExists(s.db, "partner-c/two") {
 		t.Fatal("role created by a dead code")
 	}
 	// Dead codes are limited per IP.

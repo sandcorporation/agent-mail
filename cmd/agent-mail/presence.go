@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/sandcorporation/agent-mail/internal/config"
+	"github.com/sandcorporation/agent-mail/internal/identity"
 )
 
 // Session presence.
@@ -114,7 +115,7 @@ func scanPresence(sc interface{ Scan(...any) error }, now time.Time) (presenceVi
 	var v presenceView
 	var reg, until, tokens, last, reported int64
 	err := sc.Scan(&v.Base, &v.Number, &v.Machine, &v.Directory, &v.SessionID, &v.Label, &v.Parent, &reg, &until, &v.State, &tokens, &last, &reported)
-	v.Role = slotRole(v.Base, v.Number)
+	v.Role = identity.SlotRole(v.Base, v.Number)
 	v.RegisteredAt, v.LeaseExpiresAt = fromMS(reg), fromMS(until)
 	v.Online = until > ms(now)
 	switch {
@@ -183,9 +184,9 @@ func (s *Server) presence(filter string) (presenceList, error) {
 }
 
 // presenceAPI serves GET /api/presence. Internal roles and global bosses read
-// every session; a group role reads its own group's (groups.go). p is nil
+// every session; a group role reads its own group's (internal/identity/groups.go). p is nil
 // for the admin API, which sees all.
-func (s *Server) presenceAPI(w http.ResponseWriter, r *http.Request, p *principal) {
+func (s *Server) presenceAPI(w http.ResponseWriter, r *http.Request, p *identity.Principal) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", 405)
 		return

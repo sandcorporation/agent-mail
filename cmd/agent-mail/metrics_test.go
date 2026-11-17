@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/sandcorporation/agent-mail/internal/cli"
+	"github.com/sandcorporation/agent-mail/internal/identity"
 )
 
 // flowRow is a message for mailAt.
@@ -70,7 +71,7 @@ func TestMetricsFirstReplyMatchesThreadAndTask(t *testing.T) {
 	mailAt(t, s, flowRow{sender: "b", recipient: "a", at: t0.Add(5 * time.Hour), thread: r4})
 	mailAt(t, s, flowRow{sender: "team/worker", recipient: "b", at: t0.Add(5 * time.Hour), thread: r4})
 	// Not measured: system mail, and a thread started before the window.
-	mailAt(t, s, flowRow{sender: systemSender, recipient: "a", at: t0})
+	mailAt(t, s, flowRow{sender: identity.SystemSender, recipient: "a", at: t0})
 	old := mailAt(t, s, flowRow{sender: "a", recipient: "b", at: now.Add(-8 * 24 * time.Hour)})
 	mailAt(t, s, flowRow{sender: "b", recipient: "a", at: t0, thread: old})
 
@@ -111,11 +112,11 @@ func TestMetricsPendingAgeExcludesSystemMail(t *testing.T) {
 	now := clock.now()
 	mailAt(t, s, flowRow{sender: "a", recipient: "b", at: now.Add(-3 * time.Hour), status: "pending"})
 	mailAt(t, s, flowRow{sender: "a", recipient: "b", at: now.Add(-time.Hour), status: "pending"})
-	mailAt(t, s, flowRow{sender: systemSender, recipient: "b", at: now.Add(-5 * time.Hour), status: "pending"})
-	mailAt(t, s, flowRow{sender: legacySystemSender, recipient: "b", at: now.Add(-6 * time.Hour), status: "pending"})
+	mailAt(t, s, flowRow{sender: identity.SystemSender, recipient: "b", at: now.Add(-5 * time.Hour), status: "pending"})
+	mailAt(t, s, flowRow{sender: identity.LegacySystemSender, recipient: "b", at: now.Add(-6 * time.Hour), status: "pending"})
 	mailAt(t, s, flowRow{sender: "b", recipient: "a", at: now.Add(-30 * time.Minute), status: "pending"})
 	mailAt(t, s, flowRow{sender: "b", recipient: "a", at: now.Add(-9 * time.Hour), status: "read"})
-	mailAt(t, s, flowRow{sender: systemSender, recipient: "team/worker-1", at: now.Add(-9 * time.Hour), status: "pending"})
+	mailAt(t, s, flowRow{sender: identity.SystemSender, recipient: "team/worker-1", at: now.Add(-9 * time.Hour), status: "pending"})
 
 	got := mustMetrics(t, s, 7).Pending
 	want := []pendingAge{
@@ -147,7 +148,7 @@ func TestMetricsRoundTrips(t *testing.T) {
 			}
 			if i == 1 {
 				// System mail inside the thread changes nothing.
-				mailAt(t, s, flowRow{sender: systemSender, recipient: "a", at: t0.Add(time.Duration(i) * time.Minute), thread: root})
+				mailAt(t, s, flowRow{sender: identity.SystemSender, recipient: "a", at: t0.Add(time.Duration(i) * time.Minute), thread: root})
 			}
 		}
 		return root
@@ -307,7 +308,7 @@ func TestMetricsSessionStatesClippedToWindow(t *testing.T) {
 
 func TestMetricsAPI(t *testing.T) {
 	s := testServer(t)
-	s.adminProxyToken = "proxy-secret"
+	s.admin.ProxyToken = "proxy-secret"
 	s.alerts = &alertThresholds{Pending: time.Hour, Error: 0, Blocked: 90 * time.Second}
 	if w := call(s, "GET", "/api/metrics", "secret-a", nil, ""); w.Code != 403 {
 		t.Fatalf("non-boss: %d %s", w.Code, w.Body)

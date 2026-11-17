@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/agent-mail/internal/identity"
 )
 
 // Permission requests.
@@ -88,33 +88,18 @@ func scanPermission(sc interface{ Scan(...any) error }, now time.Time) (permissi
 	return v, err
 }
 
-// baseOf is the base whose token authorises name: an exact role row, else
-// the base of <base>-N. It is "" for unknown or reserved names.
-func baseOf(q queryer, name string) string {
-	if name == "" || reservedRole(name) {
-		return ""
-	}
-	if roleExists(q, name) {
-		return name
-	}
-	if base, _, ok := wire.SplitSlot(name); ok && roleExists(q, base) {
-		return base
-	}
-	return ""
-}
-
-// mayAnswer: the requester's boss (bossesFor), never its own base.
-func (s *Server) mayAnswer(p principal, v permissionView) bool {
-	return p.Base != v.RequesterBase && s.isBossFor(p, v.RequesterBase)
+// mayAnswer: the requester's boss (identity BossesFor), never its own base.
+func (s *Server) mayAnswer(p identity.Principal, v permissionView) bool {
+	return p.Base != v.RequesterBase && s.ids().IsBossFor(p, v.RequesterBase)
 }
 
 // mayRead: the requester's base, the recorded parent base, or a boss.
-func (s *Server) mayRead(p principal, v permissionView) bool {
+func (s *Server) mayRead(p identity.Principal, v permissionView) bool {
 	return p.Base == v.RequesterBase || (v.ParentBase != "" && p.Base == v.ParentBase) || s.mayAnswer(p, v)
 }
 
 // permissionAPI serves /api/permissions and /api/permissions/{id}[/answer].
-func (s *Server) permissionAPI(w http.ResponseWriter, r *http.Request, p principal, rest string) {
+func (s *Server) permissionAPI(w http.ResponseWriter, r *http.Request, p identity.Principal, rest string) {
 	parts := strings.Split(rest, "/")
 	switch {
 	case rest == "" && r.Method == http.MethodPost:
@@ -154,7 +139,7 @@ func newPermissionID() (string, error) {
 	return permissionIDPrefix + hex.EncodeToString(b), nil
 }
 
-func (s *Server) requestPermission(w http.ResponseWriter, r *http.Request, p principal) {
+func (s *Server) requestPermission(w http.ResponseWriter, r *http.Request, p identity.Principal) {
 	var req struct {
 		Tool    string `json:"tool"`
 		Summary string `json:"summary"`
@@ -189,15 +174,15 @@ func (s *Server) requestPermission(w http.ResponseWriter, r *http.Request, p pri
 			return e
 		}
 		parent, parentBase := "", ""
-		if pb := baseOf(tx, declared); pb != "" && pb != p.Base && s.maySee(p, pb) {
-			parent, _ = mailbox(tx, declared)
+		if pb := identity.BaseOf(tx, declared); pb != "" && pb != p.Base && s.ids().MaySee(p, pb) {
+			parent, _ = identity.Mailbox(tx, declared)
 			parentBase = pb
 		}
 		// The requester's registered bosses of another base answer; the
 		// requester's own base cannot.
-		for _, boss := range s.bossesFor(p.Base) {
-			if b := baseOf(tx, boss); b != "" && b != p.Base {
-				box, _ := mailbox(tx, boss)
+		for _, boss := range s.ids().BossesFor(p.Base) {
+			if b := identity.BaseOf(tx, boss); b != "" && b != p.Base {
+				box, _ := identity.Mailbox(tx, boss)
 				notify = append(notify, box)
 			}
 		}
@@ -207,7 +192,7 @@ func (s *Server) requestPermission(w http.ResponseWriter, r *http.Request, p pri
 		// A trusted parent is told, but cannot answer unless it is a boss.
 		var inform []string
 		if parent != "" && !slices.Contains(notify, parent) {
-			if s.isBossFor(principal{Role: parent, Base: parentBase}, p.Base) {
+			if s.ids().IsBossFor(identity.Principal{Role: parent, Base: parentBase}, p.Base) {
 				notify = append(notify, parent)
 			} else {
 				inform = []string{parent}
@@ -254,7 +239,7 @@ func (s *Server) requestPermission(w http.ResponseWriter, r *http.Request, p pri
 }
 
 // loadPermission returns the request when p may read it, else an HTTP code.
-func (s *Server) loadPermission(p principal, id string) (permissionView, int) {
+func (s *Server) loadPermission(p identity.Principal, id string) (permissionView, int) {
 	if !strings.HasPrefix(id, permissionIDPrefix) || len(id) > 64 {
 		return permissionView{}, http.StatusNotFound
 	}
@@ -272,12 +257,12 @@ func (s *Server) loadPermission(p principal, id string) (permissionView, int) {
 	return v, 0
 }
 
-func (s *Server) listPermissions(w http.ResponseWriter, r *http.Request, p principal) {
+func (s *Server) listPermissions(w http.ResponseWriter, r *http.Request, p identity.Principal) {
 	pendingOnly := r.URL.Query().Get("pending") == "1"
 	now := s.now()
 	q := `SELECT ` + permissionCols() + ` FROM permissions WHERE requester_base=? OR (parent_base=? AND requester_base<>?)`
 	args := []any{p.Base, p.Base, p.Base}
-	if cond, more := s.answerableSQL(p, "permissions.requester_base"); cond != "" {
+	if cond, more := s.ids().AnswerableSQL(p, "permissions.requester_base"); cond != "" {
 		q += ` OR ` + cond
 		args = append(args, more...)
 	}
@@ -307,7 +292,7 @@ func (s *Server) listPermissions(w http.ResponseWriter, r *http.Request, p princ
 	writeJSON(w, out)
 }
 
-func (s *Server) answerPermission(w http.ResponseWriter, r *http.Request, p principal, id string) {
+func (s *Server) answerPermission(w http.ResponseWriter, r *http.Request, p identity.Principal, id string) {
 	var req struct {
 		Decision string `json:"decision"`
 		Note     string `json:"note"`
@@ -357,7 +342,7 @@ func (s *Server) answerPermission(w http.ResponseWriter, r *http.Request, p prin
 		if req.Note != "" {
 			body += "\nNote: " + req.Note
 		}
-		if box, ok := mailbox(tx, v.Requester); ok {
+		if box, ok := identity.Mailbox(tx, v.Requester); ok {
 			return insertSystemMail(tx, box, "permission "+word+": "+v.Tool, body, id, "urgent", "", now)
 		}
 		return nil
@@ -373,7 +358,7 @@ func (s *Server) answerPermission(w http.ResponseWriter, r *http.Request, p prin
 		http.Error(w, "could not store answer", 500)
 		return
 	}
-	if box, ok := mailbox(s.db, v.Requester); ok {
+	if box, ok := identity.Mailbox(s.db, v.Requester); ok {
 		s.hub.publish(box)
 	}
 	writeJSON(w, v)

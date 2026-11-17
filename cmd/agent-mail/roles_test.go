@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sandcorporation/agent-mail/internal/identity"
 	"github.com/sandcorporation/agent-mail/internal/store"
 )
 
@@ -159,7 +160,7 @@ func TestRegisterAndSeedStoreHashes(t *testing.T) {
 
 func TestRevokeRefusesRoleAndSlotsUntilRestored(t *testing.T) {
 	s, _ := slotServer(t)
-	s.adminProxyToken = "proxy-secret"
+	s.admin.ProxyToken = "proxy-secret"
 	t.Setenv("SWITCHBOARD_ENROLLMENT_TOKEN", "enrollment-secret")
 	slotDo(t, s, "register", ident("m", "/one"))
 	two := slotDo(t, s, "register", ident("m", "/two"))
@@ -176,7 +177,7 @@ func TestRevokeRefusesRoleAndSlotsUntilRestored(t *testing.T) {
 		t.Fatalf("GET revoke: %d", w.Code)
 	}
 	w := adminWrite(s, "POST", "/api/admin/roles/team/worker/revoke", "")
-	var v roleView
+	var v identity.RoleView
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &v) != nil || v.Role != "team/worker" || v.RevokedAt == nil {
 		t.Fatalf("revoke: %d %s", w.Code, w.Body)
 	}
@@ -206,7 +207,7 @@ func TestRevokeRefusesRoleAndSlotsUntilRestored(t *testing.T) {
 	}
 
 	w = adminRequest(s, "GET", "/api/admin/roles", "", nil)
-	var list []roleView
+	var list []identity.RoleView
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &list) != nil {
 		t.Fatalf("roles: %d %s", w.Code, w.Body)
 	}
@@ -229,7 +230,7 @@ func TestRevokeRefusesRoleAndSlotsUntilRestored(t *testing.T) {
 
 func TestRoleHashesNeverLeaveTheServer(t *testing.T) {
 	s, _ := slotServer(t)
-	s.adminProxyToken = "proxy-secret"
+	s.admin.ProxyToken = "proxy-secret"
 	slotDo(t, s, "register", ident("m", "/one"))
 	bodies := []string{
 		adminRequest(s, "GET", "/api/admin/roles", "", nil).Body.String(),

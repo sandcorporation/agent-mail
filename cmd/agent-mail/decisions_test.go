@@ -17,7 +17,7 @@ const teamOtherToken = "secret-team-other"
 func decisionServer(t *testing.T) (*Server, *fakeClock) {
 	t.Helper()
 	s, clock := permissionServer(t)
-	s.adminProxyToken = "proxy-secret"
+	s.admin.ProxyToken = "proxy-secret"
 	if _, err := s.db.Exec(`UPDATE question_settings SET can_ask=1 WHERE target='default'`); err != nil {
 		t.Fatal(err)
 	}

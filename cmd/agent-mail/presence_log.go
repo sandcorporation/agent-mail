@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/identity"
 )
 
 // Presence history.
@@ -47,7 +49,7 @@ func logPresenceState(tx *sql.Tx, base string, number int, state string, at time
 	if err = closePresenceLog(tx, base, number, at); err != nil {
 		return err
 	}
-	_, err = tx.Exec(`INSERT INTO presence_log(base,number,role,state,started_at) VALUES(?,?,?,?,?)`, base, number, slotRole(base, number), state, ms(at))
+	_, err = tx.Exec(`INSERT INTO presence_log(base,number,role,state,started_at) VALUES(?,?,?,?,?)`, base, number, identity.SlotRole(base, number), state, ms(at))
 	return err
 }
 

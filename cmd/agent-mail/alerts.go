@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/identity"
 )
 
 // Metrics alerts.
@@ -106,13 +108,13 @@ func (s *Server) dueAlerts(now time.Time) ([]alertDue, error) {
 func (s *Server) bossMailboxes(q queryer) (boxes, bases []string) {
 	seen := map[string]bool{}
 	for _, boss := range sortedKeys(s.bossRoles) {
-		box, ok := mailbox(q, boss)
+		box, ok := identity.Mailbox(q, boss)
 		if !ok || seen[box] {
 			continue
 		}
 		seen[box] = true
 		boxes = append(boxes, box)
-		bases = append(bases, baseOf(q, box))
+		bases = append(bases, identity.BaseOf(q, box))
 	}
 	return boxes, bases
 }
@@ -135,7 +137,7 @@ func (s *Server) sweepAlerts(ctx context.Context) (int, error) {
 		err := s.inTx(ctx, func(tx *sql.Tx) error {
 			boxes, bases := s.bossMailboxes(tx)
 			var to []string
-			subjectBase := baseOf(tx, a.Role)
+			subjectBase := identity.BaseOf(tx, a.Role)
 			for i, box := range boxes {
 				// A boss already sees its own pending mail.
 				if a.Kind == "pending" && (box == a.Role || (subjectBase != "" && bases[i] == subjectBase)) {

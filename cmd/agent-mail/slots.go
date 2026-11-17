@@ -2,15 +2,14 @@ package main
 
 import (
 	"context"
-	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/sandcorporation/agent-mail/internal/identity"
 	"github.com/sandcorporation/agent-mail/internal/store"
 	"github.com/sandcorporation/agent-mail/internal/wire"
 )
@@ -29,16 +28,6 @@ const (
 	maxSlotNumber    = wire.MaxSlotNumber
 	maxSlotField     = 512 // bytes, for machine, directory, session_id, label, parent
 )
-
-// principal is an authenticated caller. Role is the mailbox name used for
-// storage (slot 1 is stored as its base); Base is the role whose token
-// authorised the request; Number is the slot number in the header (0 when
-// the header named a role row exactly).
-type principal struct {
-	Role   string
-	Base   string
-	Number int
-}
 
 // queryer is the part of *sql.DB and *sql.Tx the slot code reads through, so
 // the same lookups work inside a transaction.
@@ -63,66 +52,17 @@ func (s *Server) leaseLength() time.Duration {
 	return s.heartbeatInterval() * time.Duration(s.missedHeartbeats())
 }
 
-func slotRole(base string, n int) string { return base + "-" + strconv.Itoa(n) }
-
-func roleExists(q queryer, role string) bool { _, _, ok := roleRecord(q, role); return ok }
-
-func sameSecret(a, b string) bool {
-	return len(a) == len(b) && subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+// authenticate is the role check every /api/ request goes through: the bearer
+// token against X-Switchboard-Role (or the old X-Agent-Mail-Role), by the
+// rules in identity.Service.Authenticate.
+func (s *Server) authenticate(r *http.Request) (identity.Principal, bool) {
+	return s.ids().Authenticate(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), s.header(r, "Role"))
 }
 
-// authenticate checks the bearer token against X-Switchboard-Role (or the old
-// X-Agent-Mail-Role). A role row
-// with exactly that name always wins, so a pre-existing role ending in -N
-// keeps its own token. Otherwise "<base>-N" is accepted with the token of
-// <base>. The slot need not be currently leased: the base token can claim any
-// slot anyway, and mail queued for an expired slot must stay readable. A
-// revoked role is refused under every name it covers.
-func (s *Server) authenticate(r *http.Request) (principal, bool) {
-	t := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	h := s.header(r, "Role")
-	if t == "" || h == "" || !wire.ValidRole(h) || reservedRole(h) {
-		return principal{}, false
-	}
-	if hash, revoked, ok := roleRecord(s.db, h); ok {
-		if !tokenMatches(hash, t) || revoked {
-			return principal{}, false
-		}
-		return principal{Role: h, Base: h}, true
-	}
-	base, n, ok := wire.SplitSlot(h)
-	if !ok {
-		return principal{}, false
-	}
-	hash, revoked, ok := roleRecord(s.db, base)
-	if !ok || !tokenMatches(hash, t) || revoked {
-		return principal{}, false
-	}
-	p := principal{Role: h, Base: base, Number: n}
-	if n == 1 {
-		p.Role = base
-	}
-	return p, true
-}
-
-// mailbox returns the stored name for an address: an exact role row as is,
-// "<base>-1" as <base>, "<base>-N" as itself. ok is false when no role row
-// backs the address.
-func mailbox(q queryer, name string) (string, bool) {
-	if reservedRole(name) {
-		return "", false
-	}
-	if roleExists(q, name) {
-		return name, true
-	}
-	base, n, ok := wire.SplitSlot(name)
-	if !ok || !roleExists(q, base) {
-		return "", false
-	}
-	if n == 1 {
-		return base, true
-	}
-	return name, true
+// ids is the identity rules over this server's database, clock, boss roles
+// and group cache.
+func (s *Server) ids() *identity.Service {
+	return identity.New(s.db, s.now, s.bossRoles, &s.groups, logPresenceOffline)
 }
 
 // otherSlotMailbox returns the mailbox message id belongs to when that is
@@ -130,13 +70,13 @@ func mailbox(q queryer, name string) (string, bool) {
 // the header names <base>). Mailboxes of one base are kept apart: such
 // requests are refused with 403 naming the role to act as, rather than
 // showing the body while the state stays with the other mailbox.
-func (s *Server) otherSlotMailbox(p principal, id int64) (string, bool) {
+func (s *Server) otherSlotMailbox(p identity.Principal, id int64) (string, bool) {
 	m, err := s.get(id)
 	if err != nil || m.Recipient == p.Role || m.Sender == p.Role {
 		return "", false
 	}
 	for _, box := range []string{m.Recipient, m.Sender} {
-		if baseOf(s.db, box) == p.Base {
+		if identity.BaseOf(s.db, box) == p.Base {
 			return box, true
 		}
 	}
@@ -152,13 +92,13 @@ func scanSlot(sc interface{ Scan(...any) error }) (slotView, error) {
 	var v slotView
 	var reg, until int64
 	err := sc.Scan(&v.Base, &v.Number, &v.Machine, &v.Directory, &v.SessionID, &v.Label, &v.Parent, &reg, &until)
-	v.Role = slotRole(v.Base, v.Number)
+	v.Role = identity.SlotRole(v.Base, v.Number)
 	v.RegisteredAt, v.LeaseExpiresAt = fromMS(reg), fromMS(until)
 	return v, err
 }
 
 // slotAPI serves /api/slots and /api/slots/{register,heartbeat,takeover,release}.
-func (s *Server) slotAPI(w http.ResponseWriter, r *http.Request, p principal, action string) {
+func (s *Server) slotAPI(w http.ResponseWriter, r *http.Request, p identity.Principal, action string) {
 	if action == "" {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", 405)
@@ -275,7 +215,7 @@ func freeNumber(tx *sql.Tx, base string, now int64, skip map[int]bool) (int, err
 	}
 	rows.Close()
 	for n := 1; n <= maxSlotNumber; n++ {
-		if leased[n] || skip[n] || roleExists(tx, slotRole(base, n)) {
+		if leased[n] || skip[n] || identity.RoleExists(tx, identity.SlotRole(base, n)) {
 			continue
 		}
 		if err = logPresenceOffline(tx, base, n, fromMS(now)); err != nil {
@@ -322,7 +262,7 @@ func (s *Server) claimSlot(ctx context.Context, base string, req slotRequest, ta
 		}
 		switch {
 		case takeover:
-			if roleExists(tx, slotRole(base, 1)) {
+			if identity.RoleExists(tx, identity.SlotRole(base, 1)) {
 				return errSlotReserved
 			}
 			g.Reclaimed = has && own.Number == 1
@@ -408,7 +348,7 @@ func displaceFirst(tx *sql.Tx, base string, now int64) (*slotView, error) {
 	if err = movePresenceLog(tx, base, 1, n, fromMS(now)); err != nil {
 		return nil, err
 	}
-	cur.Number, cur.Role = n, slotRole(base, n)
+	cur.Number, cur.Role = n, identity.SlotRole(base, n)
 	return &cur, nil
 }
 

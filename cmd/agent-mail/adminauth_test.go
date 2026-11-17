@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/base32"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -14,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sandcorporation/agent-mail/internal/adminauth"
 	"github.com/sandcorporation/agent-mail/internal/cli"
 	"github.com/sandcorporation/agent-mail/internal/store"
 )
@@ -70,13 +70,13 @@ func sessionFrom(t *testing.T, w *httptest.ResponseRecorder) *http.Cookie {
 func builtinServer(t *testing.T) (*Server, string, *time.Time) {
 	t.Helper()
 	s := testServer(t)
-	if err := configureAdminAuth(s, fakeEnv(map[string]string{"SWITCHBOARD_ADMIN_AUTH": "builtin"})); err != nil {
+	if err := adminauth.Configure(&s.admin, fakeEnv(map[string]string{"SWITCHBOARD_ADMIN_AUTH": "builtin"})); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 11, 18, 9, 0, 10, 0, time.UTC)
 	s.clock = func() time.Time { return now }
 	secret := totpEncoding.EncodeToString([]byte("0123456789abcdefghij"))
-	hash, err := hashPassword("correct horse battery")
+	hash, err := adminauth.HashPassword("correct horse battery")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func builtinServer(t *testing.T) (*Server, string, *time.Time) {
 
 func codeAt(t *testing.T, secret string, at time.Time, offset int64) string {
 	t.Helper()
-	c, err := totpCode(secret, at.Unix()/totpStep+offset)
+	c, err := adminauth.TOTPCode(secret, at.Unix()/adminauth.TOTPStep+offset)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,31 +100,9 @@ func loginBody(name, pw, code string) string {
 	return string(b)
 }
 
-func TestTOTPMatchesRFC6238(t *testing.T) {
-	secret := totpEncoding.EncodeToString([]byte("12345678901234567890"))
-	for at, want := range map[int64]string{59: "287082", 1111111109: "081804", 1234567890: "005924", 2000000000: "279037"} {
-		if got, _ := totpCode(secret, at/totpStep); got != want {
-			t.Errorf("T=%d: %s, want %s", at, got, want)
-		}
-	}
-	if _, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(secret); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestPasswordHashIsArgon2id(t *testing.T) {
-	h, err := hashPassword("correct horse battery")
-	if err != nil || !strings.HasPrefix(h, "$argon2id$v=19$m=65536,t=2,p=2$") {
-		t.Fatalf("hash %q %v", h, err)
-	}
-	if !verifyPassword(h, "correct horse battery") || verifyPassword(h, "correct horse batterY") || verifyPassword("garbage", "x") {
-		t.Fatal("verify")
-	}
-}
-
 func TestAdminDefaultDeny(t *testing.T) {
 	s := testServer(t)
-	if err := configureAdminAuth(s, fakeEnv(nil)); err != nil {
+	if err := adminauth.Configure(&s.admin, fakeEnv(nil)); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{"/api/admin/roles", "/api/admin/me", "/api/admin/messages"} {
@@ -156,12 +134,12 @@ func TestAdminDefaultDeny(t *testing.T) {
 // and writes keep the dashboard guard.
 func TestAdminTransitionRule(t *testing.T) {
 	s := testServer(t)
-	s.adminProxyToken = "proxy-secret"
-	if err := configureAdminAuth(s, fakeEnv(map[string]string{"AGENT_MAIL_ADMIN_PROXY_TOKEN": "proxy-secret"})); err != nil {
+	s.admin.ProxyToken = "proxy-secret"
+	if err := adminauth.Configure(&s.admin, fakeEnv(map[string]string{"AGENT_MAIL_ADMIN_PROXY_TOKEN": "proxy-secret"})); err != nil {
 		t.Fatal(err)
 	}
-	if s.effectiveAdminMode() != adminModeLegacy {
-		t.Fatalf("mode=%q", s.effectiveAdminMode())
+	if s.adminAuth().EffectiveMode() != adminauth.ModeLegacy {
+		t.Fatalf("mode=%q", s.adminAuth().EffectiveMode())
 	}
 	w := doAuth(s, authReq{method: "GET", path: "/"})
 	if w.Code != 200 || strings.Contains(w.Body.String(), `type="password"`) || !strings.Contains(w.Body.String(), `id="tabs"`) {
@@ -200,14 +178,14 @@ func TestAdminTransitionRule(t *testing.T) {
 
 func TestAdminAuthModeConfig(t *testing.T) {
 	for v, ok := range map[string]bool{"builtin": true, "oidc": false, "proxy": false, "Builtin": false} {
-		err := configureAdminAuth(&Server{}, fakeEnv(map[string]string{"SWITCHBOARD_ADMIN_AUTH": v}))
+		err := adminauth.Configure(&adminauth.Config{}, fakeEnv(map[string]string{"SWITCHBOARD_ADMIN_AUTH": v}))
 		if (err == nil) != ok {
 			t.Errorf("%s: %v", v, err)
 		}
 	}
 	// A set mode overrides the transition rule: the proxy secret alone no longer admits.
 	s, _, _ := builtinServer(t)
-	s.adminProxyToken = "proxy-secret"
+	s.admin.ProxyToken = "proxy-secret"
 	if w := doAuth(s, authReq{method: "GET", path: "/api/admin/roles", headers: map[string]string{"X-Switchboard-Admin": "proxy-secret"}}); w.Code != 401 {
 		t.Fatalf("proxy secret under builtin=%d", w.Code)
 	}
@@ -276,7 +254,7 @@ func TestBuiltinLoginSessionAndLogout(t *testing.T) {
 
 func TestInsecureCookieFlag(t *testing.T) {
 	s, secret, now := builtinServer(t)
-	if err := configureAdminAuth(s, fakeEnv(map[string]string{"SWITCHBOARD_ADMIN_AUTH": "builtin", "SWITCHBOARD_INSECURE_COOKIE": "1"})); err != nil {
+	if err := adminauth.Configure(&s.admin, fakeEnv(map[string]string{"SWITCHBOARD_ADMIN_AUTH": "builtin", "SWITCHBOARD_INSECURE_COOKIE": "1"})); err != nil {
 		t.Fatal(err)
 	}
 	c := sessionFrom(t, doAuth(s, authReq{method: "POST", path: "/auth/login", body: loginBody("alice", "correct horse battery", codeAt(t, secret, *now, 0))}))
@@ -362,10 +340,10 @@ func TestBuiltinLoginRateLimit(t *testing.T) {
 		t.Fatalf("other ip=%d", c)
 	}
 	// With SWITCHBOARD_TRUST_FORWARDED the last X-Forwarded-For entry is the client.
-	s.trustForwarded = true
+	s.admin.TrustForwarded = true
 	r := httptest.NewRequest("GET", "/", nil)
 	r.Header.Add("X-Forwarded-For", "1.1.1.1, 203.0.113.9")
-	if ip := s.clientIP(r); ip != "203.0.113.9" {
+	if ip := s.adminAuth().ClientIP(r); ip != "203.0.113.9" {
 		t.Fatalf("forwarded ip=%q", ip)
 	}
 }
@@ -373,7 +351,7 @@ func TestBuiltinLoginRateLimit(t *testing.T) {
 func adminCLI(t *testing.T, stdin string, args ...string) (string, error) {
 	t.Helper()
 	var out, errOut bytes.Buffer
-	_, err := cliAdmin(args[0], args[1], slices.Contains(args[2:], "--json"), strings.NewReader(stdin), &out, &errOut)
+	_, err := adminauth.CLI(args[0], args[1], slices.Contains(args[2:], "--json"), strings.NewReader(stdin), &out, &errOut)
 	return out.String(), err
 }
 
@@ -412,7 +390,7 @@ func TestAdminCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	s := &Server{db: db, adminMode: adminModeBuiltin}
+	s := &Server{db: db, admin: adminauth.Config{Mode: adminauth.ModeBuiltin}}
 	now := time.Now()
 	s.clock = func() time.Time { return now }
 	login := func(pw, secret string) (*http.Cookie, int) {
@@ -466,10 +444,10 @@ func TestAdminCLI(t *testing.T) {
 // TestAdminCommandNeedsNoClientConfig: admin runs without a profile or
 // endpoint, and its usage errors go through the usual CLI path.
 func TestAdminCommandNeedsNoClientConfig(t *testing.T) {
-	if code := cli.Run([]string{"admin", "create"}, version, cliAdmin); code != cli.ExitUsage {
+	if code := cli.Run([]string{"admin", "create"}, version, adminauth.CLI); code != cli.ExitUsage {
 		t.Fatalf("missing name: %v", code)
 	}
-	if code := cli.Run([]string{"admin", "frobnicate", "alice"}, version, cliAdmin); code != cli.ExitUsage {
+	if code := cli.Run([]string{"admin", "frobnicate", "alice"}, version, adminauth.CLI); code != cli.ExitUsage {
 		t.Fatalf("bad action: %v", code)
 	}
 }

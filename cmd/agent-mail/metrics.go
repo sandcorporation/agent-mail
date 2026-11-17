@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/sandcorporation/agent-mail/internal/config"
+	"github.com/sandcorporation/agent-mail/internal/identity"
 	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
@@ -134,7 +135,7 @@ func (s *Server) metrics(days int) (metricsReport, error) {
 		return out, err
 	}
 	bases := newBaseResolver(s.db)
-	out.FirstReply = firstReplies(msgs, bases.of, s.isBossName(bases.of))
+	out.FirstReply = firstReplies(msgs, bases.of, s.ids().IsBossName(bases.of))
 	out.Threads = threadRoundTrips(msgs, bases.of)
 	if out.Pending, err = s.pendingAges(to, lim.Pending); err != nil {
 		return out, err
@@ -204,7 +205,7 @@ func (b *baseResolver) of(name string) string {
 	if v, ok := b.cache[name]; ok {
 		return v
 	}
-	v := baseOf(b.q, name)
+	v := identity.BaseOf(b.q, name)
 	if v == "" {
 		v = name
 		if base, _, ok := wire.SplitSlot(name); ok {
@@ -247,7 +248,7 @@ func firstReplies(msgs []flowMail, base func(string) string, isBoss func(string)
 		if root.TaskID != "" {
 			taskSeen[root.TaskID] = true
 		}
-		if isSystemSender(root.Sender) || root.ThreadID != 0 || root.ReplyTo != 0 || continued {
+		if identity.IsSystemSender(root.Sender) || root.ThreadID != 0 || root.ReplyTo != 0 || continued {
 			continue
 		}
 		to := base(root.Recipient)
@@ -328,7 +329,7 @@ func threadRoundTrips(msgs []flowMail, base func(string) string) threadMetrics {
 	byThread := map[int64][]flowMail{}
 	var order []int64
 	for _, m := range msgs {
-		if isSystemSender(m.Sender) || isSystemSender(m.Recipient) {
+		if identity.IsSystemSender(m.Sender) || identity.IsSystemSender(m.Recipient) {
 			continue
 		}
 		if _, ok := byThread[m.thread()]; !ok {
@@ -391,7 +392,7 @@ func threadRoundTrips(msgs []flowMail, base func(string) string) threadMetrics {
 // pendingAges lists, per recipient role, the pending mail not sent by the
 // system as of now, oldest first. over is the pending threshold (0: never).
 func (s *Server) pendingAges(now time.Time, over time.Duration) ([]pendingAge, error) {
-	rows, err := s.db.Query(`SELECT m.recipient,m.created_at FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=m.recipient WHERE m.sender NOT IN (?,?) AND COALESCE(rs.status,m.status,'pending')='pending'`, systemSender, legacySystemSender)
+	rows, err := s.db.Query(`SELECT m.recipient,m.created_at FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=m.recipient WHERE m.sender NOT IN (?,?) AND COALESCE(rs.status,m.status,'pending')='pending'`, identity.SystemSender, identity.LegacySystemSender)
 	if err != nil {
 		return nil, err
 	}

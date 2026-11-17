@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/identity"
 )
 
 func sweepOnce(t *testing.T, s *Server) sweepResult {
@@ -21,7 +23,7 @@ func systemMail(t *testing.T, s *Server, token, role string) []Message {
 	t.Helper()
 	var out []Message
 	for _, m := range listAs(t, s, token, role, "inbox") {
-		if m.Sender == systemSender {
+		if m.Sender == identity.SystemSender {
 			out = append(out, m)
 		}
 	}
@@ -105,7 +107,7 @@ func TestStallReleaseIsNotNoticed(t *testing.T) {
 
 func TestStallOfflineWithoutUsableParent(t *testing.T) {
 	s, clock := presenceServer(t)
-	for i, parent := range []string{"team/worker" /* its own mailbox (-1) */, "", "nobody/here", systemSender} {
+	for i, parent := range []string{"team/worker" /* its own mailbox (-1) */, "", "nobody/here", identity.SystemSender} {
 		slotDo(t, s, "register", withParent("m", "/w"+itoa(int64(i)), "", parent))
 	}
 	clock.add(time.Minute)
@@ -117,7 +119,7 @@ func TestStallOfflineWithoutUsableParent(t *testing.T) {
 		t.Fatalf("rows left unmarked: %d %v", n, err)
 	}
 	var mail int
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE sender=?`, systemSender).Scan(&mail)
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE sender=?`, identity.SystemSender).Scan(&mail)
 	if mail != 0 {
 		t.Fatalf("system mail stored: %d", mail)
 	}
@@ -176,30 +178,30 @@ func TestStallLabelNoticeToSender(t *testing.T) {
 func TestSystemSenderIsReserved(t *testing.T) {
 	s, _ := slotServer(t)
 	// A role row by that name (from an old database) still cannot log in.
-	if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES(?,?,'now')`, systemSender, "system-secret"); err != nil {
+	if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES(?,?,'now')`, identity.SystemSender, "system-secret"); err != nil {
 		t.Fatal(err)
 	}
-	for _, role := range []string{systemSender, systemSender + "-1", systemSender + "-2"} {
+	for _, role := range []string{identity.SystemSender, identity.SystemSender + "-1", identity.SystemSender + "-2"} {
 		if w := callAs(s, "GET", "/api/messages", "system-secret", role, nil); w.Code != 401 {
 			t.Fatalf("auth as %s: %d", role, w.Code)
 		}
 	}
-	if w := call(s, "POST", "/api/messages", "secret-a", map[string]any{"recipient": systemSender, "subject": "hi"}, ""); w.Code != 403 {
+	if w := call(s, "POST", "/api/messages", "secret-a", map[string]any{"recipient": identity.SystemSender, "subject": "hi"}, ""); w.Code != 403 {
 		t.Fatalf("send to system: %d", w.Code)
 	}
 	t.Setenv("AGENT_MAIL_ENROLLMENT_TOKEN", "enroll-secret-enroll-secret")
-	r := callAs(s, "POST", "/api/register", "enroll-secret-enroll-secret", "", map[string]string{"role": systemSender + "-3", "credential": strings.Repeat("x", 30)})
+	r := callAs(s, "POST", "/api/register", "enroll-secret-enroll-secret", "", map[string]string{"role": identity.SystemSender + "-3", "credential": strings.Repeat("x", 30)})
 	if r.Code != 403 {
 		t.Fatalf("register reserved name: %d %s", r.Code, r.Body)
 	}
 	fresh := testServer(t)
-	fresh.tokens[systemSender] = "configured-secret"
-	if err := migrateConfiguredRoles(fresh); err != nil || roleExists(fresh.db, systemSender) {
+	fresh.tokens[identity.SystemSender] = "configured-secret"
+	if err := migrateConfiguredRoles(fresh); err != nil || identity.RoleExists(fresh.db, identity.SystemSender) {
 		t.Fatalf("configured reserved role imported: %v", err)
 	}
 	if err := configureStall(&Server{}, func(k string) string {
 		if k == "AGENT_MAIL_BOSS_ROLES" {
-			return "a," + systemSender
+			return "a," + identity.SystemSender
 		}
 		return ""
 	}); err == nil {

@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/identity"
 )
 
 // Progress view (the dashboard's 진행 tab, GET /api/progress for boss roles).
@@ -139,7 +141,7 @@ func (s *Server) progress() (progressReport, error) {
 	lim := s.alertLimits()
 	out := progressReport{GeneratedAt: now, PendingAlertS: int64(lim.Pending / time.Second), Services: []serviceProgress{}}
 	bases := newBaseResolver(s.db)
-	isBossName := s.isBossName(bases.of)
+	isBossName := s.ids().IsBossName(bases.of)
 	svcs := map[string]*serviceProgress{}
 	get := func(name string) *serviceProgress {
 		svc := serviceOf(name)
@@ -165,7 +167,7 @@ func (s *Server) progress() (progressReport, error) {
 			rows.Close()
 			return out, err
 		}
-		v.Role = slotRole(base, number)
+		v.Role = identity.SlotRole(base, number)
 		if v.State == "" {
 			v.State = presenceUnknown
 		}
@@ -182,7 +184,7 @@ func (s *Server) progress() (progressReport, error) {
 	}
 
 	// Last activity: the newest mail of every sender.
-	last, err := s.progressMailQuery(`m.id IN (SELECT MAX(id) FROM messages WHERE sender NOT IN (?,?) GROUP BY sender)`, systemSender, legacySystemSender)
+	last, err := s.progressMailQuery(`m.id IN (SELECT MAX(id) FROM messages WHERE sender NOT IN (?,?) GROUP BY sender)`, identity.SystemSender, identity.LegacySystemSender)
 	if err != nil {
 		return out, err
 	}
@@ -206,7 +208,7 @@ func (s *Server) progress() (progressReport, error) {
 		}
 	}
 	if len(bossBoxes) > 0 {
-		reports, err := s.progressMailQuery(`m.id IN (SELECT MAX(id) FROM messages WHERE sender NOT IN (?,?) AND recipient IN (`+placeholders(len(bossBoxes))+`) GROUP BY sender)`, append([]any{systemSender, legacySystemSender}, anySlice(bossBoxes)...)...)
+		reports, err := s.progressMailQuery(`m.id IN (SELECT MAX(id) FROM messages WHERE sender NOT IN (?,?) AND recipient IN (`+placeholders(len(bossBoxes))+`) GROUP BY sender)`, append([]any{identity.SystemSender, identity.LegacySystemSender}, anySlice(bossBoxes)...)...)
 		if err != nil {
 			return out, err
 		}
@@ -226,7 +228,7 @@ func (s *Server) progress() (progressReport, error) {
 	}
 	var bossSenders []string
 	for _, r := range senders {
-		if !isSystemSender(r) && isBossName(r) {
+		if !identity.IsSystemSender(r) && isBossName(r) {
 			bossSenders = append(bossSenders, r)
 		}
 	}
@@ -284,12 +286,12 @@ func (s *Server) progress() (progressReport, error) {
 	tasks := map[taskKey]*progressTask{}
 	open := map[taskKey]bool{}
 	for _, m := range taskMail {
-		if m.At.Before(from) || reservedRole(m.Sender) {
+		if m.At.Before(from) || identity.Reserved(m.Sender) {
 			continue
 		}
 		seen := map[string]bool{}
 		for _, name := range []string{m.Sender, m.Recipient} {
-			if reservedRole(name) || seen[serviceOf(name)] {
+			if identity.Reserved(name) || seen[serviceOf(name)] {
 				continue
 			}
 			seen[serviceOf(name)] = true

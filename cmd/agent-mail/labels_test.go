@@ -26,7 +26,7 @@ const (
 func labelServer(t *testing.T) (*Server, *fakeClock, string) {
 	t.Helper()
 	s, clock := slotServer(t)
-	s.adminProxyToken = adminToken
+	s.admin.ProxyToken = adminToken
 	s.eventKeepAlive = time.Hour
 	if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES('team/other',?,'now')`, otherToken); err != nil {
 		t.Fatal(err)

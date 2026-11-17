@@ -70,7 +70,7 @@ func TestSendPriorityDefaultsUrgentAndValidation(t *testing.T) {
 	if m := decodeMessage(t, call(s, "GET", "/api/messages/"+itoa(urgent.ID), "secret-b", nil, "").Body.Bytes()); m.Priority != "urgent" {
 		t.Fatalf("read: %+v", m)
 	}
-	s.adminProxyToken = "proxy-secret"
+	s.admin.ProxyToken = "proxy-secret"
 	r := httptest.NewRequest("GET", "/api/admin/messages?role=b", nil)
 	r.Header.Set("X-Agent-Mail-Admin", "proxy-secret")
 	aw := httptest.NewRecorder()

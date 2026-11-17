@@ -1,13 +1,16 @@
-package main
+package identity
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/sandcorporation/agent-mail/internal/config"
 	"github.com/sandcorporation/agent-mail/internal/store"
 	"github.com/sandcorporation/agent-mail/internal/wire"
 )
@@ -20,7 +23,7 @@ func tokenMatches(stored, presented string) bool {
 }
 
 // roleRecord is the stored hash of role and whether it is revoked.
-func roleRecord(q queryer, role string) (hash string, revoked bool, ok bool) {
+func roleRecord(q Queryer, role string) (hash string, revoked bool, ok bool) {
 	var at sql.NullString
 	if q.QueryRow(`SELECT token,revoked_at FROM roles WHERE role=?`, role).Scan(&hash, &at) != nil {
 		return "", false, false
@@ -28,24 +31,24 @@ func roleRecord(q queryer, role string) (hash string, revoked bool, ok bool) {
 	return hash, at.Valid, true
 }
 
-// roleView is one row of GET /api/admin/roles. It never carries the token or
+// RoleView is one row of GET /api/admin/roles. It never carries the token or
 // its hash. Group is the role's group prefix, "" for an internal role.
-type roleView struct {
+type RoleView struct {
 	Role      string  `json:"role"`
 	CreatedAt string  `json:"created_at"`
 	RevokedAt *string `json:"revoked_at"`
 	Group     string  `json:"group"`
 }
 
-func (s *Server) listRoles() ([]roleView, error) {
+func (s *Service) ListRoles() ([]RoleView, error) {
 	rows, err := s.db.Query(`SELECT role,created_at,revoked_at FROM roles ORDER BY role`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []roleView{}
+	out := []RoleView{}
 	for rows.Next() {
-		var v roleView
+		var v RoleView
 		var at sql.NullString
 		if err = rows.Scan(&v.Role, &v.CreatedAt, &at); err != nil {
 			return nil, err
@@ -53,7 +56,7 @@ func (s *Server) listRoles() ([]roleView, error) {
 		if at.Valid {
 			v.RevokedAt = &at.String
 		}
-		if g, ok := s.groupOf(v.Role); ok {
+		if g, ok := s.GroupOf(v.Role); ok {
 			v.Group = g.Prefix
 		}
 		out = append(out, v)
@@ -63,14 +66,14 @@ func (s *Server) listRoles() ([]roleView, error) {
 
 var errNoRole = errors.New("no such role")
 
-// setRevoked revokes (or restores) role. Revoking releases every live slot of
+// SetRevoked revokes (or restores) role. Revoking releases every live slot of
 // the role at once, as an intended stop (no offline notice), so its sessions
-// drop off presence; from then on authenticate refuses the role and all its
+// drop off presence; from then on Authenticate refuses the role and all its
 // -N names. Revoking a revoked role keeps the first revoked_at.
-func (s *Server) setRevoked(ctx context.Context, role string, revoke bool) (roleView, error) {
+func (s *Service) SetRevoked(ctx context.Context, role string, revoke bool) (RoleView, error) {
 	now := s.now()
-	var v roleView
-	err := s.inTx(ctx, func(tx *sql.Tx) error {
+	var v RoleView
+	err := store.InTx(ctx, s.db, func(tx *sql.Tx) error {
 		var at sql.NullString
 		if err := tx.QueryRow(`SELECT created_at,revoked_at FROM roles WHERE role=?`, role).Scan(&v.CreatedAt, &at); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -112,7 +115,7 @@ func (s *Server) setRevoked(ctx context.Context, role string, revoke bool) (role
 			if _, err = tx.Exec(`UPDATE slots SET lease_until=?,offline_noticed_at=? WHERE base=? AND number=?`, ms(now), ms(now), role, n); err != nil {
 				return err
 			}
-			if err = logPresenceOffline(tx, role, n, now); err != nil {
+			if err = s.logOffline(tx, role, n, now); err != nil {
 				return err
 			}
 		}
@@ -121,7 +124,7 @@ func (s *Server) setRevoked(ctx context.Context, role string, revoke bool) (role
 	return v, err
 }
 
-// adminRolesAPI serves the role list and revoke/restore behind the admin
+// AdminRolesAPI serves the role list and revoke/restore behind the admin
 // proxy secret (writes also behind adminWriteAllowed, checked by adminAPI):
 //
 //	GET  /api/admin/roles
@@ -129,13 +132,13 @@ func (s *Server) setRevoked(ctx context.Context, role string, revoke bool) (role
 //	POST /api/admin/roles/{role}/restore
 //
 // Role names keep their slashes as path separators.
-func (s *Server) adminRolesAPI(w http.ResponseWriter, r *http.Request, rest string) {
+func (s *Service) AdminRolesAPI(w http.ResponseWriter, r *http.Request, rest string) {
 	if rest == "" {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		out, err := s.listRoles()
+		out, err := s.ListRoles()
 		if err != nil {
 			http.Error(w, "query failed", 500)
 			return
@@ -159,7 +162,7 @@ func (s *Server) adminRolesAPI(w http.ResponseWriter, r *http.Request, rest stri
 		http.Error(w, "invalid role", 400)
 		return
 	}
-	v, err := s.setRevoked(r.Context(), role, revoke)
+	v, err := s.SetRevoked(r.Context(), role, revoke)
 	if errors.Is(err, errNoRole) {
 		http.Error(w, "no such role", 404)
 		return
@@ -169,4 +172,63 @@ func (s *Server) adminRolesAPI(w http.ResponseWriter, r *http.Request, rest stri
 		return
 	}
 	writeJSON(w, v)
+}
+
+func (s *Service) Register(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	var req struct {
+		Role       string `json:"role"`
+		Credential string `json:"credential"`
+	}
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req) != nil || !wire.ValidRole(req.Role) || req.Credential == "" {
+		http.Error(w, "role and credential required", 400)
+		return
+	}
+	if Reserved(req.Role) {
+		http.Error(w, "role name is reserved", 403)
+		return
+	}
+	if g, ok := s.GroupOf(req.Role); ok && g.RevokedAt != nil {
+		http.Error(w, "group revoked", 403)
+		return
+	}
+	var existing string
+	var revokedAt sql.NullString
+	err := s.db.QueryRow(`SELECT token,revoked_at FROM roles WHERE role=?`, req.Role).Scan(&existing, &revokedAt)
+	if err == nil {
+		if !tokenMatches(existing, req.Credential) {
+			http.Error(w, "role already registered; valid credential required to resume", 409)
+			return
+		}
+		if revokedAt.Valid {
+			http.Error(w, "role revoked", 401)
+			return
+		}
+		writeJSON(w, map[string]string{"role": req.Role, "status": "resumed"})
+		return
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, "registration failed", 500)
+		return
+	}
+	enrollment := config.EnvAlias("ENROLLMENT_TOKEN")
+	provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if len(req.Credential) < 24 || enrollment == "" || len(enrollment) != len(provided) || subtle.ConstantTimeCompare([]byte(enrollment), []byte(provided)) != 1 {
+		http.Error(w, "enrollment authorization required", 401)
+		return
+	}
+	if len(enrollment) == len(req.Credential) && subtle.ConstantTimeCompare([]byte(enrollment), []byte(req.Credential)) == 1 {
+		http.Error(w, "role credential must differ from enrollment credential", 400)
+		return
+	}
+	_, err = s.db.Exec(`INSERT INTO roles(role,token,created_at) VALUES(?,?,?)`, req.Role, store.TokenHash(req.Credential), time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		http.Error(w, "role registration failed", 409)
+		return
+	}
+	w.WriteHeader(201)
+	writeJSON(w, map[string]string{"role": req.Role, "status": "registered"})
 }

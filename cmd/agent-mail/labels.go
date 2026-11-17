@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sandcorporation/agent-mail/internal/identity"
 	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
@@ -87,7 +88,7 @@ func labelTarget(tx *sql.Tx, a labelAddr, now time.Time) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	box, _ := mailbox(tx, slotRole(a.Base, n))
+	box, _ := identity.Mailbox(tx, identity.SlotRole(a.Base, n))
 	return box, nil
 }
 
@@ -115,7 +116,7 @@ func deliverHeld(tx *sql.Tx, base string, number int, label string, now time.Tim
 	if err = rows.Err(); err != nil || len(ids) == 0 {
 		return "", 0, err
 	}
-	box, ok := mailbox(tx, slotRole(base, number))
+	box, ok := identity.Mailbox(tx, identity.SlotRole(base, number))
 	if !ok {
 		return "", 0, nil
 	}

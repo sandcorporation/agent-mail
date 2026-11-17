@@ -397,7 +397,7 @@ func TestSlotLeaseExpiryFreesSlotAndKeepsMail(t *testing.T) {
 
 func TestSlotAdminTableIsProxyOnly(t *testing.T) {
 	s, _ := slotServer(t)
-	s.adminProxyToken = "proxy-secret"
+	s.admin.ProxyToken = "proxy-secret"
 	slotDo(t, s, "register", ident("m", "/a"))
 	for secret, code := range map[string]int{"": 401, "proxy-secret": 200} {
 		r := httptest.NewRequest("GET", "/api/admin/slots", nil)

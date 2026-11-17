@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sandcorporation/agent-mail/internal/identity"
 	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
@@ -149,7 +150,7 @@ func (s *Server) queryDecisions(base string, args []any, f decisionFilter) ([]de
 
 // decisionsAPI serves GET /api/decisions (p set) and GET
 // /api/admin/decisions (p nil: everything).
-func (s *Server) decisionsAPI(w http.ResponseWriter, r *http.Request, p *principal) {
+func (s *Server) decisionsAPI(w http.ResponseWriter, r *http.Request, p *identity.Principal) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -206,7 +207,7 @@ func queryDecisionRows(q rowsQueryer, where string, args ...any) ([]decision, er
 // of askerBase: the base's own, newest first; then, when the asker's
 // settings came from a "<prefix>/*" target, other bases under that prefix;
 // then any whose first header equals header (ASCII case-insensitive). A
-// non-empty group keeps the last two to askers of that group (groups.go).
+// non-empty group keeps the last two to askers of that group (internal/identity/groups.go).
 func relatedDecisions(q rowsQueryer, askerBase, target, header, group string) ([]decision, error) {
 	scope, scopeArgs := "", []any(nil)
 	if group != "" {
