@@ -335,14 +335,17 @@ func (s *Server) loadGroup(prefix string) (group, error) {
 	return g, err
 }
 
-// revokeGroup marks the group revoked and revokes every role in it (the
-// group's own roles, by longest match).
+// revokeGroup marks the group revoked, cancels its open invites and revokes
+// every role in it (the group's own roles, by longest match).
 func (s *Server) revokeGroup(r *http.Request, prefix string) (group, error) {
 	if _, err := s.loadGroup(prefix); err != nil {
 		return group{}, err
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	if _, err := s.db.ExecContext(r.Context(), `UPDATE groups SET revoked_at=? WHERE prefix=? AND revoked_at IS NULL`, now, prefix); err != nil {
+		return group{}, err
+	}
+	if _, err := s.db.ExecContext(r.Context(), `UPDATE invites SET cancelled_at=? WHERE prefix=? AND used_at IS NULL AND cancelled_at IS NULL`, now, prefix); err != nil {
 		return group{}, err
 	}
 	if err := s.loadGroups(); err != nil {

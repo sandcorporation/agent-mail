@@ -64,7 +64,8 @@ type Server struct {
 	insecureCookie   bool             // SWITCHBOARD_INSECURE_COOKIE=1: session cookie without Secure, for local http
 	trustForwarded   bool             // SWITCHBOARD_TRUST_FORWARDED=1: client IP from X-Forwarded-For
 	loginLimits      loginLimiter
-	oidc             *oidcLogin // SWITCHBOARD_ADMIN_AUTH=oidc (oidc.go)
+	oidc             *oidcLogin   // SWITCHBOARD_ADMIN_AUTH=oidc (oidc.go)
+	joinLimits       loginLimiter // failed POST /api/join per client IP (invites.go)
 }
 
 var version = "dev"
@@ -197,6 +198,9 @@ func initSchema(db *sql.DB) error {
 	if e = migrateAdminAuth(db); e != nil {
 		return e
 	}
+	if e = migrateInvites(db); e != nil {
+		return e
+	}
 	return migrateQuestions(db)
 }
 
@@ -271,6 +275,10 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		s.register(w, r)
 		return
 	}
+	if r.URL.Path == "/api/join" {
+		s.join(w, r)
+		return
+	}
 	who, ok := s.authenticate(r)
 	if !ok {
 		http.Error(w, "unauthorized", 401)
@@ -297,6 +305,10 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	}
 	if path == "whoami" {
 		s.whoamiAPI(w, r, who)
+		return
+	}
+	if path == "invites" {
+		s.invitesAPI(w, r, who)
 		return
 	}
 	if path == "metrics" {
@@ -403,6 +415,10 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 		s.adminGroupsAPI(w, r, strings.TrimPrefix(rest, "/"))
 		return
 	}
+	if rest, ok := strings.CutPrefix(path, "invites"); ok && (rest == "" || strings.HasPrefix(rest, "/")) {
+		s.adminInvitesAPI(w, r, who, strings.TrimPrefix(rest, "/"))
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -410,6 +426,13 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 	switch path {
 	case "me":
 		writeJSON(w, who)
+	case "collaborators":
+		out, err := s.collaborators()
+		if err != nil {
+			http.Error(w, "query failed", 500)
+			return
+		}
+		writeJSON(w, out)
 	case "slots":
 		out, err := s.activeSlots("")
 		if err != nil {

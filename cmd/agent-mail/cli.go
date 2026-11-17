@@ -63,6 +63,20 @@ var commands = []command{
 			{"--token-file", "PATH", "file holding the role credential"},
 			{"--enrollment-token-file", "PATH", "file holding the enrollment credential"},
 		}},
+	{name: "join", args: "URL CODE", nargs: 2,
+		summary: "Join a server with an invite code: makes the role token here and saves a profile",
+		options: []option{
+			{"--role", "ROLE", "role to take (a name under the invite's prefix; the invite's role when it names one)"},
+			{"--profile", "NAME", "profile to write (default: from the server host); must not exist yet"},
+		}},
+	{name: "invite", synopsis: "--prefix PREFIX [--role ROLE] [--ttl 72h]",
+		summary: "Create a one-time invite code for a collaborator group (global boss roles only)",
+		options: []option{
+			{"--prefix", "PREFIX", "group prefix, e.g. partner-a; the group is created when missing"},
+			{"--role", "ROLE", "pin the invite to one role under the prefix"},
+			{"--ttl", "DURATION", "how long the code works, e.g. 72h or 7d (default 72h, at most 30d)"},
+			optJSON, optProfile,
+		}},
 	{name: "config", args: "set", nargs: 1, synopsis: "--endpoint URL --role ROLE --token-file PATH",
 		summary: "Save endpoint and role credential for this user profile",
 		options: []option{
@@ -296,6 +310,8 @@ func dispatch(args []string) (int, error) {
 		return cliRegister(p)
 	case "admin":
 		return cliAdmin(p, os.Stdin, os.Stdout, os.Stderr)
+	case "join":
+		return cliJoin(p, os.Stdout)
 	case "config":
 		if p.pos[0] != "set" {
 			return 0, usagef("config: unknown subcommand %q (only 'set')", p.pos[0])
@@ -317,6 +333,8 @@ func dispatch(args []string) (int, error) {
 	switch name {
 	case "send":
 		return cliSend(c, p)
+	case "invite":
+		return cliInvite(c, p, os.Stdout)
 	case "inbox", "outbox":
 		return cliList(c, name, p)
 	case "wait":

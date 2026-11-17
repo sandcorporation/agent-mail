@@ -7,7 +7,8 @@ import (
 
 // dashboard serves the admin overview. It only calls same-origin /api/admin/*
 // endpoints, sends no Authorization header and stores nothing in the browser.
-// Its only writes are question answers and question settings, sent with the
+// Its only writes are question answers, question settings, role and group
+// revokes and invites (create, cancel), sent with the
 // admin write guard headers. Message and question fields are rendered as text
 // nodes, never as HTML.
 func dashboard(w http.ResponseWriter, r *http.Request) {
@@ -175,6 +176,22 @@ table.stack td.wrap{white-space:normal;overflow-wrap:anywhere}
 .filters{display:grid;grid-template-columns:repeat(auto-fill,minmax(9.5rem,1fr));gap:var(--s2);align-items:center}
 .filters .actions{display:flex;gap:var(--s2);flex-wrap:wrap;align-items:center;grid-column:1/-1}
 #conn{font-size:.85em;color:var(--muted)}
+.invite-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,11rem),1fr));gap:var(--s2) var(--s3);align-items:end;margin:0 0 var(--s3)}
+.invite-form label{display:flex;flex-direction:column;gap:var(--s1);font-size:.9em;min-width:0}
+.invite-form input,.invite-form select{width:100%;min-width:0}
+.invite-code{border:1px solid var(--accent);border-radius:var(--r);background:var(--accent-soft);padding:var(--s3);margin:0 0 var(--s3);min-width:0}
+.invite-code code{display:block;margin-top:var(--s2);font:13px/1.5 var(--mono);overflow-wrap:anywhere;white-space:pre-wrap;user-select:all}
+.invite-code #inviteCodeText{font-size:15px;font-weight:650}
+.cgroup{border:1px solid var(--border);border-radius:var(--r);padding:var(--s3);margin:var(--s3) 0;min-width:0}
+.cgroup.revoked{background:var(--surface-2)}
+.cgroup h3{display:flex;gap:var(--s2);align-items:center;flex-wrap:wrap;margin:0 0 var(--s2);min-width:0}
+.cgroup h3 .cname{min-width:0;overflow-wrap:anywhere}
+.cgroup h3 button{margin-left:auto;font-size:.8rem;font-weight:500}
+.cgroup h4{margin:var(--s3) 0 var(--s1);font-size:.9em}
+.cgroup dl{display:grid;grid-template-columns:auto 1fr;gap:var(--s1) var(--s3);margin:0;font-size:.9em}
+.cgroup dt{color:var(--muted)}.cgroup dd{margin:0;overflow-wrap:anywhere;min-width:0}
+.cgroup td:last-child{text-align:right}
+.st-online{color:var(--idle);font-weight:600}
 @media (max-width:600px){
 body{padding:var(--s3) var(--s3) var(--s5);font-size:14.5px}
 .tabs{margin:0 calc(-1*var(--s3));padding:0 var(--s3);flex-wrap:wrap;overflow-x:visible;gap:0}
@@ -193,6 +210,7 @@ table.stack td:first-child{font-weight:650}
 table.stack tbody tr:hover td{background:none}
 #settingsTbl td:last-child{text-align:left;padding-top:var(--s1)}
 #settingsTbl td:last-child button{margin:0 var(--s1) 0 0}
+.cgroup td:last-child{text-align:left}
 }
 </style>
 </head>
@@ -206,6 +224,7 @@ table.stack tbody tr:hover td{background:none}
 <button type="button" role="tab" id="tab-permissions" data-tab="permissions" aria-controls="panel-permissions" aria-selected="false" tabindex="-1"><span class="tab-name">권한 요청</span><span class="tab-count"></span></button>
 <button type="button" role="tab" id="tab-questions" data-tab="questions" aria-controls="panel-questions" aria-selected="false" tabindex="-1"><span class="tab-name">질문</span><span class="tab-count"></span></button>
 <button type="button" role="tab" id="tab-settings" data-tab="settings" aria-controls="panel-settings" aria-selected="false" tabindex="-1"><span class="tab-name">설정</span><span class="tab-count"></span></button>
+<button type="button" role="tab" id="tab-collaborators" data-tab="collaborators" aria-controls="panel-collaborators" aria-selected="false" tabindex="-1"><span class="tab-name">협업자</span><span class="tab-count"></span></button>
 </nav>
 <section id="panel-progress" role="tabpanel" aria-labelledby="tab-progress" tabindex="0" class="card">
 <div class="toolbar"><h2>진행</h2><button id="reloadProgress">새로 고침</button><span id="progressNote" class="muted" role="status" aria-live="polite"></span></div>
@@ -301,6 +320,22 @@ table.stack tbody tr:hover td{background:none}
 <div class="toolbar"><h2>역할</h2><button id="reloadRoles">새로 고침</button><span id="rolesNote" class="muted"></span></div>
 <div id="rolesMsg" class="msg" role="status" aria-live="polite"></div>
 <div class="wide"><table id="rolesTbl" class="stack"><thead><tr><th>역할</th><th>묶음</th><th>등록</th><th>끊은 때</th><th></th></tr></thead><tbody id="rolesTable"></tbody></table></div>
+</section>
+<section id="panel-collaborators" role="tabpanel" aria-labelledby="tab-collaborators" tabindex="0" class="card" hidden>
+<div class="toolbar"><h2>협업자</h2><button id="reloadCollab">새로 고침</button><span id="collabNote" class="muted"></span></div>
+<form id="inviteForm" class="invite-form">
+<label>접두어 <input id="invPrefix" required autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="partner-a"></label>
+<label>역할 <input id="invRole" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="partner-a/dev"></label>
+<label>기한 <select id="invTTL"><option value="24h">1일</option><option value="72h" selected>3일</option><option value="7d">7일</option><option value="30d">30일</option></select></label>
+<button type="submit">초대 만들기</button>
+</form>
+<div id="inviteCode" class="invite-code" hidden>
+<div class="row"><strong title="닫으면 다시 볼 수 없음">초대 코드</strong><button type="button" id="inviteCopy">복사</button><button type="button" id="inviteHide">닫기</button></div>
+<code id="inviteCodeText"></code>
+<code id="inviteJoinLine"></code>
+</div>
+<div id="collabMsg" class="msg" role="status" aria-live="polite"></div>
+<div id="collab"></div>
 </section>
 <script>
 const sessionLabel={idle:'유휴',busy:'바쁨',compacting:'compact 중',unknown:'모름',offline:'오프라인'};
@@ -432,8 +467,8 @@ function card(m){
 // Each tab's loader runs once, the first time the tab is shown; after that the
 // tab's own 「새로 고침」 button reloads it. #33 sets tabLoaders.permissions and
 // #42 sets tabLoaders.questions / tabLoaders.settings (null = nothing to load).
-const tabNames=['progress','sessions','metrics','mail','permissions','questions','settings'];
-const tabLoaders={progress:null,sessions:loadSessions,metrics:null,mail:initMail,permissions:null,questions:null,settings:null};
+const tabNames=['progress','sessions','metrics','mail','permissions','questions','settings','collaborators'];
+const tabLoaders={progress:null,sessions:loadSessions,metrics:null,mail:initMail,permissions:null,questions:null,settings:null,collaborators:null};
 const tabLoaded=new Set();
 // setTabCount(name,n) shows n as a small count next to the tab name; n
 // null/undefined hides it.
@@ -884,6 +919,102 @@ async function loadRoles(){
 }
 $('reloadRoles').onclick=loadRoles;
 tabLoaders.settings=()=>{loadSettings();loadRoles()};
+// ---- 협업자 ----
+function cell(tr,label,text,cls){const td=node('td',text,cls||'');td.dataset.label=label;tr.append(td);return td}
+function actButton(text,ask,run,msg){
+  const b=node('button',text);b.type='button';
+  b.onclick=async()=>{
+    if(!confirm(ask))return;
+    b.disabled=true;
+    try{await run();setMsg($('collabMsg'),msg,'ok');loadCollaborators()}
+    catch(e){setMsg($('collabMsg'),e.message,'err');b.disabled=false}
+  };
+  return b;
+}
+function collabTable(cols){
+  const wrap=node('div','','wide'),t=node('table','','stack'),head=node('thead',''),hr=node('tr',''),body=node('tbody','');
+  for(const c of cols)hr.append(node('th',c));
+  head.append(hr);t.append(head,body);wrap.append(t);
+  return [wrap,body];
+}
+function collabGroup(g,now){
+  const box=node('div','','cgroup'+(g.revoked_at?' revoked':''));
+  const h=node('h3','');h.append(node('span',g.prefix,'cname'));
+  if(g.revoked_at)h.append(node('span','끊김','pill withdrawn'));
+  else{
+    const live=g.roles.filter(r=>!r.revoked_at).length;
+    h.append(actButton('묶음 끊기',g.prefix+' 묶음을 끊을까요? 역할 '+live+'개와 열린 초대 '+g.invites.length+'개가 모두 끊기고 세션이 바로 끊깁니다.',()=>apiSend('DELETE','groups/'+targetPath(g.prefix)),g.prefix+' 묶음을 끊었습니다.'));
+  }
+  box.append(h);
+  const dl=node('dl','');
+  dl.append(node('dt','보스'),node('dd',g.boss_role),node('dt','만든 때'),node('dd',when(g.created_at)));
+  if(g.revoked_at)dl.append(node('dt','끊은 때'),node('dd',when(g.revoked_at),'revoked'));
+  box.append(dl);
+  box.append(node('h4','역할 '+g.roles.length));
+  if(g.roles.length){
+    const [wrap,body]=collabTable(['역할','마지막 접속','등록','']);
+    for(const r of g.roles){
+      const tr=node('tr','');
+      cell(tr,'역할',r.role);
+      if(r.revoked_at)cell(tr,'마지막 접속','끊김 '+when(r.revoked_at),'revoked');
+      else if(r.online)cell(tr,'마지막 접속','온라인','st-online');
+      else cell(tr,'마지막 접속',r.last_seen?ago(now,r.last_seen):'-');
+      cell(tr,'등록',when(r.created_at));
+      const act=cell(tr,'','');
+      if(!r.revoked_at)act.append(actButton('역할 끊기',r.role+' 역할을 끊을까요? 이 토큰으로 접속한 세션이 모두 바로 끊깁니다.',()=>apiSend('POST','roles/'+targetPath(r.role)+'/revoke'),r.role+' 역할을 끊었습니다.'));
+      body.append(tr);
+    }
+    box.append(wrap);
+  }else box.append(node('p','역할 없음','empty'));
+  box.append(node('h4','열린 초대 '+g.invites.length));
+  if(g.invites.length){
+    const [wrap,body]=collabTable(['역할','만료','만든 이','']);
+    for(const v of g.invites){
+      const tr=node('tr','');
+      cell(tr,'역할',v.role||g.prefix+'/*');
+      cell(tr,'만료',when(v.expires_at));
+      cell(tr,'만든 이',v.created_by);
+      cell(tr,'','').append(actButton('초대 취소',(v.role||g.prefix+'/*')+' 초대를 취소할까요? 이 코드는 다시 쓸 수 없습니다.',()=>apiSend('DELETE','invites/'+v.id),'초대를 취소했습니다.'));
+      body.append(tr);
+    }
+    box.append(wrap);
+  }else box.append(node('p','열린 초대 없음','empty'));
+  return box;
+}
+async function loadCollaborators(){
+  $('collabNote').textContent='불러오는 중…';
+  try{
+    const rows=await api('collaborators'),now=new Date().toISOString(),box=$('collab');
+    box.replaceChildren(...rows.map(g=>collabGroup(g,now)));
+    if(!rows.length)box.append(node('p','묶음 없음','empty'));
+    const live=rows.filter(g=>!g.revoked_at).length;
+    $('collabNote').textContent=rows.length+'개'+(rows.length>live?' · 끊김 '+(rows.length-live):'');
+  }catch(e){$('collabNote').textContent=e.message}
+}
+function hideInvite(){$('inviteCode').hidden=true;$('inviteCodeText').textContent='';$('inviteJoinLine').textContent=''}
+$('inviteForm').onsubmit=async e=>{
+  e.preventDefault();
+  const prefix=$('invPrefix').value.trim(),role=$('invRole').value.trim(),ttl=$('invTTL').value;
+  if(!prefix){setMsg($('collabMsg'),'접두어를 쓰세요.','err');return}
+  if(!confirm(prefix+(role?' · '+role:'')+' 초대를 만들까요?'))return;
+  hideInvite();
+  try{
+    const v=await apiSend('POST','invites',{prefix:prefix,role:role,ttl:ttl});
+    $('inviteCodeText').textContent=v.code;
+    $('inviteJoinLine').textContent='switchboard join '+location.origin+' '+v.code+' --role '+(v.role||v.prefix+'/NAME');
+    $('inviteCode').hidden=false;
+    $('inviteForm').reset();
+    setMsg($('collabMsg'),v.group_created?prefix+' 묶음을 만들고 초대를 만들었습니다.':prefix+' 초대를 만들었습니다.','ok');
+    loadCollaborators();
+  }catch(err){setMsg($('collabMsg'),err.message,'err')}
+};
+$('inviteHide').onclick=hideInvite;
+$('inviteCopy').onclick=async()=>{
+  try{await navigator.clipboard.writeText($('inviteJoinLine').textContent);setMsg($('collabMsg'),'복사했습니다.','ok')}
+  catch(e){setMsg($('collabMsg'),'복사 실패 · 직접 선택해 복사','err')}
+};
+$('reloadCollab').onclick=loadCollaborators;
+tabLoaders.collaborators=loadCollaborators;
 function showTab(name){
   for(const n of tabNames){
     const on=n===name,t=$('tab-'+n);
@@ -893,7 +1024,7 @@ function showTab(name){
   }
   if(!tabLoaded.has(name)){tabLoaded.add(name);if(tabLoaders[name])tabLoaders[name]()}
 }
-// Routes: #progress #sessions #metrics #mail #permissions #questions #settings, #decisions (질문 tab,
+// Routes: #progress #sessions #metrics #mail #permissions #questions #settings #collaborators, #decisions (질문 tab,
 // 결정 view) and #q=<id> (질문 + focusQuestion). No hash or an unknown one shows 진행.
 function route(){
   const h=location.hash.slice(1);

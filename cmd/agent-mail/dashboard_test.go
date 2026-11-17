@@ -14,9 +14,9 @@ func TestDashboardTabsSkeleton(t *testing.T) {
 	if !strings.Contains(body, `role="tablist"`) {
 		t.Fatal("dashboard has no tablist")
 	}
-	// Tab order matters: 진행, 세션, 지표, 메일, 권한 요청, 질문, 설정.
+	// Tab order matters: 진행, 세션, 지표, 메일, 권한 요청, 질문, 설정, 협업자.
 	last := -1
-	for _, name := range []string{"progress", "sessions", "metrics", "mail", "permissions", "questions", "settings"} {
+	for _, name := range []string{"progress", "sessions", "metrics", "mail", "permissions", "questions", "settings", "collaborators"} {
 		tab := `id="tab-` + name + `" data-tab="` + name + `" aria-controls="panel-` + name + `"`
 		i := strings.Index(body, tab)
 		if i < 0 {
@@ -119,5 +119,23 @@ func TestDashboardHeaderFromOneConstant(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("dashboard missing %q", want)
 		}
+	}
+}
+
+func TestDashboardCollaboratorsTab(t *testing.T) {
+	w := httptest.NewRecorder()
+	dashboard(w, httptest.NewRequest("GET", "/", nil))
+	body := w.Body.String()
+	for _, want := range []string{
+		"api('collaborators')", "apiSend('POST','invites'", "apiSend('DELETE','invites/'", "apiSend('DELETE','groups/'",
+		"'/revoke'", "'묶음 끊기'", "'역할 끊기'", "'초대 취소'", "'묶음 없음'", "id=\"inviteCodeText\"", "function hideInvite()",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("collaborators tab missing %q", want)
+		}
+	}
+	// Each irreversible action asks first.
+	if n := strings.Count(body, "if(!confirm("); n < 4 {
+		t.Fatalf("confirm steps = %d", n)
 	}
 }
