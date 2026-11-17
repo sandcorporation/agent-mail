@@ -206,6 +206,26 @@ func (s *Server) pollMaxWait() time.Duration {
 	return defaultPollMax
 }
 
+// pollWait reads ?timeout= seconds for a long-poll: default 25, capped by
+// the server maximum. ok is false for a malformed or negative value.
+func (s *Server) pollWait(r *http.Request) (time.Duration, bool) {
+	wait := defaultPollWait
+	if raw := strings.TrimSpace(r.URL.Query().Get("timeout")); raw != "" {
+		n, e := strconv.ParseInt(raw, 10, 64)
+		if e != nil || n < 0 {
+			return 0, false
+		}
+		if n > int64(s.pollMaxWait()/time.Second) { // also avoids Duration overflow
+			n = int64(s.pollMaxWait() / time.Second)
+		}
+		wait = time.Duration(n) * time.Second
+	}
+	if wait > s.pollMaxWait() {
+		wait = s.pollMaxWait()
+	}
+	return wait, true
+}
+
 // pollEvents is the long-poll form of events for clients that can only read a
 // complete response. It answers at once with the pending messages after the
 // cursor (same cursor rules and event shape as the stream). When there are
@@ -217,20 +237,10 @@ func (s *Server) pollEvents(w http.ResponseWriter, r *http.Request, role string)
 		http.Error(w, "invalid cursor", 400)
 		return
 	}
-	wait := defaultPollWait
-	if raw := strings.TrimSpace(r.URL.Query().Get("timeout")); raw != "" {
-		n, e := strconv.ParseInt(raw, 10, 64)
-		if e != nil || n < 0 {
-			http.Error(w, "invalid timeout", 400)
-			return
-		}
-		if n > int64(s.pollMaxWait()/time.Second) { // also avoids Duration overflow
-			n = int64(s.pollMaxWait() / time.Second)
-		}
-		wait = time.Duration(n) * time.Second
-	}
-	if wait > s.pollMaxWait() {
-		wait = s.pollMaxWait()
+	wait, ok := s.pollWait(r)
+	if !ok {
+		http.Error(w, "invalid timeout", 400)
+		return
 	}
 	// Subscribe before the first query so mail stored between the query and the
 	// wait still wakes this request.

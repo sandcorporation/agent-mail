@@ -149,6 +149,13 @@ var commands = []command{
 			{"--pending", "", "list: only requests still waiting for an answer"},
 			optJSON, optProfile,
 		}},
+	{name: "question", args: "ACTION [ID]", nargs: 2, optArgs: true, synopsis: "(ACTION: ask | show ID | list | answer ID | withdraw ID)",
+		summary: "Ask, show, list, answer or withdraw multiple-choice questions (only a boss role of another base answers; first answer wins)",
+		options: []option{
+			{"--file", "PATH", "ask: JSON with the questions ({\"questions\":[...]} or the bare list); answer: JSON with the answers ({\"answers\":[...]} or the bare list)"},
+			{"--status", "STATUS", "list: only pending, answered or withdrawn questions"},
+			optJSON, optProfile,
+		}},
 	{name: "version", summary: "Show build version"},
 }
 
@@ -302,6 +309,8 @@ func dispatch(args []string) (int, error) {
 		return cliStatus(c, p)
 	case "permission":
 		return cliPermission(c, p)
+	case "question":
+		return cliQuestion(c, p)
 	case "read", "ack", "complete":
 		method, u := "GET", endpoint(c, "/api/messages/"+p.pos[0])
 		if name != "read" {
