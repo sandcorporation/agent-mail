@@ -115,10 +115,7 @@ func runServer() {
 		log.Fatal("cannot migrate configured roles")
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"ok":true}`)
-	})
+	mux.HandleFunc("/health", health)
 	mux.HandleFunc("/api/", s.api)
 	mux.HandleFunc("/", dashboard)
 	addr := env("LISTEN_ADDR", ":8080")
@@ -783,4 +780,14 @@ func (s *Server) watch(w http.ResponseWriter, r *http.Request, role string) {
 		case <-time.After(1 * time.Second):
 		}
 	}
+}
+
+// health reports liveness and the build version. It is unauthenticated; the
+// version (a short commit sha in CI images, "dev" locally) is not sensitive.
+func health(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(struct {
+		OK      bool   `json:"ok"`
+		Version string `json:"version"`
+	}{true, version})
 }
