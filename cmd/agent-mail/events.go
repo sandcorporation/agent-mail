@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -76,23 +77,30 @@ func (s *Server) keepAliveInterval() time.Duration {
 	return defaultEventKeepAlive
 }
 
+// eventCursor reads the resume cursor shared by the event stream and the long
+// poll: the Last-Event-ID header, else ?after=. A missing cursor is 0; a
+// non-integer or negative cursor is invalid.
+func eventCursor(r *http.Request) (int64, bool) {
+	raw := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
+	if raw == "" {
+		raw = strings.TrimSpace(r.URL.Query().Get("after"))
+	}
+	if raw == "" {
+		return 0, true
+	}
+	id, e := parseID(raw)
+	return id, e == nil && id >= 0
+}
+
 // events streams new pending mail for the authenticated role as server-sent
 // events. Without a cursor it first sends every message currently pending for
 // the role; with Last-Event-ID (or ?after=) it sends pending messages with a
 // larger ID. It then sends each new pending message as it is stored.
 func (s *Server) events(w http.ResponseWriter, r *http.Request, role string) {
-	cursor := int64(0)
-	raw := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
-	if raw == "" {
-		raw = strings.TrimSpace(r.URL.Query().Get("after"))
-	}
-	if raw != "" {
-		id, e := parseID(raw)
-		if e != nil || id < 0 {
-			http.Error(w, "invalid Last-Event-ID", 400)
-			return
-		}
-		cursor = id
+	cursor, ok := eventCursor(r)
+	if !ok {
+		http.Error(w, "invalid Last-Event-ID", 400)
+		return
 	}
 	rc := http.NewResponseController(w)
 	// Subscribe before the first query so mail stored between the query and the
@@ -177,4 +185,82 @@ func (s *Server) pendingAfter(role string, cursor int64) ([]mailEvent, error) {
 		out = append(out, ev)
 	}
 	return out, rows.Err()
+}
+
+const defaultPollWait = 25 * time.Second
+const defaultPollMax = 55 * time.Second
+
+// pollResponse is the body of GET /api/events/poll. Cursor is the ID of the
+// last event returned, or the request cursor when there are none.
+type pollResponse struct {
+	Events []mailEvent `json:"events"`
+	Cursor int64       `json:"cursor"`
+}
+
+func (s *Server) pollMaxWait() time.Duration {
+	if s.pollMax > 0 {
+		return s.pollMax
+	}
+	return defaultPollMax
+}
+
+// pollEvents is the long-poll form of events for clients that can only read a
+// complete response. It answers at once with the pending messages after the
+// cursor (same cursor rules and event shape as the stream). When there are
+// none it waits up to ?timeout= seconds (default 25, capped by the server) for
+// new mail and answers with whatever arrived, or an empty list.
+func (s *Server) pollEvents(w http.ResponseWriter, r *http.Request, role string) {
+	cursor, ok := eventCursor(r)
+	if !ok {
+		http.Error(w, "invalid cursor", 400)
+		return
+	}
+	wait := defaultPollWait
+	if raw := strings.TrimSpace(r.URL.Query().Get("timeout")); raw != "" {
+		n, e := strconv.ParseInt(raw, 10, 64)
+		if e != nil || n < 0 {
+			http.Error(w, "invalid timeout", 400)
+			return
+		}
+		if n > int64(s.pollMaxWait()/time.Second) { // also avoids Duration overflow
+			n = int64(s.pollMaxWait() / time.Second)
+		}
+		wait = time.Duration(n) * time.Second
+	}
+	if wait > s.pollMaxWait() {
+		wait = s.pollMaxWait()
+	}
+	// Subscribe before the first query so mail stored between the query and the
+	// wait still wakes this request.
+	wake, unsubscribe := s.hub.subscribe(role)
+	defer unsubscribe()
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	evs := []mailEvent{}
+	for {
+		var e error
+		if evs, e = s.pendingAfter(role, cursor); e != nil {
+			http.Error(w, "database error", 500)
+			return
+		}
+		if len(evs) > 0 || wait == 0 {
+			break
+		}
+		select {
+		case <-r.Context().Done():
+			return
+		case <-s.done:
+		case <-timer.C:
+		case <-wake:
+			continue
+		}
+		break
+	}
+	if len(evs) > 0 {
+		cursor = evs[len(evs)-1].ID
+	}
+	h := w.Header()
+	h.Set("Content-Type", "application/json")
+	h.Set("Cache-Control", "no-store")
+	writeJSON(w, pollResponse{Events: evs, Cursor: cursor})
 }

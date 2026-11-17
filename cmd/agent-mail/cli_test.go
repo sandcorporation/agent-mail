@@ -29,7 +29,14 @@ type cliHarness struct {
 
 func newCLIHarness(t *testing.T) *cliHarness {
 	t.Helper()
+	return newCLIHarnessWith(t, func(*Server) {})
+}
+
+// newCLIHarnessWith lets setup configure the server before it starts serving.
+func newCLIHarnessWith(t *testing.T, setup func(*Server)) *cliHarness {
+	t.Helper()
 	s := testServer(t)
+	setup(s)
 	srv := httptest.NewServer(http.HandlerFunc(s.api))
 	t.Cleanup(srv.Close)
 	h := &cliHarness{t: t, s: s, url: srv.URL, dir: t.TempDir(), tokens: map[string]string{}}

@@ -98,6 +98,13 @@ var commands = []command{
 			{"--interval", "SECONDS", "seconds between checks (default 15)"},
 			optJSON, optProfile,
 		}},
+	{name: "events", summary: "Long-poll once for new pending mail, print it and exit (does not mark it read)",
+		options: []option{
+			{"--after", "ID", "only messages with an ID greater than this cursor (default: every pending message)"},
+			{"--timeout", "SECONDS", "wait up to SECONDS for new mail, capped by the server (default 25, 0 = answer at once); exit 3 when none arrives"},
+			{"--json", "", "print the server's JSON response ({\"events\":[...],\"cursor\":N})"},
+			optProfile,
+		}},
 	{name: "watch", summary: "Watch inbox without consuming messages",
 		options: []option{
 			{"--after", "ID", "only report messages with an ID greater than this cursor"},
@@ -249,6 +256,8 @@ func dispatch(args []string) (int, error) {
 		return cliWait(c, p)
 	case "watch":
 		return cliWatch(c, p)
+	case "events":
+		return cliEvents(c, p)
 	case "read", "ack", "complete":
 		method, u := "GET", endpoint(c, "/api/messages/"+p.pos[0])
 		if name != "read" {
@@ -351,12 +360,13 @@ Examples:
   agent-mail --profile worker send --to team/lead --subject 'Done' --body 'Work is complete'
   agent-mail inbox --status pending --json
   agent-mail wait --timeout 1800
+  agent-mail events --after 41 --timeout 25
 
 Use 'agent-mail <command> --help' for command options.
 --profile NAME may come before or after the command; it overrides AGENT_MAIL_PROFILE.
 A named profile that has no saved config is an error.
 
-Exit codes: 0 success, 1 error, 2 usage error (unknown command or option), 3 wait timed out.
+Exit codes: 0 success, 1 error, 2 usage error (unknown command or option), 3 wait or events found no mail.
 `)
 	fmt.Print(b.String())
 }
@@ -639,14 +649,14 @@ func pretty(v any) {
 	}
 }
 
-func secondsOption(p parsedArgs, name string, def int, min int) (time.Duration, error) {
+func secondsOption(cmd string, p parsedArgs, name string, def int, min int) (time.Duration, error) {
 	raw, ok := p.values[name]
 	if !ok {
 		return time.Duration(def) * time.Second, nil
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < min {
-		return 0, usagef("wait: %s must be a whole number of seconds >= %d", name, min)
+		return 0, usagef("%s: %s must be a whole number of seconds >= %d", cmd, name, min)
 	}
 	return time.Duration(n) * time.Second, nil
 }
@@ -690,11 +700,11 @@ func fetchPending(client *http.Client, c Config) ([]Message, error) {
 // cliWait blocks until the active role has pending inbox messages, prints them and
 // exits 0. It never changes message state. With no pending mail before the timeout it exits 3.
 func cliWait(c Config, p parsedArgs) (int, error) {
-	timeout, err := secondsOption(p, "--timeout", 1800, 0)
+	timeout, err := secondsOption("wait", p, "--timeout", 1800, 0)
 	if err != nil {
 		return 0, err
 	}
-	interval, err := secondsOption(p, "--interval", 15, 1)
+	interval, err := secondsOption("wait", p, "--interval", 15, 1)
 	if err != nil {
 		return 0, err
 	}
@@ -719,14 +729,7 @@ func cliWait(c Config, p parsedArgs) (int, error) {
 				fmt.Println(string(b))
 			} else {
 				for _, m := range msgs {
-					line := fmt.Sprintf("#%d %s | %s", m.ID, m.Sender, oneLine(m.Subject))
-					if m.TaskID != "" {
-						line += " | task=" + m.TaskID
-					}
-					if m.Priority == "urgent" {
-						line += " | urgent"
-					}
-					fmt.Println(line)
+					fmt.Println(mailLine(m.ID, m.Sender, m.Subject, m.TaskID, m.Priority))
 				}
 			}
 			return exitOK, nil
@@ -749,6 +752,73 @@ func cliWait(c Config, p parsedArgs) (int, error) {
 		}
 		time.Sleep(sleep)
 	}
+}
+
+// mailLine is the one-line summary printed by wait and events:
+// "#ID sender | subject[ | task=ID][ | urgent]".
+func mailLine(id int64, sender, subject, task, priority string) string {
+	line := fmt.Sprintf("#%d %s | %s", id, sender, oneLine(subject))
+	if task != "" {
+		line += " | task=" + task
+	}
+	if priority == "urgent" {
+		line += " | urgent"
+	}
+	return line
+}
+
+// cliEvents makes one long-poll request to /api/events/poll. It exits 0 when
+// events came back, 3 when the wait ended with none. It never changes message
+// state; pass the printed cursor back with --after to resume.
+func cliEvents(c Config, p parsedArgs) (int, error) {
+	q := url.Values{}
+	if raw, ok := p.values["--after"]; ok {
+		if id, e := strconv.ParseInt(raw, 10, 64); e != nil || id < 0 {
+			return 0, usagef("events: --after must be a message ID >= 0")
+		}
+		q.Set("after", raw)
+	}
+	wait, err := secondsOption("events", p, "--timeout", 25, 0)
+	if err != nil {
+		return 0, err
+	}
+	if _, ok := p.values["--timeout"]; ok {
+		q.Set("timeout", strconv.FormatInt(int64(wait/time.Second), 10))
+	}
+	u := endpoint(c, "/api/events/poll")
+	if len(q) > 0 {
+		u += "?" + q.Encode()
+	}
+	req, _ := http.NewRequest("GET", u, nil)
+	authorize(c, req)
+	resp, err := (&http.Client{Timeout: wait + 30*time.Second}).Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return 0, fmt.Errorf("server returned %s: %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	var v struct {
+		Events []mailEvent `json:"events"`
+		Cursor int64       `json:"cursor"`
+	}
+	if err := json.Unmarshal(b, &v); err != nil {
+		return 0, fmt.Errorf("unexpected response from server: %v", err)
+	}
+	if p.bool("--json") {
+		fmt.Println(strings.TrimSpace(string(b)))
+	} else {
+		for _, ev := range v.Events {
+			fmt.Println(mailLine(ev.ID, ev.Sender, ev.Subject, ev.TaskID, ev.Priority))
+		}
+	}
+	if len(v.Events) == 0 {
+		fmt.Fprintf(os.Stderr, "agent-mail events: no new mail (cursor %d)\n", v.Cursor)
+		return exitTimeout, nil
+	}
+	return exitOK, nil
 }
 
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
