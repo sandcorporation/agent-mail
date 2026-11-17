@@ -348,6 +348,10 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 		s.questionSettingsAPI(w, r, target, hasTarget)
 		return
 	}
+	if rest, ok := strings.CutPrefix(path, "questions"); ok && (rest == "" || strings.HasPrefix(rest, "/")) {
+		s.adminQuestionsAPI(w, r, strings.TrimPrefix(rest, "/"))
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
