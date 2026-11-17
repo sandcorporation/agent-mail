@@ -13,7 +13,7 @@ Why we built it: [A role mailbox for AI sessions](https://sandcorp.co.kr/blog/ro
 
 ## Message and status semantics
 
-Messages have sender, recipient, subject, markdown or plain text body, UTC timestamp, optional task ID, thread ID, and reply-to ID. New recipient messages are `pending`. Opening with `read` marks the message `read`; `ack` explicitly accepts responsibility and stores `acknowledged`; `complete` records finished work. These are recipient-side states. Inbox listing and watch do not consume or mutate messages. Outbox lists messages authored by the current role. Search matches subject, body, and task ID; the service returns at most 100 newest matches.
+Messages have sender, recipient, subject, markdown or plain text body, UTC timestamp, optional task ID, thread ID, and reply-to ID, and a priority: `normal` (the default) or `urgent`. Any role may send urgent mail; priority changes how mail is shown and streamed (urgent event frames include the body), not who may read it. The server stores urgent bodies in full; clients that show them inline choose their own length limit. New recipient messages are `pending`. Opening with `read` marks the message `read`; `ack` explicitly accepts responsibility and stores `acknowledged`; `complete` records finished work. These are recipient-side states. Inbox listing and watch do not consume or mutate messages. Outbox lists messages authored by the current role. Search matches subject, body, and task ID; the service returns at most 100 newest matches.
 
 A thread's root ID is shared in `thread_id`; `reply_to` points at the immediate parent. Idempotency keys are unique per sender and key. A retry with the same key returns the original message and does not create a second one. Keep a key stable for retries of one logical send and use a fresh key for a new message.
 
@@ -40,15 +40,16 @@ agent-mail inbox [--q term] [--status pending|read|acknowledged|complete] [--jso
 agent-mail outbox --json
 agent-mail read 42
 agent-mail reply 42 --subject 'Re: Build ready' --body 'Thanks'
+agent-mail send --to codemit/coordinator --subject 'Deploy blocked' --body 'Needs a decision' --urgent
 agent-mail ack 42
 agent-mail complete 42
 agent-mail watch --after 0 --json
 agent-mail wait --timeout 1800
 ```
 
-`send` and `reply` accept `--body`, `--body-file`, or piped stdin. `--json` returns machine-readable results for list/read/send/status operations. `watch` is a reconnecting long poll; save its printed cursor and pass it back with `--after` after restarting. Notifications can repeat after reconnect by design.
+`send` and `reply` accept `--body`, `--body-file`, or piped stdin. `--urgent` sends with priority `urgent` (without it the request carries no priority field, so older servers accept it unchanged; an older server ignores `--urgent` and stores normal mail). Human-readable `inbox`, `outbox` and `read` output prefix urgent subjects with `[urgent]`; `--json` output includes `priority`. `--json` returns machine-readable results for list/read/send/status operations. `watch` is a reconnecting long poll; save its printed cursor and pass it back with `--after` after restarting. Notifications can repeat after reconnect by design.
 
-`wait` checks the inbox for `pending` messages (every `--interval` seconds, default 15), prints them as `#ID sender | subject | task=ID` lines (or a JSON array with `--json`) and exits 0. It never marks anything read, and it returns immediately when pending mail already exists, so it is safe to run as a background "wake me when mail arrives" step. With no pending mail before `--timeout` (default 1800 seconds, `0` = no limit) it exits 3. Credential errors exit 1 at once; transient network errors are retried.
+`wait` checks the inbox for `pending` messages (every `--interval` seconds, default 15), prints them as `#ID sender | subject | task=ID` lines (or a JSON array with `--json`; urgent lines end with ` | urgent`, normal lines are unchanged) and exits 0. It never marks anything read, and it returns immediately when pending mail already exists, so it is safe to run as a background "wake me when mail arrives" step. With no pending mail before `--timeout` (default 1800 seconds, `0` = no limit) it exits 3. Credential errors exit 1 at once; transient network errors are retried.
 
 Every command accepts only its own options; `agent-mail <command> --help` lists them. An unknown command or option, a missing option value, or an invalid `--status` exits with code 2 instead of being ignored. Exit codes: 0 success, 1 error, 2 usage error, 3 `wait` timed out.
 
@@ -96,10 +97,11 @@ Use the actual volume name from `docker volume ls` if Compose prefixes it differ
 
 All `/api/*` routes except registration require `Authorization: Bearer <role-token>` and `X-Agent-Mail-Role: <expected-role>`. The server checks that the selected role matches the credential, so a session cannot accidentally use another profile's identity. Unauthorized or mismatched requests return 401; a recipient outside the registered role set returns 403. `POST /api/register` accepts `{role,credential}` and requires the operator enrollment bearer credential for new roles. Existing roles may only be resumed by presenting their same role credential.
 
-- `POST /api/messages` with `{recipient,subject,body,task_id?,thread_id?,reply_to?}`. Optional `Idempotency-Key` header.
+- `POST /api/messages` with `{recipient,subject,body,task_id?,thread_id?,reply_to?,priority?}`. `priority` is `normal` (default when omitted) or `urgent`; any other value returns 400. Optional `Idempotency-Key` header; a retry returns the first message, including its priority.
+- Every message in a JSON response (send, reply, list, read, admin list) includes `"priority":"normal"|"urgent"`. Messages stored before priority existed are `normal`.
 - `GET /api/messages?box=inbox|outbox&q=...&status=...`
 - `GET /api/messages/{id}`; recipient read marks `read`, sender may inspect own outbox messages.
-- `POST /api/messages/{id}/reply` with `{subject,body,recipient?}`.
+- `POST /api/messages/{id}/reply` with `{subject,body,recipient?,priority?}` (same `priority` rules as send).
 - `POST /api/messages/{id}/ack`, `/complete`; recipient only.
 - `GET /api/watch?after=<message-id>` waits up to 25 seconds, returns `{messages:[ids],cursor:id,timeout?:true}`. Replay with the returned cursor. IDs are durable; concurrent watchers independently replay and can see duplicates.
 - `GET /api/events` streams new pending mail for the authenticated role as server-sent events (same two auth headers; `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`). Optional cursor: `Last-Event-ID: <message-id>` header, or `?after=<message-id>` (the header wins); a non-integer cursor returns 400. On connect the server sends `retry: 3000`, then a backlog of `event: message` frames, then `event: ready` with `{"cursor":<last id sent or the given cursor>}`, then live `event: message` frames as mail is stored, and `: ping` comments every `AGENT_MAIL_SSE_KEEPALIVE` (Go duration, default `20s`). Each message frame carries `id: <message-id>` and `data: {"id","sender","recipient","subject","priority","created_at","task_id"?,"thread_id"?,"body"?}`; `priority` is `normal` or `urgent` and `body` is present only for urgent mail. Without a cursor the backlog is every message whose recipient state is still `pending`; with a cursor it is pending messages with a larger ID. Within one connection each message is sent at most once, in ID order; reconnecting with the last received `id` never repeats a message at or below it, while reconnecting without a cursor resends whatever is still pending, so clients dedupe by ID. Streaming has no state side effects. Example: `curl -N -H "Authorization: Bearer $TOKEN" -H "X-Agent-Mail-Role: worker" -H "Last-Event-ID: 41" https://mail.example/api/events`.
@@ -114,4 +116,4 @@ GitHub Actions builds versioned archives for Windows, Linux, and macOS (amd64 an
 
 ## Tests and limitations
 
-Run `go test ./...`. Current tests cover SQLite persistence across database reopen, retry idempotency, auth rejection, watch cursor replay, status filtering, and the event stream (role isolation, pending backlog, `Last-Event-ID` resume, keep-alive, shutdown). This first release uses a single SQLite writer, bounded newest-first listing, basic substring search, bearer tokens without token rotation UI, and long polling plus a server-sent event stream (`/api/events`) whose subscribers live in one server process. Back up the data volume and restrict network access to private/Tailscale paths.
+Run `go test ./...`. Current tests cover SQLite persistence across database reopen, retry idempotency, auth rejection, watch cursor replay, status filtering, and the event stream (role isolation, pending backlog, `Last-Event-ID` resume, keep-alive, shutdown), message priority (defaults, validation, urgent event bodies, reply, CLI markers, old-server compatibility) and the in-place schema migration of pre-priority databases. This first release uses a single SQLite writer, bounded newest-first listing, basic substring search, bearer tokens without token rotation UI, and long polling plus a server-sent event stream (`/api/events`) whose subscribers live in one server process. Back up the data volume and restrict network access to private/Tailscale paths.

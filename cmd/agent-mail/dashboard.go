@@ -30,6 +30,8 @@ button{cursor:pointer}
 .row{display:flex;gap:.4rem;align-items:center;flex-wrap:wrap}
 .card{background:#fff;padding:1rem;margin:.7rem 0;border-radius:8px;box-shadow:0 1px 5px #ccd}
 .card h3{margin:.1rem 0 .3rem}
+.card.urgent{border-left:4px solid #c62828}
+.badge{display:inline-block;background:#c62828;color:#fff;border-radius:4px;padding:0 .4rem;margin-right:.4rem;font-size:.8em;vertical-align:middle}
 .body{margin-top:.8rem;border-top:1px solid #dde;padding-top:.8rem}
 pre{white-space:pre-wrap;overflow-wrap:anywhere;font:15px/1.5 ui-monospace,monospace;margin:0}
 .muted{color:#667}
@@ -80,7 +82,8 @@ async function load(){
   }catch(e){$('conn').textContent=e.message}
 }
 function card(m){
-  const c=node('article','','card');
+  const urgent=m.priority==='urgent';
+  const c=node('article','',urgent?'card urgent':'card');
   const meta=m.sender+' → '+m.recipient+' · '+new Date(m.created_at).toLocaleString('ko-KR')+' · '+(statusLabel[m.status]||m.status)+(m.task_id?' · task '+m.task_id:'');
   const toggle=node('button','열기');
   toggle.setAttribute('aria-expanded','false');
@@ -100,7 +103,10 @@ function card(m){
     toggle.textContent='닫기';toggle.setAttribute('aria-expanded','true');
     body.scrollIntoView({block:'nearest'});
   };
-  c.append(node('h3','#'+m.id+' '+m.subject),node('p',meta,'muted'),toggle);
+  const h=node('h3','');
+  if(urgent)h.append(node('span','긴급','badge'));
+  h.append(document.createTextNode('#'+m.id+' '+m.subject));
+  c.append(h,node('p',meta,'muted'),toggle);
   return c;
 }
 $('go').onclick=load;

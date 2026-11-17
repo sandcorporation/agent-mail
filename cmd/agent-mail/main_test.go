@@ -23,7 +23,10 @@ func testServer(t *testing.T) *Server {
 		t.Fatal(e)
 	}
 	db.SetMaxOpenConns(1)
-	_, e = db.Exec(`PRAGMA journal_mode=WAL; CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT,sender TEXT NOT NULL,recipient TEXT NOT NULL,subject TEXT NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL,task_id TEXT,thread_id INTEGER,reply_to INTEGER,status TEXT NOT NULL DEFAULT 'pending',idem TEXT, UNIQUE(sender,idem)); CREATE TABLE role_states(role TEXT NOT NULL,message_id INTEGER NOT NULL,status TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(role,message_id)); CREATE TABLE roles(role TEXT PRIMARY KEY,token TEXT NOT NULL,created_at TEXT NOT NULL); INSERT INTO roles VALUES('a','secret-a','now'),('b','secret-b','now');`)
+	if e = initSchema(db); e != nil {
+		t.Fatal(e)
+	}
+	_, e = db.Exec(`INSERT INTO roles VALUES('a','secret-a','now'),('b','secret-b','now');`)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -148,7 +151,7 @@ func TestDashboardUsesSameOriginAndNoRoleCredentials(t *testing.T) {
 			t.Fatalf("dashboard uses %s", banned)
 		}
 	}
-	for _, want := range []string{`lang="ko"`, "열기", "닫기", "스레드 보기", "aria-expanded"} {
+	for _, want := range []string{`lang="ko"`, "열기", "닫기", "스레드 보기", "aria-expanded", "긴급", "m.priority==='urgent'"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("dashboard missing %q", want)
 		}

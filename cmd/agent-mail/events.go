@@ -53,7 +53,7 @@ func (h *mailHub) publish(role string) {
 }
 
 // mailEvent is the data of an SSE "message" event. Body is present only for
-// urgent mail. Priority is always "normal" until messages store a priority.
+// urgent mail (always present for urgent mail, even when empty).
 type mailEvent struct {
 	ID        int64     `json:"id"`
 	Sender    string    `json:"sender"`
@@ -63,7 +63,7 @@ type mailEvent struct {
 	CreatedAt time.Time `json:"created_at"`
 	TaskID    string    `json:"task_id,omitempty"`
 	ThreadID  int64     `json:"thread_id,omitempty"`
-	Body      string    `json:"body,omitempty"`
+	Body      *string   `json:"body,omitempty"`
 }
 
 const defaultEventKeepAlive = 20 * time.Second
@@ -158,7 +158,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, role string) {
 // assigned and committed in order on the single connection, so no message with
 // a smaller ID can appear after a larger one has been seen.
 func (s *Server) pendingAfter(role string, cursor int64) ([]mailEvent, error) {
-	rows, e := s.db.Query(`SELECT m.id,m.sender,m.recipient,m.subject,m.created_at,COALESCE(m.task_id,''),COALESCE(m.thread_id,0) FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=m.recipient WHERE m.recipient=? AND m.id>? AND COALESCE(rs.status,m.status,'pending')='pending' ORDER BY m.id LIMIT ?`, role, cursor, eventBatch)
+	rows, e := s.db.Query(`SELECT m.id,m.sender,m.recipient,m.subject,m.created_at,COALESCE(m.task_id,''),COALESCE(m.thread_id,0),COALESCE(m.priority,'normal'),m.body FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=m.recipient WHERE m.recipient=? AND m.id>? AND COALESCE(rs.status,m.status,'pending')='pending' ORDER BY m.id LIMIT ?`, role, cursor, eventBatch)
 	if e != nil {
 		return nil, e
 	}
@@ -166,12 +166,14 @@ func (s *Server) pendingAfter(role string, cursor int64) ([]mailEvent, error) {
 	out := []mailEvent{}
 	for rows.Next() {
 		var ev mailEvent
-		var created string
-		if e = rows.Scan(&ev.ID, &ev.Sender, &ev.Recipient, &ev.Subject, &created, &ev.TaskID, &ev.ThreadID); e != nil {
+		var created, body string
+		if e = rows.Scan(&ev.ID, &ev.Sender, &ev.Recipient, &ev.Subject, &created, &ev.TaskID, &ev.ThreadID, &ev.Priority, &body); e != nil {
 			return nil, e
 		}
 		ev.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
-		ev.Priority = "normal"
+		if ev.Priority == "urgent" {
+			ev.Body = &body
+		}
 		out = append(out, ev)
 	}
 	return out, rows.Err()
