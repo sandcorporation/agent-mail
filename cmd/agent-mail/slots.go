@@ -79,15 +79,7 @@ func splitSlot(role string) (string, int, bool) {
 
 func slotRole(base string, n int) string { return base + "-" + strconv.Itoa(n) }
 
-func roleToken(q queryer, role string) (string, bool) {
-	var token string
-	if q.QueryRow(`SELECT token FROM roles WHERE role=?`, role).Scan(&token) != nil {
-		return "", false
-	}
-	return token, true
-}
-
-func roleExists(q queryer, role string) bool { _, ok := roleToken(q, role); return ok }
+func roleExists(q queryer, role string) bool { _, _, ok := roleRecord(q, role); return ok }
 
 func sameSecret(a, b string) bool {
 	return len(a) == len(b) && subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
@@ -98,15 +90,16 @@ func sameSecret(a, b string) bool {
 // with exactly that name always wins, so a pre-existing role ending in -N
 // keeps its own token. Otherwise "<base>-N" is accepted with the token of
 // <base>. The slot need not be currently leased: the base token can claim any
-// slot anyway, and mail queued for an expired slot must stay readable.
+// slot anyway, and mail queued for an expired slot must stay readable. A
+// revoked role is refused under every name it covers.
 func (s *Server) authenticate(r *http.Request) (principal, bool) {
 	t := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	h := s.header(r, "Role")
 	if t == "" || h == "" || !validRole(h) || reservedRole(h) {
 		return principal{}, false
 	}
-	if token, ok := roleToken(s.db, h); ok {
-		if !sameSecret(token, t) {
+	if hash, revoked, ok := roleRecord(s.db, h); ok {
+		if !tokenMatches(hash, t) || revoked {
 			return principal{}, false
 		}
 		return principal{Role: h, Base: h}, true
@@ -115,8 +108,8 @@ func (s *Server) authenticate(r *http.Request) (principal, bool) {
 	if !ok {
 		return principal{}, false
 	}
-	token, ok := roleToken(s.db, base)
-	if !ok || !sameSecret(token, t) {
+	hash, revoked, ok := roleRecord(s.db, base)
+	if !ok || !tokenMatches(hash, t) || revoked {
 		return principal{}, false
 	}
 	p := principal{Role: h, Base: base, Number: n}

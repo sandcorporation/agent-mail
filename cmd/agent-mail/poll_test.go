@@ -75,7 +75,7 @@ func pollServer(t *testing.T, max time.Duration) (*Server, string) {
 	s := testServer(t)
 	s.pollMax = max
 	s.done = make(chan struct{})
-	if _, err := s.db.Exec(`INSERT INTO roles VALUES('c','secret-c','now')`); err != nil {
+	if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES('c','secret-c','now')`); err != nil {
 		t.Fatal(err)
 	}
 	ts := httptest.NewServer(secureHeaders(http.HandlerFunc(s.api)))

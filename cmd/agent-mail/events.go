@@ -156,6 +156,10 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, role string) {
 				return
 			}
 		case <-ticker.C:
+			// A role revoked while streaming loses the stream at the next ping.
+			if _, ok := s.authenticate(r); !ok {
+				return
+			}
 			if _, e := fmt.Fprint(w, ": ping\n\n"); e != nil || rc.Flush() != nil {
 				return
 			}

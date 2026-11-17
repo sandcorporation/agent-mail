@@ -26,7 +26,7 @@ func testServer(t *testing.T) *Server {
 	if e = initSchema(db); e != nil {
 		t.Fatal(e)
 	}
-	_, e = db.Exec(`INSERT INTO roles VALUES('a','secret-a','now'),('b','secret-b','now');`)
+	_, e = seedRoles(db, `INSERT INTO roles(role,token,created_at) VALUES('a','secret-a','now'),('b','secret-b','now');`)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -91,13 +91,13 @@ func TestDynamicRegistrationResumeAndMigration(t *testing.T) {
 	}
 	defer db.Close()
 	var token string
-	if err = db.QueryRow(`SELECT token FROM roles WHERE role='team/worker'`).Scan(&token); err != nil || token != payload["credential"] {
+	if err = db.QueryRow(`SELECT token FROM roles WHERE role='team/worker'`).Scan(&token); err != nil || token != tokenHash(payload["credential"]) {
 		t.Fatalf("dynamic role lost after restart: %v", err)
 	}
 	if err = migrateConfiguredRoles(&Server{db: db, tokens: map[string]string{"legacy": "legacy-token"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err = db.QueryRow(`SELECT token FROM roles WHERE role='legacy'`).Scan(&token); err != nil || token != "legacy-token" {
+	if err = db.QueryRow(`SELECT token FROM roles WHERE role='legacy'`).Scan(&token); err != nil || token != tokenHash("legacy-token") {
 		t.Fatalf("static migration failed: %v", err)
 	}
 }
@@ -125,7 +125,7 @@ func TestAdminReadAPIRequiresProxySecretAndIsReadOnly(t *testing.T) {
 		t.Fatalf("wrong proxy secret=%d", w.Code)
 	}
 	w := request("GET", "/api/admin/roles", "proxy-secret")
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `["a","b"]`) || strings.Contains(w.Body.String(), "secret-a") {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `[{"role":"a","created_at":"now","revoked_at":null,"group":""},{"role":"b",`) || strings.Contains(w.Body.String(), "secret-a") || strings.Contains(w.Body.String(), "sha256") {
 		t.Fatalf("roles response=%d %s", w.Code, w.Body)
 	}
 	w = request("GET", "/api/admin/messages?box=inbox&role=b&thread=41", "proxy-secret")
@@ -203,7 +203,7 @@ func TestProtectedReverseProxyAdminRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	var roles []string
+	var roles []roleView
 	if err = json.NewDecoder(resp.Body).Decode(&roles); err != nil || resp.StatusCode != 200 || len(roles) != 2 {
 		t.Fatalf("authenticated proxy response=%d roles=%v err=%v", resp.StatusCode, roles, err)
 	}
@@ -320,7 +320,7 @@ func call(s *Server, method, path, token string, body any, idem string) *httptes
 	r := httptest.NewRequest(method, path, &b)
 	r.Header.Set("Authorization", "Bearer "+token)
 	var role string
-	_ = s.db.QueryRow(`SELECT role FROM roles WHERE token=?`, token).Scan(&role)
+	_ = s.db.QueryRow(`SELECT role FROM roles WHERE token=?`, tokenHash(token)).Scan(&role)
 	r.Header.Set("X-Agent-Mail-Role", role)
 	if idem != "" {
 		r.Header.Set("Idempotency-Key", idem)

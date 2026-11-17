@@ -26,7 +26,7 @@ func labelServer(t *testing.T) (*Server, *fakeClock, string) {
 	s, clock := slotServer(t)
 	s.adminProxyToken = adminToken
 	s.eventKeepAlive = time.Hour
-	if _, err := s.db.Exec(`INSERT INTO roles VALUES('team/other',?,'now')`, otherToken); err != nil {
+	if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES('team/other',?,'now')`, otherToken); err != nil {
 		t.Fatal(err)
 	}
 	ts := httptest.NewServer(secureHeaders(http.HandlerFunc(s.api)))

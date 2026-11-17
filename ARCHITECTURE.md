@@ -1,6 +1,6 @@
 # Architecture and API reference
 
-The Go HTTP server authenticates each request by constant-time comparison against the configured `SWITCHBOARD_TOKENS` role/token map. That role is the sender identity and recipient authorization set. SQLite stores immutable message content plus recipient-specific state transitions in `role_states`; the database is mounted on a persistent volume. The CLI sends JSON over HTTPS/HTTP to the configured endpoint. The dashboard is served by the same process and treats message fields as text.
+The Go HTTP server authenticates each request by hashing the bearer token (SHA-256) and comparing it in constant time with the hash stored in the `roles` row of the claimed role (seeded from `SWITCHBOARD_TOKENS` or added by registration); a row with `revoked_at` set refuses every request. That role is the sender identity and recipient authorization set. SQLite stores immutable message content plus recipient-specific state transitions in `role_states`; the database is mounted on a persistent volume. The CLI sends JSON over HTTPS/HTTP to the configured endpoint. The dashboard is served by the same process and treats message fields as text.
 
 ## State model
 

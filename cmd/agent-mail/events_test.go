@@ -136,7 +136,7 @@ func sendMail(t *testing.T, s *Server, token, to, subject string) int64 {
 func eventServer(t *testing.T) (*Server, string) {
 	s := testServer(t)
 	s.eventKeepAlive = time.Hour
-	if _, err := s.db.Exec(`INSERT INTO roles VALUES('c','secret-c','now')`); err != nil {
+	if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES('c','secret-c','now')`); err != nil {
 		t.Fatal(err)
 	}
 	ts := httptest.NewServer(secureHeaders(http.HandlerFunc(s.api)))
@@ -283,6 +283,30 @@ func TestEventsSlowSubscriberDoesNotBlockSendOrLoseMail(t *testing.T) {
 	for _, id := range want {
 		if m := st.nextMessage(t); int64(m["id"].(float64)) != id {
 			t.Fatalf("got %v want %d", m["id"], id)
+		}
+	}
+}
+
+func TestEventsStreamEndsAfterRevoke(t *testing.T) {
+	s, base := eventServer(t)
+	s.eventKeepAlive = 30 * time.Millisecond
+	st := openEvents(t, base, "secret-b", "b", nil, "")
+	st.untilReady(t)
+	if _, err := s.setRevoked(context.Background(), "b", true); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case f, ok := <-st.frames:
+			if !ok {
+				return
+			}
+			if f.Comment == "ping" {
+				t.Fatal("ping after revoke")
+			}
+		case <-deadline:
+			t.Fatal("stream not closed after revoke")
 		}
 	}
 }

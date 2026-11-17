@@ -175,6 +175,9 @@ func initSchema(db *sql.DB) error {
 	if e = migrateAlerts(db); e != nil {
 		return e
 	}
+	if e = migrateRoleTokens(db); e != nil {
+		return e
+	}
 	if e = migratePermissions(db); e != nil {
 		return e
 	}
@@ -220,7 +223,7 @@ func migrateConfiguredRoles(s *Server) error {
 			log.Printf("SWITCHBOARD_TOKENS: %s is reserved for system notices; ignored", role)
 			continue
 		}
-		if _, err := s.db.Exec(`INSERT OR IGNORE INTO roles(role,token,created_at) VALUES(?,?,?)`, role, token, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		if _, err := s.db.Exec(`INSERT OR IGNORE INTO roles(role,token,created_at) VALUES(?,?,?)`, role, tokenHash(token), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return err
 		}
 	}
@@ -375,26 +378,15 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 		s.adminQuestionsAPI(w, r, strings.TrimPrefix(rest, "/"))
 		return
 	}
+	if rest, ok := strings.CutPrefix(path, "roles"); ok && (rest == "" || strings.HasPrefix(rest, "/")) {
+		s.adminRolesAPI(w, r, strings.TrimPrefix(rest, "/"))
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	switch path {
-	case "roles":
-		rows, err := s.db.Query(`SELECT role FROM roles ORDER BY role`)
-		if err != nil {
-			http.Error(w, "query failed", 500)
-			return
-		}
-		defer rows.Close()
-		roles := []string{}
-		for rows.Next() {
-			var role string
-			if rows.Scan(&role) == nil {
-				roles = append(roles, role)
-			}
-		}
-		writeJSON(w, roles)
 	case "slots":
 		out, err := s.activeSlots("")
 		if err != nil {
@@ -500,10 +492,15 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var existing string
-	err := s.db.QueryRow(`SELECT token FROM roles WHERE role=?`, req.Role).Scan(&existing)
+	var revokedAt sql.NullString
+	err := s.db.QueryRow(`SELECT token,revoked_at FROM roles WHERE role=?`, req.Role).Scan(&existing, &revokedAt)
 	if err == nil {
-		if len(existing) != len(req.Credential) || subtle.ConstantTimeCompare([]byte(existing), []byte(req.Credential)) != 1 {
+		if !tokenMatches(existing, req.Credential) {
 			http.Error(w, "role already registered; valid credential required to resume", 409)
+			return
+		}
+		if revokedAt.Valid {
+			http.Error(w, "role revoked", 401)
 			return
 		}
 		writeJSON(w, map[string]string{"role": req.Role, "status": "resumed"})
@@ -523,7 +520,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "role credential must differ from enrollment credential", 400)
 		return
 	}
-	_, err = s.db.Exec(`INSERT INTO roles(role,token,created_at) VALUES(?,?,?)`, req.Role, req.Credential, time.Now().UTC().Format(time.RFC3339Nano))
+	_, err = s.db.Exec(`INSERT INTO roles(role,token,created_at) VALUES(?,?,?)`, req.Role, tokenHash(req.Credential), time.Now().UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		http.Error(w, "role registration failed", 409)
 		return

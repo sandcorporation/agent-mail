@@ -176,7 +176,7 @@ func TestStallLabelNoticeToSender(t *testing.T) {
 func TestSystemSenderIsReserved(t *testing.T) {
 	s, _ := slotServer(t)
 	// A role row by that name (from an old database) still cannot log in.
-	if _, err := s.db.Exec(`INSERT INTO roles VALUES(?,?,'now')`, systemSender, "system-secret"); err != nil {
+	if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES(?,?,'now')`, systemSender, "system-secret"); err != nil {
 		t.Fatal(err)
 	}
 	for _, role := range []string{systemSender, systemSender + "-1", systemSender + "-2"} {
