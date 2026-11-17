@@ -116,6 +116,15 @@ func TestPresenceRejectsBadFields(t *testing.T) {
 	for name, body := range map[string]any{
 		"state":           report("m", "/a", "sleeping", nil, ""),
 		"state case":      report("m", "/a", "Busy", nil, ""),
+		"bare error":      report("m", "/a", "error", nil, ""),
+		"empty kind":      report("m", "/a", "error:", nil, ""),
+		"empty blocked":   report("m", "/a", "blocked:", nil, ""),
+		"long kind":       report("m", "/a", "error:"+strings.Repeat("x", 65), nil, ""),
+		"kind space":      report("m", "/a", "error:Stop Failure", nil, ""),
+		"kind colon":      report("m", "/a", "blocked:a:b", nil, ""),
+		"kind slash":      report("m", "/a", "blocked:a/b", nil, ""),
+		"prefix case":     report("m", "/a", "Error:x", nil, ""),
+		"other prefix":    report("m", "/a", "failed:x", nil, ""),
 		"negative tokens": report("m", "/a", "idle", int64p(-1), ""),
 		"float tokens":    map[string]any{"machine": "m", "directory": "/a", "context_tokens": 1.5},
 		"string tokens":   map[string]any{"machine": "m", "directory": "/a", "context_tokens": "12"},
@@ -129,6 +138,29 @@ func TestPresenceRejectsBadFields(t *testing.T) {
 	}
 	if v := onlySession(t, s, ""); v.Status != "unknown" {
 		t.Fatalf("rejected reports changed presence: %+v", v)
+	}
+}
+
+func TestPresenceKindStates(t *testing.T) {
+	s, clock := presenceServer(t)
+	slotDo(t, s, "register", report("m", "/a", "idle", nil, ""))
+	for _, state := range []string{"error:StopFailure", "blocked:permission_prompt", "error:a.b-c_9", "blocked:" + strings.Repeat("K", 64), "busy"} {
+		for _, action := range []string{"heartbeat", "takeover", "register"} {
+			slotDo(t, s, action, report("m", "/a", state, nil, ""))
+			out, _ := presenceAs(t, s, "")
+			if v := out.Sessions[0]; len(out.Sessions) != 1 || v.State != state || v.Status != state {
+				t.Fatalf("%s %q: %+v", action, state, out.Sessions)
+			}
+		}
+	}
+	w := callAs(s, "POST", "/api/slots/heartbeat", workerToken, "team/worker", report("m", "/a", "error:", nil, ""))
+	if w.Code != 400 || !strings.Contains(w.Body.String(), "error:<kind>") || !strings.Contains(w.Body.String(), "blocked:<kind>") {
+		t.Fatalf("bad kind message: %d %s", w.Code, w.Body)
+	}
+	slotDo(t, s, "heartbeat", report("m", "/a", "blocked:permission_prompt", nil, ""))
+	clock.add(30 * time.Second)
+	if v := onlySession(t, s, ""); v.Online || v.Status != "offline" || v.State != "blocked:permission_prompt" {
+		t.Fatalf("offline wins over blocked state: %+v", v)
 	}
 }
 
@@ -352,11 +384,18 @@ func TestStatusCommand(t *testing.T) {
 	if out = h.mustRun(nil, "status", "b-2", "--json"); !strings.Contains(out, `"role":"b-2"`) || strings.Contains(out, `"role":"b-1"`) || strings.Contains(out, "secret-b") {
 		t.Fatalf("status b-2 --json: %q", out)
 	}
+	h.mustRun(nil, "slot", "heartbeat", "--machine", "m", "--directory", "/a", "--state", "error:StopFailure")
+	h.mustRun(nil, "slot", "heartbeat", "--machine", "m", "--directory", "/b", "--state", "blocked:permission_prompt")
+	out = h.mustRun(nil, "status")
+	if lines = strings.Split(strings.TrimSpace(out), "\n"); len(lines) != 3 || strings.Fields(lines[1])[1] != "error:StopFailure" || strings.Fields(lines[2])[1] != "blocked:permission_prompt" {
+		t.Fatalf("status with kind states: %q", out)
+	}
 	if out = h.mustRun(nil, "status", "a"); strings.TrimSpace(out) != "no sessions" {
 		t.Fatalf("status a: %q", out)
 	}
 	for _, args := range [][]string{
 		{"slot", "heartbeat", "--state", "asleep"},
+		{"slot", "heartbeat", "--state", "error:"},
 		{"slot", "heartbeat", "--context-tokens", "-5"},
 		{"slot", "heartbeat", "--last-turn-at", "noon"},
 		{"status", "b", "c"},
@@ -364,6 +403,9 @@ func TestStatusCommand(t *testing.T) {
 		if r := h.run(nil, args...); r.code != exitUsage {
 			t.Fatalf("%v: %d %s", args, r.code, r.stderr)
 		}
+	}
+	if out = h.mustRun(nil, "help", "slot"); !strings.Contains(out, "error:<kind>") || !strings.Contains(out, "blocked:<kind>") {
+		t.Fatalf("slot help: %q", out)
 	}
 	if out = h.mustRun(nil, "help", "status"); !strings.Contains(out, "agent-mail status [ROLE]") {
 		t.Fatalf("status help: %q", out)

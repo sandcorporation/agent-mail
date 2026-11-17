@@ -173,7 +173,7 @@ type slotRequest struct {
 	SessionID     string `json:"session_id"`
 	Label         string `json:"label"`
 	Parent        string `json:"parent"`
-	State         string `json:"state,omitempty"`          // idle | busy | compacting
+	State         string `json:"state,omitempty"`          // idle | busy | compacting | error:<kind> | blocked:<kind>
 	ContextTokens *int64 `json:"context_tokens,omitempty"` // >= 0
 	LastTurnAt    string `json:"last_turn_at,omitempty"`   // RFC 3339
 }
