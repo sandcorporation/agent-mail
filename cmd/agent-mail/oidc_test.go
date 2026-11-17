@@ -18,6 +18,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/adminauth"
 )
 
 // fakeIdP is an OpenID Connect provider on httptest: discovery, JWKS and a
@@ -153,7 +155,7 @@ func oidcEnv(p *fakeIdP, admins string) map[string]string {
 func oidcServer(t *testing.T, p *fakeIdP, admins string) (*Server, *time.Time) {
 	t.Helper()
 	s := testServer(t)
-	if err := configureAdminAuth(s, fakeEnv(oidcEnv(p, admins))); err != nil {
+	if err := adminauth.Configure(&s.admin, fakeEnv(oidcEnv(p, admins))); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 11, 18, 9, 0, 0, 0, time.UTC)
@@ -342,7 +344,11 @@ func TestOIDCFlowCookieRefusals(t *testing.T) {
 	refused("other key", callback(s2, code, state, flow))
 
 	// A wrong client secret fails the exchange.
-	s.oidc.clientSecret = "wrong"
+	wrongSecret := oidcEnv(p, "admin@example.com")
+	wrongSecret["SWITCHBOARD_OIDC_CLIENT_SECRET"] = "wrong"
+	if err := adminauth.Configure(&s.admin, fakeEnv(wrongSecret)); err != nil {
+		t.Fatal(err)
+	}
 	loc, flow = startOIDC(t, s)
 	code, state = p.issue(t, loc, *now, nil)
 	refused("bad client secret", callback(s, code, state, flow))
@@ -355,7 +361,7 @@ func TestOIDCSessionEndsWhenRemovedFromAllowlist(t *testing.T) {
 	code, state := p.issue(t, loc, *now, nil)
 	sess := sessionFrom(t, callback(s, code, state, flow))
 	// Restart with a new allowlist on the same database.
-	if err := configureAdminAuth(s, fakeEnv(oidcEnv(p, "other@example.com"))); err != nil {
+	if err := adminauth.Configure(&s.admin, fakeEnv(oidcEnv(p, "other@example.com"))); err != nil {
 		t.Fatal(err)
 	}
 	if w := doAuth(s, authReq{method: "GET", path: "/api/admin/me", cookie: sess}); w.Code != 401 {
@@ -366,7 +372,7 @@ func TestOIDCSessionEndsWhenRemovedFromAllowlist(t *testing.T) {
 func TestOIDCConfig(t *testing.T) {
 	p := newFakeIdP(t)
 	full := oidcEnv(p, "admin@example.com")
-	if err := configureAdminAuth(&Server{}, fakeEnv(full)); err != nil {
+	if err := adminauth.Configure(&adminauth.Config{}, fakeEnv(full)); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"SWITCHBOARD_OIDC_ISSUER", "SWITCHBOARD_OIDC_CLIENT_ID", "SWITCHBOARD_OIDC_CLIENT_SECRET", "SWITCHBOARD_OIDC_ADMINS", "SWITCHBOARD_PUBLIC_URL"} {
@@ -376,7 +382,7 @@ func TestOIDCConfig(t *testing.T) {
 				env[k] = v
 			}
 		}
-		err := configureAdminAuth(&Server{}, fakeEnv(env))
+		err := adminauth.Configure(&adminauth.Config{}, fakeEnv(env))
 		if err == nil || !strings.Contains(err.Error(), name) {
 			t.Errorf("without %s: %v", name, err)
 			continue
@@ -392,7 +398,7 @@ func TestOIDCConfig(t *testing.T) {
 			env[k2] = v2
 		}
 		env[k] = v
-		if err := configureAdminAuth(&Server{}, fakeEnv(env)); err == nil {
+		if err := adminauth.Configure(&adminauth.Config{}, fakeEnv(env)); err == nil {
 			t.Errorf("%s=%q accepted", k, v)
 		}
 	}
@@ -416,7 +422,11 @@ func TestOIDCLogsNoSecrets(t *testing.T) {
 		code, state := p.issue(t, loc, *now, extra)
 		callback(s, code, state, flow)
 	}
-	s.oidc.clientSecret = "wrong-secret-value"
+	wrongSecret := oidcEnv(p, "admin@example.com")
+	wrongSecret["SWITCHBOARD_OIDC_CLIENT_SECRET"] = "wrong-secret-value"
+	if err := adminauth.Configure(&s.admin, fakeEnv(wrongSecret)); err != nil {
+		t.Fatal(err)
+	}
 	loc, flow := startOIDC(t, s)
 	code, state := p.issue(t, loc, *now, nil)
 	callback(s, code, state, flow)

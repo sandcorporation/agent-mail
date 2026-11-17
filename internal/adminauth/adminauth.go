@@ -1,14 +1,16 @@
-package main
+// Package adminauth is admin login: the modes, sessions, built-in users with
+// password and TOTP, the login rate limit, OIDC, and the `admin` CLI.
+package adminauth
 
 // Admin login (#71 §1). Every /api/admin/* request and the dashboard page go
-// through adminIdentify. SWITCHBOARD_ADMIN_AUTH picks the mode:
+// through Identify. SWITCHBOARD_ADMIN_AUTH picks the mode:
 //
 //   - unset, no legacy secret: default deny. /api/admin/* answers 401 and the
 //     dashboard shows the login page, which cannot sign anyone in.
 //   - unset, legacy ADMIN_PROXY_TOKEN set (transition rule): exactly the old
 //     behaviour. The reverse proxy injects X-Switchboard-Admin, the dashboard
 //     page is served as is, and no login page or session is involved.
-//   - builtin: name + password + TOTP from admin_users (adminusers.go).
+//   - builtin: name + password + TOTP from admin_users (users.go).
 //   - oidc: an OpenID Connect provider and an allowlist (oidc.go).
 //
 // Every mode other than the transition rule ends in the same session
@@ -19,6 +21,7 @@ package main
 import (
 	"crypto/rand"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -35,8 +38,8 @@ import (
 )
 
 const (
-	adminModeBuiltin = "builtin"
-	adminModeLegacy  = "legacy" // transition rule: unset mode + ADMIN_PROXY_TOKEN
+	ModeBuiltin = "builtin"
+	ModeLegacy  = "legacy" // transition rule: unset mode + ADMIN_PROXY_TOKEN
 
 	sessionCookie     = "sb_session"
 	defaultSessionTTL = 12 * time.Hour
@@ -51,81 +54,113 @@ const (
 
 // adminModes lists the SWITCHBOARD_ADMIN_AUTH values this build can sign
 // users in with. proxy (#76) is added with its login step.
-var adminModes = map[string]bool{adminModeBuiltin: true, adminModeOIDC: true}
+var adminModes = map[string]bool{ModeBuiltin: true, modeOIDC: true}
 
-// adminIdentity is who made an admin request.
-type adminIdentity struct {
+// Identity is who made an admin request.
+type Identity struct {
 	User string `json:"user"`
 	Mode string `json:"mode"`
 }
 
-// configureAdminAuth reads SWITCHBOARD_ADMIN_AUTH, SWITCHBOARD_INSECURE_COOKIE
+// Config is the admin access in force, read at start by Configure.
+// ProxyToken (ADMIN_PROXY_TOKEN) is set by the caller before Configure.
+type Config struct {
+	Mode           string        // SWITCHBOARD_ADMIN_AUTH; "" is default deny or the transition rule
+	ProxyToken     string        // ADMIN_PROXY_TOKEN, only used under the transition rule
+	TrustForwarded bool          // SWITCHBOARD_TRUST_FORWARDED=1: client IP from X-Forwarded-For
+	sessionTTL     time.Duration // 0 means defaultSessionTTL
+	insecureCookie bool          // SWITCHBOARD_INSECURE_COOKIE=1: session cookie without Secure, for local http
+	oidc           *oidcLogin    // SWITCHBOARD_ADMIN_AUTH=oidc (oidc.go)
+}
+
+// Service is admin login and the admin session check over one Config.
+type Service struct {
+	cfg          *Config
+	db           *sql.DB
+	clock        func() time.Time
+	header       func(r *http.Request, name string) string // X-Switchboard-<name>, else the old X-Agent-Mail-<name>
+	writeAllowed func(r *http.Request) bool                // the dashboard write guard
+	limits       *Limiter                                  // failed logins
+}
+
+// New returns admin login over cfg and db. header reads a request header by
+// its short name, writeAllowed is the guard POST /auth/* needs, and limits
+// counts failed logins across requests.
+func New(cfg *Config, db *sql.DB, clock func() time.Time, header func(*http.Request, string) string, writeAllowed func(*http.Request) bool, limits *Limiter) *Service {
+	return &Service{cfg: cfg, db: db, clock: clock, header: header, writeAllowed: writeAllowed, limits: limits}
+}
+
+func (s *Service) now() time.Time { return s.clock() }
+
+func writeJSON(w http.ResponseWriter, v any) { _ = json.NewEncoder(w).Encode(v) }
+
+// Configure reads SWITCHBOARD_ADMIN_AUTH, SWITCHBOARD_INSECURE_COOKIE
 // and SWITCHBOARD_TRUST_FORWARDED, and logs which admin access is in force.
-func configureAdminAuth(s *Server, getenv func(string) string) error {
+func Configure(c *Config, getenv func(string) string) error {
 	mode := strings.TrimSpace(getenv(config.EnvPrefix + "ADMIN_AUTH"))
 	if mode != "" && !adminModes[mode] {
 		return errors.New(config.EnvPrefix + "ADMIN_AUTH must be builtin or oidc (proxy is not available in this version)")
 	}
-	if mode == adminModeOIDC {
+	if mode == modeOIDC {
 		o, err := configureOIDC(getenv)
 		if err != nil {
 			return err
 		}
-		s.oidc = o
+		c.oidc = o
 	}
-	s.adminMode = mode
-	s.insecureCookie = getenv(config.EnvPrefix+"INSECURE_COOKIE") == "1"
-	s.trustForwarded = getenv(config.EnvPrefix+"TRUST_FORWARDED") == "1"
+	c.Mode = mode
+	c.insecureCookie = getenv(config.EnvPrefix+"INSECURE_COOKIE") == "1"
+	c.TrustForwarded = getenv(config.EnvPrefix+"TRUST_FORWARDED") == "1"
 	switch {
-	case mode == "" && s.adminProxyToken != "":
+	case mode == "" && c.ProxyToken != "":
 		log.Printf("deprecated: admin access through the proxy secret (ADMIN_PROXY_TOKEN) without %sADMIN_AUTH; set %sADMIN_AUTH to move to admin login", config.EnvPrefix, config.EnvPrefix)
 	case mode == "":
 		log.Printf("admin access denied: %sADMIN_AUTH is not set", config.EnvPrefix)
-	case s.adminProxyToken != "":
+	case c.ProxyToken != "":
 		log.Printf("%sADMIN_AUTH=%s: the proxy secret (ADMIN_PROXY_TOKEN) is ignored", config.EnvPrefix, mode)
 	}
 	return nil
 }
 
-// effectiveAdminMode is the mode in force: the configured one, the transition
+// EffectiveMode is the mode in force: the configured one, the transition
 // rule, or "" (deny).
-func (s *Server) effectiveAdminMode() string {
-	if s.adminMode == "" && s.adminProxyToken != "" {
-		return adminModeLegacy
+func (s *Service) EffectiveMode() string {
+	if s.cfg.Mode == "" && s.cfg.ProxyToken != "" {
+		return ModeLegacy
 	}
-	return s.adminMode
+	return s.cfg.Mode
 }
 
-// adminIdentify returns who is making an admin request, or false. It slides
+// Identify returns who is making an admin request, or false. It slides
 // the session's expiry.
-func (s *Server) adminIdentify(r *http.Request) (adminIdentity, bool) {
-	switch s.effectiveAdminMode() {
+func (s *Service) Identify(r *http.Request) (Identity, bool) {
+	switch s.EffectiveMode() {
 	case "":
-		return adminIdentity{}, false
-	case adminModeLegacy:
+		return Identity{}, false
+	case ModeLegacy:
 		provided := s.header(r, "Admin")
-		if len(provided) != len(s.adminProxyToken) || subtle.ConstantTimeCompare([]byte(provided), []byte(s.adminProxyToken)) != 1 {
-			return adminIdentity{}, false
+		if len(provided) != len(s.cfg.ProxyToken) || subtle.ConstantTimeCompare([]byte(provided), []byte(s.cfg.ProxyToken)) != 1 {
+			return Identity{}, false
 		}
-		return adminIdentity{User: "proxy", Mode: adminModeLegacy}, true
+		return Identity{User: "proxy", Mode: ModeLegacy}, true
 	}
 	c, err := r.Cookie(sessionCookie)
 	if err != nil || c.Value == "" {
-		return adminIdentity{}, false
+		return Identity{}, false
 	}
 	return s.lookupSession(c.Value)
 }
 
-func (s *Server) sessionTTL() time.Duration {
-	if s.adminSessionTTL > 0 {
-		return s.adminSessionTTL
+func (s *Service) sessionTTL() time.Duration {
+	if s.cfg.sessionTTL > 0 {
+		return s.cfg.sessionTTL
 	}
 	return defaultSessionTTL
 }
 
 // startSession stores a new session for user and sets the cookie. Only the
 // SHA-256 of the cookie value is kept.
-func (s *Server) startSession(w http.ResponseWriter, r *http.Request, user, mode string) error {
+func (s *Service) startSession(w http.ResponseWriter, r *http.Request, user, mode string) error {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return err
@@ -140,32 +175,32 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, user, mode
 		return err
 	}
 	if _, err := s.db.Exec(`INSERT INTO admin_sessions(id_hash,user,mode,created_at,expires_at,ip,user_agent) VALUES(?,?,?,?,?,?,?)`,
-		store.TokenHash(id), user, mode, now.Unix(), now.Add(s.sessionTTL()).Unix(), s.clientIP(r), ua); err != nil {
+		store.TokenHash(id), user, mode, now.Unix(), now.Add(s.sessionTTL()).Unix(), s.ClientIP(r), ua); err != nil {
 		return err
 	}
 	http.SetCookie(w, s.sessionCookie(id, 0))
 	return nil
 }
 
-func (s *Server) sessionCookie(value string, maxAge int) *http.Cookie {
-	return &http.Cookie{Name: sessionCookie, Value: value, Path: "/", MaxAge: maxAge, HttpOnly: true, Secure: !s.insecureCookie, SameSite: http.SameSiteStrictMode}
+func (s *Service) sessionCookie(value string, maxAge int) *http.Cookie {
+	return &http.Cookie{Name: sessionCookie, Value: value, Path: "/", MaxAge: maxAge, HttpOnly: true, Secure: !s.cfg.insecureCookie, SameSite: http.SameSiteStrictMode}
 }
 
 // lookupSession finds a live session for the cookie value. A session of a
 // built-in user ends when that user is disabled or gone.
-func (s *Server) lookupSession(id string) (adminIdentity, bool) {
+func (s *Service) lookupSession(id string) (Identity, bool) {
 	h := store.TokenHash(id)
 	now := s.now()
-	var who adminIdentity
+	var who Identity
 	var expires int64
 	err := s.db.QueryRow(`SELECT s.user,s.mode,s.expires_at FROM admin_sessions s
 LEFT JOIN admin_users u ON s.mode='builtin' AND u.name=s.user
 WHERE s.id_hash=? AND (s.mode<>'builtin' OR (u.name IS NOT NULL AND u.disabled_at IS NULL))`, h).Scan(&who.User, &who.Mode, &expires)
-	if err != nil || expires <= now.Unix() || who.Mode != s.adminMode {
-		return adminIdentity{}, false
+	if err != nil || expires <= now.Unix() || who.Mode != s.cfg.Mode {
+		return Identity{}, false
 	}
-	if who.Mode == adminModeOIDC && (s.oidc == nil || !s.oidc.allowed(who.User)) {
-		return adminIdentity{}, false
+	if who.Mode == modeOIDC && (s.cfg.oidc == nil || !s.cfg.oidc.allowed(who.User)) {
+		return Identity{}, false
 	}
 	next := now.Add(s.sessionTTL()).Unix()
 	if next-expires >= int64(sessionSlide/time.Second) {
@@ -174,10 +209,10 @@ WHERE s.id_hash=? AND (s.mode<>'builtin' OR (u.name IS NOT NULL AND u.disabled_a
 	return who, true
 }
 
-// clientIP is the peer address, or with SWITCHBOARD_TRUST_FORWARDED=1 the
+// ClientIP is the peer address, or with SWITCHBOARD_TRUST_FORWARDED=1 the
 // last X-Forwarded-For entry (the one the nearest proxy added).
-func (s *Server) clientIP(r *http.Request) string {
-	if s.trustForwarded {
+func (s *Service) ClientIP(r *http.Request) string {
+	if s.cfg.TrustForwarded {
 		if xf := r.Header.Values("X-Forwarded-For"); len(xf) > 0 {
 			parts := strings.Split(xf[len(xf)-1], ",")
 			if ip := strings.TrimSpace(parts[len(parts)-1]); ip != "" {
@@ -192,13 +227,13 @@ func (s *Server) clientIP(r *http.Request) string {
 	return host
 }
 
-// loginLimiter counts failed logins per key (name or IP) in a sliding window.
-type loginLimiter struct {
+// Limiter counts failed logins per key (name or IP) in a sliding window.
+type Limiter struct {
 	mu    sync.Mutex
 	fails map[string][]time.Time
 }
 
-func (l *loginLimiter) prune(key string, now time.Time) []time.Time {
+func (l *Limiter) prune(key string, now time.Time) []time.Time {
 	kept := l.fails[key][:0]
 	for _, t := range l.fails[key] {
 		if now.Sub(t) < loginFailWindow {
@@ -213,7 +248,7 @@ func (l *loginLimiter) prune(key string, now time.Time) []time.Time {
 	return kept
 }
 
-func (l *loginLimiter) blocked(now time.Time, keys ...string) bool {
+func (l *Limiter) Blocked(now time.Time, keys ...string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	for _, k := range keys {
@@ -224,7 +259,7 @@ func (l *loginLimiter) blocked(now time.Time, keys ...string) bool {
 	return false
 }
 
-func (l *loginLimiter) fail(now time.Time, keys ...string) {
+func (l *Limiter) Fail(now time.Time, keys ...string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.fails == nil {
@@ -235,16 +270,16 @@ func (l *loginLimiter) fail(now time.Time, keys ...string) {
 	}
 }
 
-func (l *loginLimiter) clear(key string) {
+func (l *Limiter) clear(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	delete(l.fails, key)
 }
 
-// authAPI serves POST /auth/login and POST /auth/logout. Both need the same
+// AuthAPI serves POST /auth/login and POST /auth/logout. Both need the same
 // write guard as admin writes. GET /auth/login and GET /auth/callback belong
 // to the oidc mode.
-func (s *Server) authAPI(w http.ResponseWriter, r *http.Request) {
+func (s *Service) AuthAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet && (r.URL.Path == "/auth/login" || r.URL.Path == oidcCallbackPath) {
 		s.oidcAuth(w, r)
 		return
@@ -259,7 +294,7 @@ func (s *Server) authAPI(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if !adminWriteAllowed(r, s.header(r, "Dashboard")) {
+	if !s.writeAllowed(r) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -283,58 +318,58 @@ type loginRequest struct {
 // login checks name, password and TOTP for the built-in mode. Every failure,
 // including the rate limit and a mode without built-in login, answers the
 // same 401 body.
-func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+func (s *Service) login(w http.ResponseWriter, r *http.Request) {
 	fail := func() { http.Error(w, loginFailedText, http.StatusUnauthorized) }
 	var req loginRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req); err != nil || req.Name == "" || len(req.Name) > 64 || len(req.Password) > 1024 {
 		fail()
 		return
 	}
-	if s.adminMode != adminModeBuiltin {
+	if s.cfg.Mode != ModeBuiltin {
 		fail()
 		return
 	}
 	now := s.now()
-	nameKey, ipKey := "name:"+req.Name, "ip:"+s.clientIP(r)
-	if s.loginLimits.blocked(now, nameKey, ipKey) {
+	nameKey, ipKey := "name:"+req.Name, "ip:"+s.ClientIP(r)
+	if s.limits.Blocked(now, nameKey, ipKey) {
 		fail()
 		return
 	}
 	if !s.checkBuiltinLogin(req, now) {
-		s.loginLimits.fail(now, nameKey, ipKey)
+		s.limits.Fail(now, nameKey, ipKey)
 		fail()
 		return
 	}
-	s.loginLimits.clear(nameKey)
-	if err := s.startSession(w, r, req.Name, adminModeBuiltin); err != nil {
+	s.limits.clear(nameKey)
+	if err := s.startSession(w, r, req.Name, ModeBuiltin); err != nil {
 		http.Error(w, "session failed", 500)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, adminIdentity{User: req.Name, Mode: adminModeBuiltin})
+	writeJSON(w, Identity{User: req.Name, Mode: ModeBuiltin})
 }
 
-// root serves the dashboard to a signed-in admin (or anyone under the
+// Root serves the dashboard page to a signed-in admin (or anyone under the
 // transition rule, where the proxy guards the page) and the login page with
 // 401 otherwise.
-func (s *Server) root(w http.ResponseWriter, r *http.Request) {
+func (s *Service) Root(w http.ResponseWriter, r *http.Request, page http.HandlerFunc) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
 	}
-	if s.effectiveAdminMode() == adminModeLegacy {
-		dashboard(w, r)
+	if s.EffectiveMode() == ModeLegacy {
+		page(w, r)
 		return
 	}
-	if _, ok := s.adminIdentify(r); ok {
+	if _, ok := s.Identify(r); ok {
 		w.Header().Set("Cache-Control", "no-store")
-		dashboard(w, r)
+		page(w, r)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusUnauthorized)
-	if s.adminMode == adminModeOIDC {
+	if s.cfg.Mode == modeOIDC {
 		_, _ = io.WriteString(w, oidcLoginHTML)
 		return
 	}
@@ -348,7 +383,7 @@ const loginHead = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>` + productName + ` 로그인</title>
+<title>` + config.ProductName + ` 로그인</title>
 <style>
 :root{color-scheme:light dark;--bg:#f4f6f9;--surface:#fff;--border:#dfe4ec;--border-strong:#c5cdd9;--text:#18202e;--muted:#5f6b7c;--accent:#2457c5;--accent-fg:#fff;--error:#c0302b;--error-bg:#fceaea;--r:8px;--r-sm:5px}
 @media (prefers-color-scheme:dark){:root{--bg:#0f1319;--surface:#171c24;--border:#2b3340;--border-strong:#3b4555;--text:#e4e8ef;--muted:#97a1b0;--accent:#7aa5ff;--accent-fg:#0f1319;--error:#ff7b74;--error-bg:#3a1c1c}}
@@ -371,7 +406,7 @@ a.button{display:block;text-align:center;text-decoration:none;font:inherit;paddi
 // oidcLoginHTML is the login page of the oidc mode: one link to the provider.
 const oidcLoginHTML = loginHead + `<body>
 <main class="box">
-<h1>` + productName + `</h1>
+<h1>` + config.ProductName + `</h1>
 <a class="button" href="/auth/login">로그인</a>
 </main>
 </body>
@@ -381,7 +416,7 @@ const oidcLoginHTML = loginHead + `<body>
 // loginHTML is the login page. It loads nothing from outside the page.
 const loginHTML = loginHead + `<body>
 <form id="login" autocomplete="on">
-<h1>` + productName + `</h1>
+<h1>` + config.ProductName + `</h1>
 <label>이름<input id="name" name="username" autocomplete="username" required maxlength="64" autocapitalize="none" spellcheck="false"></label>
 <label>비밀번호<input id="password" name="password" type="password" autocomplete="current-password" required></label>
 <label>인증 코드<input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required></label>

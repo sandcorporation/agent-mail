@@ -1,4 +1,4 @@
-package main
+package adminauth
 
 // Built-in admin users: argon2id password hashes and RFC 6238 TOTP
 // (HMAC-SHA1, 30 s steps, 6 digits). The admin CLI (switchboard admin …)
@@ -45,16 +45,17 @@ var argonCost = argonParams{time: 2, memory: 64 * 1024, threads: 2}
 const (
 	argonKeyLen    = 32
 	argonSaltLen   = 16
-	totpStep       = 30
+	TOTPStep       = 30 // seconds per TOTP code
 	totpDigits     = 6
 	minPasswordLen = 12
 )
 
 // dummyHash is checked when the name is unknown, so a missing user costs the
 // same time as a wrong password.
-var dummyHash = func() string { h, _ := hashPassword("unused password for timing"); return h }()
+var dummyHash = func() string { h, _ := HashPassword("unused password for timing"); return h }()
 
-func hashPassword(pw string) (string, error) {
+// HashPassword returns the argon2id PHC string of pw with a random salt.
+func HashPassword(pw string) (string, error) {
 	salt := make([]byte, argonSaltLen)
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
@@ -94,8 +95,8 @@ func newTOTPSecret() (string, error) {
 	return totpEncoding.EncodeToString(b), nil
 }
 
-// totpCode is the RFC 6238 code for one time step.
-func totpCode(secret string, step int64) (string, error) {
+// TOTPCode is the RFC 6238 code for one time step.
+func TOTPCode(secret string, step int64) (string, error) {
 	key, err := totpEncoding.DecodeString(strings.ToUpper(secret))
 	if err != nil {
 		return "", err
@@ -116,10 +117,10 @@ func matchTOTP(secret, code string, now time.Time, last int64) int64 {
 	if len(code) != totpDigits {
 		return 0
 	}
-	cur := now.Unix() / totpStep
+	cur := now.Unix() / TOTPStep
 	var found int64
 	for _, st := range []int64{cur - 1, cur, cur + 1} {
-		want, err := totpCode(secret, st)
+		want, err := TOTPCode(secret, st)
 		if err == nil && subtle.ConstantTimeCompare([]byte(want), []byte(code)) == 1 && st > last {
 			found = st
 		}
@@ -128,14 +129,14 @@ func matchTOTP(secret, code string, now time.Time, last int64) int64 {
 }
 
 func otpauthURI(name, secret string) string {
-	label := url.PathEscape(productName + ":" + name)
-	q := url.Values{"secret": {secret}, "issuer": {productName}, "algorithm": {"SHA1"}, "digits": {strconv.Itoa(totpDigits)}, "period": {strconv.Itoa(totpStep)}}
+	label := url.PathEscape(config.ProductName + ":" + name)
+	q := url.Values{"secret": {secret}, "issuer": {config.ProductName}, "algorithm": {"SHA1"}, "digits": {strconv.Itoa(totpDigits)}, "period": {strconv.Itoa(TOTPStep)}}
 	return "otpauth://totp/" + label + "?" + q.Encode()
 }
 
 // checkBuiltinLogin verifies password and TOTP, and records the used step.
 // The password is always hashed, even for an unknown or disabled name.
-func (s *Server) checkBuiltinLogin(req loginRequest, now time.Time) bool {
+func (s *Service) checkBuiltinLogin(req loginRequest, now time.Time) bool {
 	var hash, secret string
 	var last int64
 	var disabled sql.NullString
@@ -162,9 +163,9 @@ func (s *Server) checkBuiltinLogin(req loginRequest, now time.Time) bool {
 
 var adminNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$`)
 
-// cliAdmin serves `admin create|passwd|totp-reset|disable NAME`. It opens
+// CLI serves `admin create|passwd|totp-reset|disable NAME`. It opens
 // DB_PATH (the server's database) directly.
-func cliAdmin(action, name string, jsonOut bool, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+func CLI(action, name string, jsonOut bool, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	switch action {
 	case "create", "passwd", "totp-reset", "disable":
 	default:
@@ -205,7 +206,7 @@ func cliAdmin(action, name string, jsonOut bool, stdin io.Reader, stdout, stderr
 		if err != nil {
 			return 0, err
 		}
-		hash, err := hashPassword(pw)
+		hash, err := HashPassword(pw)
 		if err != nil {
 			return 0, err
 		}

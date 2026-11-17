@@ -22,6 +22,10 @@ const (
 	LegacyConfigDir    = "agent-mail"
 )
 
+// ProductName is the only place the product name lives (dashboard, login
+// pages, TOTP issuer), so a rename is a one-line change.
+const ProductName = "Switchboard"
+
 // oldEnvRead holds the old environment names read since start.
 var oldEnvRead = struct {
 	sync.Mutex

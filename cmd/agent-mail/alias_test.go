@@ -34,7 +34,7 @@ func TestServerConfigReadsBothEnvNames(t *testing.T) {
 
 func TestHeadersAcceptBothNamesAndCountOld(t *testing.T) {
 	s := testServer(t)
-	s.adminProxyToken = "proxy-secret"
+	s.admin.ProxyToken = "proxy-secret"
 	get := func(set map[string]string) int {
 		r := httptest.NewRequest("GET", "/api/messages", nil)
 		r.Header.Set("Authorization", "Bearer secret-a")
@@ -90,7 +90,7 @@ func TestHeadersAcceptBothNamesAndCountOld(t *testing.T) {
 
 func TestDashboardWriteAcceptsBothHeaders(t *testing.T) {
 	s := testServer(t)
-	s.adminProxyToken = "proxy-secret"
+	s.admin.ProxyToken = "proxy-secret"
 	for _, h := range []string{"X-Switchboard-Dashboard", "X-Agent-Mail-Dashboard"} {
 		hs := map[string]string{"Content-Type": "application/json", h: "1", "Sec-Fetch-Site": "same-origin"}
 		if w := adminRequest(s, "PUT", "/api/admin/question-settings/a", `{}`, hs); w.Code == 403 {
@@ -160,19 +160,5 @@ func TestCLIProfileOldAndNewEnv(t *testing.T) {
 	h.mustRun([]string{"AGENT_MAIL_CONFIG_DIR=", "XDG_CONFIG_HOME=" + cfg, "HOME=" + cfg, "AppData=" + cfg}, "--profile", "fresh", "config", "set", "--endpoint", h.url, "--role", "a", "--token-file", h.tokens["a"])
 	if _, err := os.Stat(filepath.Join(cfg, "switchboard", "fresh.json")); err != nil {
 		t.Fatalf("new profile not in the new directory: %v", err)
-	}
-}
-
-func TestSystemSendersBothReserved(t *testing.T) {
-	for _, n := range []string{"switchboard/system", "agent-mail/system", "switchboard/system-2", "agent-mail/system-3"} {
-		if !reservedRole(n) {
-			t.Errorf("%s not reserved", n)
-		}
-	}
-	if !isSystemSender("agent-mail/system") || !isSystemSender(systemSender) || isSystemSender("team/system") {
-		t.Fatal("isSystemSender")
-	}
-	if systemSender != "switchboard/system" {
-		t.Fatalf("new mail must be sent as switchboard/system, got %s", systemSender)
 	}
 }

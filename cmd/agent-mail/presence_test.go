@@ -265,7 +265,7 @@ func TestPresenceTakeoverMovesPresence(t *testing.T) {
 
 func TestPresenceAuth(t *testing.T) {
 	s, _ := presenceServer(t)
-	s.adminProxyToken = "proxy-secret"
+	s.admin.ProxyToken = "proxy-secret"
 	slotDo(t, s, "register", report("m", "/a", "idle", nil, ""))
 	// Another base's token cannot act as or report for team/worker-N.
 	if w := callAs(s, "POST", "/api/slots/heartbeat", "secret-a", "team/worker-1", report("m", "/a", "busy", nil, "")); w.Code != 401 {

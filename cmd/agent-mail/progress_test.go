@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/identity"
 )
 
 func mustProgress(t *testing.T, s *Server) progressReport {
@@ -36,8 +38,8 @@ func TestProgressGroupsByServiceAndSortsByActivity(t *testing.T) {
 	mailAt(t, s, flowRow{sender: "team/worker-1", recipient: "ops/lead", at: now.Add(-3 * time.Hour)})
 	mailAt(t, s, flowRow{sender: "team/reviewer", recipient: "ops/lead", at: now.Add(-2 * time.Hour)})
 	mailAt(t, s, flowRow{sender: "ops/lead", recipient: "team/worker", at: now.Add(-time.Hour)})
-	mailAt(t, s, flowRow{sender: systemSender, recipient: "team/worker", at: now})
-	mailAt(t, s, flowRow{sender: legacySystemSender, recipient: "team/worker", at: now})
+	mailAt(t, s, flowRow{sender: identity.SystemSender, recipient: "team/worker", at: now})
+	mailAt(t, s, flowRow{sender: identity.LegacySystemSender, recipient: "team/worker", at: now})
 	mailAt(t, s, flowRow{sender: "solo", recipient: "ops/lead", at: now.Add(-5 * time.Hour)})
 
 	r := mustProgress(t, s)
@@ -189,7 +191,7 @@ func TestProgressBadgePriority(t *testing.T) {
 
 func TestProgressAPI(t *testing.T) {
 	s := testServer(t)
-	s.adminProxyToken = "proxy-secret"
+	s.admin.ProxyToken = "proxy-secret"
 	if w := call(s, "GET", "/api/progress", "secret-a", nil, ""); w.Code != 403 {
 		t.Fatalf("non-boss: %d %s", w.Code, w.Body)
 	}
@@ -233,7 +235,7 @@ func TestProgressAPI(t *testing.T) {
 
 func TestAdminMessagesTaskAndIDFilter(t *testing.T) {
 	s := testServer(t)
-	s.adminProxyToken = "proxy-secret"
+	s.admin.ProxyToken = "proxy-secret"
 	now := time.Now()
 	a := mailAt(t, s, flowRow{sender: "a", recipient: "b", task: "T-1", at: now})
 	mailAt(t, s, flowRow{sender: "a", recipient: "b", task: "T-10", at: now})
@@ -261,14 +263,14 @@ func TestProgressOpenTasksIgnoreSystemMail(t *testing.T) {
 	s, clock := slotServer(t)
 	now := clock.now()
 	// Task ids carried only by system mail (old name and numbered form) are not tasks.
-	mailAt(t, s, flowRow{sender: systemSender, recipient: "sandcorp/boss", task: "alert:stall:team/worker:2026-11-17", at: now.Add(-time.Hour), status: "pending"})
-	mailAt(t, s, flowRow{sender: systemSender + "-2", recipient: "sandcorp/boss", task: "q_abc", at: now.Add(-time.Hour), status: "pending"})
-	mailAt(t, s, flowRow{sender: legacySystemSender, recipient: "sandcorp/boss", task: "alert:pending:x", at: now.Add(-time.Hour), status: "pending"})
-	mailAt(t, s, flowRow{sender: legacySystemSender + "-3", recipient: "sandcorp/boss", task: "q_old", at: now.Add(-time.Hour), status: "pending"})
+	mailAt(t, s, flowRow{sender: identity.SystemSender, recipient: "sandcorp/boss", task: "alert:stall:team/worker:2026-11-17", at: now.Add(-time.Hour), status: "pending"})
+	mailAt(t, s, flowRow{sender: identity.SystemSender + "-2", recipient: "sandcorp/boss", task: "q_abc", at: now.Add(-time.Hour), status: "pending"})
+	mailAt(t, s, flowRow{sender: identity.LegacySystemSender, recipient: "sandcorp/boss", task: "alert:pending:x", at: now.Add(-time.Hour), status: "pending"})
+	mailAt(t, s, flowRow{sender: identity.LegacySystemSender + "-3", recipient: "sandcorp/boss", task: "q_old", at: now.Add(-time.Hour), status: "pending"})
 	// A task id with a real message is listed; the system mail on it does not count.
 	mailAt(t, s, flowRow{sender: "team/worker", recipient: "sandcorp/boss", task: "REAL", at: now.Add(-2 * time.Hour), status: "pending"})
-	mailAt(t, s, flowRow{sender: systemSender, recipient: "sandcorp/boss", task: "REAL", at: now.Add(-time.Minute), status: "pending"})
-	mailAt(t, s, flowRow{sender: legacySystemSender, recipient: "sandcorp/boss", task: "REAL", at: now.Add(-time.Minute), status: "pending"})
+	mailAt(t, s, flowRow{sender: identity.SystemSender, recipient: "sandcorp/boss", task: "REAL", at: now.Add(-time.Minute), status: "pending"})
+	mailAt(t, s, flowRow{sender: identity.LegacySystemSender, recipient: "sandcorp/boss", task: "REAL", at: now.Add(-time.Minute), status: "pending"})
 
 	tasks := serviceNamed(t, mustProgress(t, s), "sandcorp").OpenTasks
 	if len(tasks) != 1 || tasks[0].TaskID != "REAL" || tasks[0].Messages != 1 {

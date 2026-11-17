@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"slices"
 	"testing"
+
+	"github.com/sandcorporation/agent-mail/internal/identity"
 )
 
 const (
@@ -23,7 +25,7 @@ const (
 func groupServer(t *testing.T) *Server {
 	t.Helper()
 	s := questionServer(t)
-	s.adminProxyToken = "proxy-secret"
+	s.admin.ProxyToken = "proxy-secret"
 	if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES(?,?,'now'),(?,?,'now'),(?,?,'now')`,
 		partnerBossRole, partnerBossToken, partnerDevRole, partnerDevToken, partnerBDevRole, partnerBDevToken); err != nil {
 		t.Fatal(err)
@@ -31,13 +33,13 @@ func groupServer(t *testing.T) *Server {
 	return s
 }
 
-func putGroup(t *testing.T, s *Server, prefix, body string) group {
+func putGroup(t *testing.T, s *Server, prefix, body string) identity.Group {
 	t.Helper()
 	w := adminWrite(s, "PUT", "/api/admin/groups/"+prefix, body)
 	if w.Code != 200 {
 		t.Fatalf("PUT group %s: %d %s", prefix, w.Code, w.Body)
 	}
-	var g group
+	var g identity.Group
 	if err := json.Unmarshal(w.Body.Bytes(), &g); err != nil {
 		t.Fatal(err)
 	}
@@ -48,13 +50,13 @@ func sendAs(s *Server, token, role, to string) int {
 	return callAs(s, "POST", "/api/messages", token, role, map[string]string{"recipient": to, "subject": "hi", "body": "x"}).Code
 }
 
-func whoamiAs(t *testing.T, s *Server, token, role string) whoami {
+func whoamiAs(t *testing.T, s *Server, token, role string) identity.Whoami {
 	t.Helper()
 	w := callAs(s, "GET", "/api/whoami", token, role, nil)
 	if w.Code != 200 {
 		t.Fatalf("whoami %s: %d %s", role, w.Code, w.Body)
 	}
-	var v whoami
+	var v identity.Whoami
 	if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +157,7 @@ func TestNoGroupsKeepsBehaviour(t *testing.T) {
 		t.Fatalf("an unrelated group changed responses:\n%v\n%v", before, after)
 	}
 	w := adminRequest(s, "GET", "/api/admin/roles", "", nil)
-	var roles []roleView
+	var roles []identity.RoleView
 	_ = json.Unmarshal(w.Body.Bytes(), &roles)
 	for _, r := range roles {
 		if r.Group != "" {
@@ -185,7 +187,7 @@ func TestGroupAdminAPI(t *testing.T) {
 		t.Fatalf("GET missing: %d", w.Code)
 	}
 	w := adminRequest(s, "GET", "/api/admin/roles", "", nil)
-	var roles []roleView
+	var roles []identity.RoleView
 	_ = json.Unmarshal(w.Body.Bytes(), &roles)
 	groups := map[string]string{}
 	for _, r := range roles {

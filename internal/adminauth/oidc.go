@@ -1,4 +1,4 @@
-package main
+package adminauth
 
 // Admin login mode oidc (#75, #71 §1 ②): authorization-code flow with PKCE
 // (S256), state and nonce against an OpenID Connect provider. The callback
@@ -33,7 +33,7 @@ import (
 )
 
 const (
-	adminModeOIDC = "oidc"
+	modeOIDC = "oidc"
 
 	oidcFlowCookie = "sb_oidc"
 	// oidcFlowTTL bounds the time between /auth/login and /auth/callback.
@@ -204,8 +204,8 @@ func (o *oidcLogin) openFlow(v string, now time.Time) (oidcFlow, bool) {
 
 // flowCookie is SameSite=Lax: the provider sends the browser back with a
 // cross-site top-level GET, which Strict would strip.
-func (s *Server) flowCookie(value string, maxAge int) *http.Cookie {
-	return &http.Cookie{Name: oidcFlowCookie, Value: value, Path: "/auth/", MaxAge: maxAge, HttpOnly: true, Secure: !s.insecureCookie, SameSite: http.SameSiteLaxMode}
+func (s *Service) flowCookie(value string, maxAge int) *http.Cookie {
+	return &http.Cookie{Name: oidcFlowCookie, Value: value, Path: "/auth/", MaxAge: maxAge, HttpOnly: true, Secure: !s.cfg.insecureCookie, SameSite: http.SameSiteLaxMode}
 }
 
 func randomToken() (string, error) {
@@ -218,8 +218,8 @@ func randomToken() (string, error) {
 
 // oidcAuth serves GET /auth/login (redirect to the provider) and GET
 // /auth/callback in oidc mode.
-func (s *Server) oidcAuth(w http.ResponseWriter, r *http.Request) {
-	if s.adminMode != adminModeOIDC || s.oidc == nil {
+func (s *Service) oidcAuth(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Mode != modeOIDC || s.cfg.oidc == nil {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -228,7 +228,7 @@ func (s *Server) oidcAuth(w http.ResponseWriter, r *http.Request) {
 		s.oidcCallback(w, r)
 		return
 	}
-	o := s.oidc
+	o := s.cfg.oidc
 	p, err := o.discover()
 	if err != nil {
 		log.Printf("oidc: discovery failed: %v", err)
@@ -278,8 +278,8 @@ func (b *claimBool) UnmarshalJSON(d []byte) error {
 
 // oidcCallback finishes the login. Every refusal is the same 403; the reason
 // goes to the log without tokens or secrets.
-func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
-	o := s.oidc
+func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
+	o := s.cfg.oidc
 	refuse := func(reason string) {
 		log.Printf("oidc: login refused: %q", reason)
 		http.Error(w, oidcFailedText, http.StatusForbidden)
@@ -352,7 +352,7 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		refuse("not on the allowlist")
 		return
 	}
-	if err := s.startSession(w, r, user, adminModeOIDC); err != nil {
+	if err := s.startSession(w, r, user, modeOIDC); err != nil {
 		http.Error(w, "session failed", http.StatusInternalServerError)
 		return
 	}
@@ -372,6 +372,6 @@ func truncate(v string, n int) string {
 }
 
 const oidcDoneHTML = `<!doctype html>
-<html lang="ko"><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/"><title>` + productName + `</title></head>
-<body><a href="/">` + productName + `</a></body></html>
+<html lang="ko"><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/"><title>` + config.ProductName + `</title></head>
+<body><a href="/">` + config.ProductName + `</a></body></html>
 `

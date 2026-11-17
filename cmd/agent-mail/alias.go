@@ -22,12 +22,3 @@ func (s *Server) header(r *http.Request, name string) string {
 func (s *Server) aliasUse() aliasUse {
 	return aliasUse{OldHeaders: s.oldHeaders.Snapshot(), OldEnv: config.OldEnvNames()}
 }
-
-// legacySystemSender is the system sender's old name. It stays reserved, and
-// mail sent under it still counts as system mail.
-const legacySystemSender = "agent-mail/system"
-
-// isSystemSender reports whether name is the system sender under either name.
-func isSystemSender(name string) bool {
-	return name == systemSender || name == legacySystemSender
-}

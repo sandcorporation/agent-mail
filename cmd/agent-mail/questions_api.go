@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/sandcorporation/agent-mail/internal/identity"
 	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
@@ -112,24 +113,24 @@ func loadQuestion(q queryer, id string) (questionView, error) {
 	return v, err
 }
 
-// mayAnswerQuestion: the asker's boss (bossesFor), never its own base.
-func (s *Server) mayAnswerQuestion(p principal, v questionView) bool {
-	return p.Base != v.AskerBase && s.isBossFor(p, v.AskerBase)
+// mayAnswerQuestion: the asker's boss (identity BossesFor), never its own base.
+func (s *Server) mayAnswerQuestion(p identity.Principal, v questionView) bool {
+	return p.Base != v.AskerBase && s.ids().IsBossFor(p, v.AskerBase)
 }
 
 // mayReadQuestion: the asker's base or the asker's boss.
-func (s *Server) mayReadQuestion(p principal, v questionView) bool {
-	return p.Base == v.AskerBase || s.isBossFor(p, v.AskerBase)
+func (s *Server) mayReadQuestion(p identity.Principal, v questionView) bool {
+	return p.Base == v.AskerBase || s.ids().IsBossFor(p, v.AskerBase)
 }
 
-func (s *Server) forCaller(p principal, v questionView) questionView {
+func (s *Server) forCaller(p identity.Principal, v questionView) questionView {
 	v.CanAnswer = v.Status == "pending" && s.mayAnswerQuestion(p, v)
 	return v
 }
 
 // questionAPI serves /api/questions, /api/questions/poll and
 // /api/questions/{id}[/answer|/withdraw].
-func (s *Server) questionAPI(w http.ResponseWriter, r *http.Request, p principal, rest string) {
+func (s *Server) questionAPI(w http.ResponseWriter, r *http.Request, p identity.Principal, rest string) {
 	parts := strings.Split(rest, "/")
 	switch {
 	case rest == "" && r.Method == http.MethodPost:
@@ -272,18 +273,18 @@ func questionWatchers(tx *sql.Tx, asker, askerBase string) ([]string, error) {
 	}
 	var out []string
 	for _, role := range settings.Watchers {
-		b := baseOf(tx, role)
+		b := identity.BaseOf(tx, role)
 		if b == "" || b == askerBase {
 			continue
 		}
-		if box, ok := mailbox(tx, role); ok && !slices.Contains(out, box) {
+		if box, ok := identity.Mailbox(tx, role); ok && !slices.Contains(out, box) {
 			out = append(out, box)
 		}
 	}
 	return out, nil
 }
 
-func (s *Server) askQuestion(w http.ResponseWriter, r *http.Request, p principal) {
+func (s *Server) askQuestion(w http.ResponseWriter, r *http.Request, p identity.Principal) {
 	settings, err := s.resolveQuestionSettings(p.Role)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "could not read question settings", 500)
@@ -317,8 +318,8 @@ func (s *Server) askQuestion(w http.ResponseWriter, r *http.Request, p principal
 	errNobody := errors.New("nobody")
 	err = s.inTx(r.Context(), func(tx *sql.Tx) error {
 		nobody := true
-		for _, boss := range s.bossesFor(p.Base) {
-			if b := baseOf(tx, boss); b != "" && b != p.Base {
+		for _, boss := range s.ids().BossesFor(p.Base) {
+			if b := identity.BaseOf(tx, boss); b != "" && b != p.Base {
 				nobody = false
 				break
 			}
@@ -340,7 +341,7 @@ func (s *Server) askQuestion(w http.ResponseWriter, r *http.Request, p principal
 		if told, e = questionWatchers(tx, p.Role, p.Base); e != nil {
 			return e
 		}
-		if related, e = relatedDecisions(tx, p.Base, settings.Target, v.Questions[0].Header, s.scopeGroup(p)); e != nil {
+		if related, e = relatedDecisions(tx, p.Base, settings.Target, v.Questions[0].Header, s.ids().ScopeGroup(p)); e != nil {
 			return e
 		}
 		subject := fmt.Sprintf("[질문] %s %s %s", id, p.Role, v.Questions[0].Header)
@@ -400,8 +401,8 @@ func (s *Server) answerQuestion(ctx context.Context, id, by string, answers []qu
 			return e
 		}
 		if by != questionByDashboard {
-			base := baseOf(tx, by)
-			if base == "" || !s.mayAnswerQuestion(principal{Role: by, Base: base}, v) {
+			base := identity.BaseOf(tx, by)
+			if base == "" || !s.mayAnswerQuestion(identity.Principal{Role: by, Base: base}, v) {
 				return errQuestionForbidden
 			}
 		}
@@ -430,7 +431,7 @@ func (s *Server) answerQuestion(ctx context.Context, id, by string, answers []qu
 		}
 		body := wire.AnswerText(v)
 		first := v.Questions[0].Header
-		if box, ok := mailbox(tx, v.Asker); ok {
+		if box, ok := identity.Mailbox(tx, v.Asker); ok {
 			if e = insertSystemMail(tx, box, fmt.Sprintf("[질문 답] %s %s", id, first), body, id, "normal", "", now); e != nil {
 				return e
 			}
@@ -456,7 +457,7 @@ func (s *Server) answerQuestion(ctx context.Context, id, by string, answers []qu
 	return v, nil
 }
 
-func (s *Server) answerQuestionAPI(w http.ResponseWriter, r *http.Request, p principal, id string) {
+func (s *Server) answerQuestionAPI(w http.ResponseWriter, r *http.Request, p identity.Principal, id string) {
 	var req struct {
 		Answers []questionAnswer `json:"answers"`
 	}
@@ -476,7 +477,7 @@ func (s *Server) answerQuestionAPI(w http.ResponseWriter, r *http.Request, p pri
 	writeJSON(w, s.forCaller(p, v))
 }
 
-func (s *Server) withdrawQuestion(w http.ResponseWriter, r *http.Request, p principal, id string) {
+func (s *Server) withdrawQuestion(w http.ResponseWriter, r *http.Request, p identity.Principal, id string) {
 	now := s.now()
 	var v questionView
 	err := s.inTx(r.Context(), func(tx *sql.Tx) error {
@@ -509,17 +510,17 @@ func (s *Server) withdrawQuestion(w http.ResponseWriter, r *http.Request, p prin
 }
 
 // visibleQuestions is the query for questions p may see: the caller's own
-// base, and those of the askers p is boss for (answerableSQL).
-func (s *Server) visibleQuestions(p principal) (string, []any) {
+// base, and those of the askers p is boss for (identity AnswerableSQL).
+func (s *Server) visibleQuestions(p identity.Principal) (string, []any) {
 	where, args := `asker_base=?`, []any{p.Base}
-	if cond, more := s.answerableSQL(p, "questions.asker_base"); cond != "" {
+	if cond, more := s.ids().AnswerableSQL(p, "questions.asker_base"); cond != "" {
 		where += ` OR ` + cond
 		args = append(args, more...)
 	}
 	return `SELECT ` + questionColumns + ` FROM questions WHERE (` + where + `)`, args
 }
 
-func (s *Server) queryQuestions(p principal, q string, args ...any) ([]questionView, error) {
+func (s *Server) queryQuestions(p identity.Principal, q string, args ...any) ([]questionView, error) {
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
@@ -536,7 +537,7 @@ func (s *Server) queryQuestions(p principal, q string, args ...any) ([]questionV
 	return out, rows.Err()
 }
 
-func (s *Server) listQuestions(w http.ResponseWriter, r *http.Request, p principal) {
+func (s *Server) listQuestions(w http.ResponseWriter, r *http.Request, p identity.Principal) {
 	q, args := s.visibleQuestions(p)
 	where, wargs, limit, err := questionListFilter(r)
 	if err != nil {
@@ -576,7 +577,7 @@ func questionListFilter(r *http.Request) (where string, args []any, limit int, e
 // pollQuestions answers at once with the questions visible to p whose seq is
 // greater than ?after=, oldest change first. When there are none it waits
 // up to ?timeout= seconds (as /api/events/poll) for a change.
-func (s *Server) pollQuestions(w http.ResponseWriter, r *http.Request, p principal) {
+func (s *Server) pollQuestions(w http.ResponseWriter, r *http.Request, p identity.Principal) {
 	var after int64
 	if raw := strings.TrimSpace(r.URL.Query().Get("after")); raw != "" {
 		n, err := wire.ParseID(raw)

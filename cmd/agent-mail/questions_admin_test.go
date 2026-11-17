@@ -29,7 +29,7 @@ func adminAnswerBody(t *testing.T) string {
 
 func TestAdminQuestionAnswer(t *testing.T) {
 	s := questionServer(t)
-	s.adminProxyToken = "proxy-secret"
+	s.admin.ProxyToken = "proxy-secret"
 	v := askQuestionAs(t, s, workerToken, "team/worker-2", 201)
 	path := "/api/admin/questions/" + v.ID + "/answer"
 
@@ -82,7 +82,7 @@ func TestAdminQuestionList(t *testing.T) {
 	if _, err := s.db.Exec(`UPDATE question_settings SET can_ask=1 WHERE target='default'`); err != nil {
 		t.Fatal(err)
 	}
-	s.adminProxyToken = "proxy-secret"
+	s.admin.ProxyToken = "proxy-secret"
 	first := askQuestionAs(t, s, workerToken, "team/worker", 201)
 	clock.add(time.Second)
 	second := askQuestionAs(t, s, workerToken, "team/worker", 201)

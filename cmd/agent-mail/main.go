@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -17,8 +16,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sandcorporation/agent-mail/internal/adminauth"
 	"github.com/sandcorporation/agent-mail/internal/cli"
 	"github.com/sandcorporation/agent-mail/internal/config"
+	"github.com/sandcorporation/agent-mail/internal/identity"
 	"github.com/sandcorporation/agent-mail/internal/store"
 	"github.com/sandcorporation/agent-mail/internal/wire"
 )
@@ -26,7 +27,6 @@ import (
 type Server struct {
 	db               *sql.DB
 	tokens           map[string]string
-	adminProxyToken  string
 	hub              mailHub
 	eventKeepAlive   time.Duration
 	pollMax          time.Duration       // cap on a long poll's wait; 0 means defaultPollMax
@@ -43,14 +43,10 @@ type Server struct {
 	discord          *discordNotifier    // AGENT_MAIL_DISCORD_WEBHOOK; nil sends no question notices
 	alerts           *alertThresholds    // SWITCHBOARD_ALERT_*; nil means defaultAlertThresholds
 	oldHeaders       config.AliasCounter // requests that used an X-Agent-Mail-* header
-	groups           groupCache          // collaborator groups (groups.go)
-	adminMode        string              // SWITCHBOARD_ADMIN_AUTH; "" is default deny or the transition rule (adminauth.go)
-	adminSessionTTL  time.Duration       // 0 means defaultSessionTTL
-	insecureCookie   bool                // SWITCHBOARD_INSECURE_COOKIE=1: session cookie without Secure, for local http
-	trustForwarded   bool                // SWITCHBOARD_TRUST_FORWARDED=1: client IP from X-Forwarded-For
-	loginLimits      loginLimiter
-	oidc             *oidcLogin   // SWITCHBOARD_ADMIN_AUTH=oidc (oidc.go)
-	joinLimits       loginLimiter // failed POST /api/join per client IP (invites.go)
+	groups           identity.Groups     // collaborator groups (internal/identity)
+	admin            adminauth.Config    // admin login settings (internal/adminauth)
+	loginLimits      adminauth.Limiter   // failed admin logins
+	joinLimits       adminauth.Limiter   // failed POST /api/join per client IP (invites.go)
 }
 
 var version = "dev"
@@ -62,7 +58,7 @@ func main() {
 		runServer()
 		return
 	}
-	os.Exit(cli.Run(args, version, cliAdmin))
+	os.Exit(cli.Run(args, version, adminauth.CLI))
 }
 
 func runServer() {
@@ -70,7 +66,7 @@ func runServer() {
 	if e != nil {
 		log.Fatal(e)
 	}
-	s := &Server{db: db, tokens: map[string]string{}, adminProxyToken: config.EnvAlias("ADMIN_PROXY_TOKEN"), done: make(chan struct{})}
+	s := &Server{db: db, tokens: map[string]string{}, admin: adminauth.Config{ProxyToken: config.EnvAlias("ADMIN_PROXY_TOKEN")}, done: make(chan struct{})}
 	if v, from := config.EnvAliasFrom(os.Getenv, "SSE_KEEPALIVE"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil || d <= 0 {
@@ -102,7 +98,7 @@ func runServer() {
 		log.Fatal(e)
 	}
 	configureDiscord(s, os.Getenv)
-	if e = configureAdminAuth(s, os.Getenv); e != nil {
+	if e = adminauth.Configure(&s.admin, os.Getenv); e != nil {
 		log.Fatal(e)
 	}
 	for _, pair := range strings.Split(config.EnvAlias("TOKENS"), ",") {
@@ -114,7 +110,7 @@ func runServer() {
 	if e = migrateConfiguredRoles(s); e != nil {
 		log.Fatal("cannot migrate configured roles")
 	}
-	if e = s.loadGroups(); e != nil {
+	if e = s.ids().LoadGroups(); e != nil {
 		log.Fatal("cannot load groups")
 	}
 	if old := config.OldEnvNames(); len(old) > 0 {
@@ -164,7 +160,7 @@ func normalizePriority(p string) (string, bool) {
 
 func migrateConfiguredRoles(s *Server) error {
 	for role, token := range s.tokens {
-		if reservedRole(role) {
+		if identity.Reserved(role) {
 			log.Printf("SWITCHBOARD_TOKENS: %s is reserved for system notices; ignored", role)
 			continue
 		}
@@ -183,6 +179,20 @@ func secureHeaders(next http.Handler) http.Handler {
 	})
 }
 
+// adminAuth is admin login over this server's settings, database and clock.
+// Its POST /auth/* endpoints need the same write guard as admin writes.
+func (s *Server) adminAuth() *adminauth.Service {
+	return adminauth.New(&s.admin, s.db, s.now, s.header, func(r *http.Request) bool {
+		return adminWriteAllowed(r, s.header(r, "Dashboard"))
+	}, &s.loginLimits)
+}
+
+// authAPI serves /auth/ (admin login and logout, OIDC).
+func (s *Server) authAPI(w http.ResponseWriter, r *http.Request) { s.adminAuth().AuthAPI(w, r) }
+
+// root serves the dashboard page or the login page.
+func (s *Server) root(w http.ResponseWriter, r *http.Request) { s.adminAuth().Root(w, r, dashboard) }
+
 // auth returns the mailbox name of an authenticated request (see authenticate).
 func (s *Server) auth(r *http.Request) (string, bool) {
 	p, ok := s.authenticate(r)
@@ -194,7 +204,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path == "/api/register" {
-		s.register(w, r)
+		s.ids().Register(w, r)
 		return
 	}
 	if r.URL.Path == "/api/join" {
@@ -226,7 +236,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if path == "whoami" {
-		s.whoamiAPI(w, r, who)
+		s.ids().WhoamiAPI(w, r, who)
 		return
 	}
 	if path == "invites" {
@@ -234,11 +244,11 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if path == "metrics" {
-		s.metricsAPI(w, r, s.isGlobalBoss(who), false)
+		s.metricsAPI(w, r, s.ids().IsGlobalBoss(who), false)
 		return
 	}
 	if path == "progress" {
-		s.progressAPI(w, r, s.isGlobalBoss(who))
+		s.progressAPI(w, r, s.ids().IsGlobalBoss(who))
 		return
 	}
 	if path == "slots" || strings.HasPrefix(path, "slots/") {
@@ -298,11 +308,11 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 }
 
 // adminAPI exposes mailbox reporting and settings to a signed-in admin (see
-// adminIdentify; under the transition rule, a reverse proxy that injects the
+// adminauth Identify; under the transition rule, a reverse proxy that injects the
 // server-held secret). Caller-supplied identity headers are never trusted.
 // Writes (PUT, POST, DELETE) also need the dashboard CSRF guard.
 func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
-	who, ok := s.adminIdentify(r)
+	who, ok := s.adminAuth().Identify(r)
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -330,11 +340,11 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if rest, ok := strings.CutPrefix(path, "roles"); ok && (rest == "" || strings.HasPrefix(rest, "/")) {
-		s.adminRolesAPI(w, r, strings.TrimPrefix(rest, "/"))
+		s.ids().AdminRolesAPI(w, r, strings.TrimPrefix(rest, "/"))
 		return
 	}
 	if rest, ok := strings.CutPrefix(path, "groups"); ok && (rest == "" || strings.HasPrefix(rest, "/")) {
-		s.adminGroupsAPI(w, r, strings.TrimPrefix(rest, "/"))
+		s.ids().AdminGroupsAPI(w, r, strings.TrimPrefix(rest, "/"))
 		return
 	}
 	if rest, ok := strings.CutPrefix(path, "invites"); ok && (rest == "" || strings.HasPrefix(rest, "/")) {
@@ -382,7 +392,7 @@ func adminList(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	thread := strings.TrimSpace(r.URL.Query().Get("thread"))
 	task := strings.TrimSpace(r.URL.Query().Get("task"))
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
-	if mb, ok := mailbox(db, role); ok {
+	if mb, ok := identity.Mailbox(db, role); ok {
 		role = mb
 	}
 	if box != "inbox" && box != "outbox" && box != "held" {
@@ -442,66 +452,8 @@ func adminList(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	}
 	writeJSON(w, out)
 }
-func (s *Server) register(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", 405)
-		return
-	}
-	var req struct {
-		Role       string `json:"role"`
-		Credential string `json:"credential"`
-	}
-	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req) != nil || !wire.ValidRole(req.Role) || req.Credential == "" {
-		http.Error(w, "role and credential required", 400)
-		return
-	}
-	if reservedRole(req.Role) {
-		http.Error(w, "role name is reserved", 403)
-		return
-	}
-	if g, ok := s.groupOf(req.Role); ok && g.RevokedAt != nil {
-		http.Error(w, "group revoked", 403)
-		return
-	}
-	var existing string
-	var revokedAt sql.NullString
-	err := s.db.QueryRow(`SELECT token,revoked_at FROM roles WHERE role=?`, req.Role).Scan(&existing, &revokedAt)
-	if err == nil {
-		if !tokenMatches(existing, req.Credential) {
-			http.Error(w, "role already registered; valid credential required to resume", 409)
-			return
-		}
-		if revokedAt.Valid {
-			http.Error(w, "role revoked", 401)
-			return
-		}
-		writeJSON(w, map[string]string{"role": req.Role, "status": "resumed"})
-		return
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		http.Error(w, "registration failed", 500)
-		return
-	}
-	enrollment := config.EnvAlias("ENROLLMENT_TOKEN")
-	provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if len(req.Credential) < 24 || enrollment == "" || len(enrollment) != len(provided) || subtle.ConstantTimeCompare([]byte(enrollment), []byte(provided)) != 1 {
-		http.Error(w, "enrollment authorization required", 401)
-		return
-	}
-	if len(enrollment) == len(req.Credential) && subtle.ConstantTimeCompare([]byte(enrollment), []byte(req.Credential)) == 1 {
-		http.Error(w, "role credential must differ from enrollment credential", 400)
-		return
-	}
-	_, err = s.db.Exec(`INSERT INTO roles(role,token,created_at) VALUES(?,?,?)`, req.Role, store.TokenHash(req.Credential), time.Now().UTC().Format(time.RFC3339Nano))
-	if err != nil {
-		http.Error(w, "role registration failed", 409)
-		return
-	}
-	w.WriteHeader(201)
-	writeJSON(w, map[string]string{"role": req.Role, "status": "registered"})
-}
 func writeJSON(w http.ResponseWriter, v any) { _ = json.NewEncoder(w).Encode(v) }
-func (s *Server) send(w http.ResponseWriter, r *http.Request, p principal) {
+func (s *Server) send(w http.ResponseWriter, r *http.Request, p identity.Principal) {
 	role := p.Role
 	var m Message
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&m) != nil {
@@ -527,22 +479,22 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request, p principal) {
 			http.Error(w, e.Error(), 400)
 			return
 		}
-		if !roleExists(s.db, label.Base) {
+		if !identity.RoleExists(s.db, label.Base) {
 			http.Error(w, "unknown recipient role", 403)
 			return
 		}
-		if !s.maySend(p, label.Base) {
+		if !s.ids().MaySend(p, label.Base) {
 			http.Error(w, "outside your group", 403)
 			return
 		}
 		m.Recipient = label.String()
 	} else {
-		box, ok := mailbox(s.db, m.Recipient)
+		box, ok := identity.Mailbox(s.db, m.Recipient)
 		if !ok {
 			http.Error(w, "unknown recipient role", 403)
 			return
 		}
-		if !s.maySend(p, baseOf(s.db, box)) && !s.isReplyToSender(role, m.ReplyTo, box) {
+		if !s.ids().MaySend(p, identity.BaseOf(s.db, box)) && !s.isReplyToSender(role, m.ReplyTo, box) {
 			http.Error(w, "outside your group", 403)
 			return
 		}
@@ -695,7 +647,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request, role string, id 
 	m.Status = status
 	writeJSON(w, m)
 }
-func (s *Server) reply(w http.ResponseWriter, r *http.Request, p principal, id int64) {
+func (s *Server) reply(w http.ResponseWriter, r *http.Request, p identity.Principal, id int64) {
 	role := p.Role
 	orig, e := s.get(id)
 	if e != nil || orig.Recipient != role {

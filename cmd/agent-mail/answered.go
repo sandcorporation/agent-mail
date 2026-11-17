@@ -3,6 +3,8 @@ package main
 import (
 	"database/sql"
 	"time"
+
+	"github.com/sandcorporation/agent-mail/internal/identity"
 )
 
 // answers is the one rule (#63) for whether m answers the directive d. The
@@ -18,7 +20,7 @@ import (
 // For a boss directive (b) is "to any boss role"; for other mail it also
 // keeps the older "back to the sender's base" match.
 func answers(d, m flowMail, base func(string) string, isBoss func(string) bool) bool {
-	if m.ID == d.ID || isSystemSender(m.Sender) || m.Created.Before(d.Created) || base(m.Sender) != base(d.Recipient) {
+	if m.ID == d.ID || identity.IsSystemSender(m.Sender) || m.Created.Before(d.Created) || base(m.Sender) != base(d.Recipient) {
 		return false
 	}
 	toSender := base(m.Recipient) == base(d.Sender)
@@ -54,7 +56,7 @@ func (s *Server) answerCandidates(ds []flowMail) ([]flowMail, error) {
 		const chunk = 500
 		for i := 0; i < len(vals); i += chunk {
 			part := append([]any{}, vals[i:min(i+chunk, len(vals))]...)
-			rows, err := s.db.Query(`SELECT id,sender,recipient,subject,created_at,COALESCE(task_id,''),COALESCE(thread_id,0),COALESCE(reply_to,0) FROM messages WHERE `+col+` IN (`+placeholders(len(part))+`) AND sender NOT IN (?,?)`, append(part, systemSender, legacySystemSender)...)
+			rows, err := s.db.Query(`SELECT id,sender,recipient,subject,created_at,COALESCE(task_id,''),COALESCE(thread_id,0),COALESCE(reply_to,0) FROM messages WHERE `+col+` IN (`+placeholders(len(part))+`) AND sender NOT IN (?,?)`, append(part, identity.SystemSender, identity.LegacySystemSender)...)
 			if err != nil {
 				return err
 			}

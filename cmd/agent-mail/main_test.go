@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sandcorporation/agent-mail/internal/identity"
 	"github.com/sandcorporation/agent-mail/internal/store"
 	"github.com/sandcorporation/agent-mail/internal/wire"
 	_ "modernc.org/sqlite"
@@ -107,7 +108,7 @@ func TestDynamicRegistrationResumeAndMigration(t *testing.T) {
 
 func TestAdminReadAPIRequiresProxySecretAndIsReadOnly(t *testing.T) {
 	s := testServer(t)
-	s.adminProxyToken = "proxy-secret"
+	s.admin.ProxyToken = "proxy-secret"
 	if w := call(s, "POST", "/api/messages", "secret-a", map[string]any{"recipient": "b", "subject": "admin fixture", "body": "hello", "thread_id": 41}, "fixture"); w.Code != 201 {
 		t.Fatalf("fixture send=%d", w.Code)
 	}
@@ -169,7 +170,7 @@ func TestDashboardUsesSameOriginAndNoRoleCredentials(t *testing.T) {
 
 func TestProtectedReverseProxyAdminRequest(t *testing.T) {
 	s := testServer(t)
-	s.adminProxyToken = "proxy-secret"
+	s.admin.ProxyToken = "proxy-secret"
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/login" {
 			w.Header().Set("Content-Type", "text/html")
@@ -206,7 +207,7 @@ func TestProtectedReverseProxyAdminRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	var roles []roleView
+	var roles []identity.RoleView
 	if err = json.NewDecoder(resp.Body).Decode(&roles); err != nil || resp.StatusCode != 200 || len(roles) != 2 {
 		t.Fatalf("authenticated proxy response=%d roles=%v err=%v", resp.StatusCode, roles, err)
 	}
@@ -355,7 +356,7 @@ func TestPersistenceRetryAndStatus(t *testing.T) {
 		}
 		r := httptest.NewRequest("GET", "/api/admin/messages?status="+spelling, nil)
 		r.Header.Set("X-Agent-Mail-Admin", "proxy-secret")
-		s.adminProxyToken = "proxy-secret"
+		s.admin.ProxyToken = "proxy-secret"
 		rec := httptest.NewRecorder()
 		s.api(rec, r)
 		if rec.Code != 200 || !bytes.Contains(rec.Body.Bytes(), []byte(`"status":"complete"`)) {

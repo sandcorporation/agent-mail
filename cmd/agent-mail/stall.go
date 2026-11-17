@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sandcorporation/agent-mail/internal/config"
+	"github.com/sandcorporation/agent-mail/internal/identity"
 	"github.com/sandcorporation/agent-mail/internal/wire"
 )
 
@@ -31,26 +32,11 @@ import (
 // Each notice is stored in the same transaction that marks the row handled,
 // so running the sweep any number of times (or concurrently) sends it once.
 
-// systemSender is the sender of notices. Nobody can authenticate as it or as
-// a numbered form of it (see reservedRole), and mail to it is refused.
-const systemSender = "switchboard/system"
-
 const (
 	defaultSweepInterval = 30 * time.Second
 	defaultLabelStall    = 10 * time.Minute
 	noticeListMax        = 5 // held message IDs quoted in a label notice
 )
-
-// reservedRole reports whether name is the system sender or a numbered form
-// of it. Such names never authenticate and never receive mail, even when an
-// old database or AGENT_MAIL_TOKENS holds a role row by that name.
-func reservedRole(name string) bool {
-	if isSystemSender(name) {
-		return true
-	}
-	base, _, ok := wire.SplitSlot(name)
-	return ok && isSystemSender(base)
-}
 
 func (s *Server) sweepInterval() time.Duration {
 	if s.sweepEvery > 0 {
@@ -95,7 +81,7 @@ func configureStall(s *Server, getenv func(string) string) error {
 		if r == "" {
 			continue
 		}
-		if !wire.ValidRole(r) || reservedRole(r) {
+		if !wire.ValidRole(r) || identity.Reserved(r) {
 			return fmt.Errorf("%s: invalid role %q", from, r)
 		}
 		s.bossRoles[r] = true
@@ -169,14 +155,14 @@ func (s *Server) sweepOffline(ctx context.Context) (int, error) {
 			if err = logPresenceOffline(tx, v.Base, v.Number, v.LeaseExpiresAt); err != nil {
 				return err
 			}
-			box, ok := mailbox(tx, v.Parent)
-			if v.Parent == "" || !ok || reservedRole(v.Parent) {
+			box, ok := identity.Mailbox(tx, v.Parent)
+			if v.Parent == "" || !ok || identity.Reserved(v.Parent) {
 				if v.Parent != "" {
 					log.Printf("offline notice for %s skipped: parent %q is not a registered role", v.Role, v.Parent)
 				}
 				return nil
 			}
-			if self, _ := mailbox(tx, v.Role); box == self {
+			if self, _ := identity.Mailbox(tx, v.Role); box == self {
 				return nil
 			}
 			to = box
@@ -271,8 +257,8 @@ func (s *Server) sweepLabels(ctx context.Context) (int, error) {
 			if len(marked) == 0 {
 				return nil
 			}
-			box, ok := mailbox(tx, k.sender)
-			if !ok || reservedRole(k.sender) {
+			box, ok := identity.Mailbox(tx, k.sender)
+			if !ok || identity.Reserved(k.sender) {
 				return nil
 			}
 			to = box
@@ -306,10 +292,10 @@ func labelBody(addr string, ids []int64, after time.Duration) string {
 		base, label, after, len(ids), strings.Join(shown, ", "))
 }
 
-// insertSystemMail stores mail from systemSender inside tx. idem, when not
+// insertSystemMail stores mail from identity.SystemSender inside tx. idem, when not
 // empty, makes a second insert with the same key a no-op.
 func insertSystemMail(tx *sql.Tx, to, subject, body, task, priority, idem string, now time.Time) error {
 	_, err := tx.Exec(`INSERT OR IGNORE INTO messages(sender,recipient,subject,body,created_at,task_id,priority,status,idem) VALUES(?,?,?,?,?,?,?,'pending',?)`,
-		systemSender, to, subject, body, now.UTC().Format(time.RFC3339Nano), nullable(task), priority, nullable(idem))
+		identity.SystemSender, to, subject, body, now.UTC().Format(time.RFC3339Nano), nullable(task), priority, nullable(idem))
 	return err
 }

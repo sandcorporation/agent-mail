@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sandcorporation/agent-mail/internal/cli"
+	"github.com/sandcorporation/agent-mail/internal/identity"
 )
 
 // questionServer: permissionServer (roles a, b, team/worker, boss
@@ -78,7 +79,7 @@ type mailRow struct{ to, subject, body, task, priority string }
 
 func questionMail(t *testing.T, s *Server, id string) []mailRow {
 	t.Helper()
-	rows, err := s.db.Query(`SELECT recipient,subject,body,COALESCE(task_id,''),priority FROM messages WHERE sender=? AND task_id=? ORDER BY id`, systemSender, id)
+	rows, err := s.db.Query(`SELECT recipient,subject,body,COALESCE(task_id,''),priority FROM messages WHERE sender=? AND task_id=? ORDER BY id`, identity.SystemSender, id)
 	if err != nil {
 		t.Fatal(err)
 	}
