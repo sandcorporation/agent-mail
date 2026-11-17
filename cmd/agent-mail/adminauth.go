@@ -9,6 +9,7 @@ package main
 //     behaviour. The reverse proxy injects X-Switchboard-Admin, the dashboard
 //     page is served as is, and no login page or session is involved.
 //   - builtin: name + password + TOTP from admin_users (adminusers.go).
+//   - oidc: an OpenID Connect provider and an allowlist (oidc.go).
 //
 // Every mode other than the transition rule ends in the same session
 // (admin_sessions, cookie sb_session). A new mode (oidc #75, proxy #76) only
@@ -47,8 +48,8 @@ const (
 )
 
 // adminModes lists the SWITCHBOARD_ADMIN_AUTH values this build can sign
-// users in with. oidc (#75) and proxy (#76) are added with their login step.
-var adminModes = map[string]bool{adminModeBuiltin: true}
+// users in with. proxy (#76) is added with its login step.
+var adminModes = map[string]bool{adminModeBuiltin: true, adminModeOIDC: true}
 
 // adminIdentity is who made an admin request.
 type adminIdentity struct {
@@ -61,7 +62,14 @@ type adminIdentity struct {
 func configureAdminAuth(s *Server, getenv func(string) string) error {
 	mode := strings.TrimSpace(getenv(envPrefix + "ADMIN_AUTH"))
 	if mode != "" && !adminModes[mode] {
-		return errors.New(envPrefix + "ADMIN_AUTH must be builtin (oidc and proxy are not available in this version)")
+		return errors.New(envPrefix + "ADMIN_AUTH must be builtin or oidc (proxy is not available in this version)")
+	}
+	if mode == adminModeOIDC {
+		o, err := configureOIDC(getenv)
+		if err != nil {
+			return err
+		}
+		s.oidc = o
 	}
 	s.adminMode = mode
 	s.insecureCookie = getenv(envPrefix+"INSECURE_COOKIE") == "1"
@@ -161,6 +169,9 @@ WHERE s.id_hash=? AND (s.mode<>'builtin' OR (u.name IS NOT NULL AND u.disabled_a
 	if err != nil || expires <= now.Unix() || who.Mode != s.adminMode {
 		return adminIdentity{}, false
 	}
+	if who.Mode == adminModeOIDC && (s.oidc == nil || !s.oidc.allowed(who.User)) {
+		return adminIdentity{}, false
+	}
 	next := now.Add(s.sessionTTL()).Unix()
 	if next-expires >= int64(sessionSlide/time.Second) {
 		_, _ = s.db.Exec(`UPDATE admin_sessions SET expires_at=? WHERE id_hash=?`, next, h)
@@ -236,8 +247,13 @@ func (l *loginLimiter) clear(key string) {
 }
 
 // authAPI serves POST /auth/login and POST /auth/logout. Both need the same
-// write guard as admin writes.
+// write guard as admin writes. GET /auth/login and GET /auth/callback belong
+// to the oidc mode.
 func (s *Server) authAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet && (r.URL.Path == "/auth/login" || r.URL.Path == oidcCallbackPath) {
+		s.oidcAuth(w, r)
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -323,11 +339,15 @@ func (s *Server) root(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusUnauthorized)
+	if s.adminMode == adminModeOIDC {
+		_, _ = io.WriteString(w, oidcLoginHTML)
+		return
+	}
 	_, _ = io.WriteString(w, loginHTML)
 }
 
-// loginHTML is the login page. It loads nothing from outside the page.
-const loginHTML = `<!doctype html>
+// loginHead is the head shared by the login pages.
+const loginHead = `<!doctype html>
 <html lang="ko">
 <head>
 <meta charset="utf-8">
@@ -339,7 +359,7 @@ const loginHTML = `<!doctype html>
 @media (prefers-color-scheme:dark){:root{--bg:#0f1319;--surface:#171c24;--border:#2b3340;--border-strong:#3b4555;--text:#e4e8ef;--muted:#97a1b0;--accent:#7aa5ff;--accent-fg:#0f1319;--error:#ff7b74;--error-bg:#3a1c1c}}
 *,*::before,*::after{box-sizing:border-box}
 body{margin:0;min-height:100vh;display:flex;align-items:flex-start;justify-content:center;padding:12vh 1rem 2rem;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans KR","Apple SD Gothic Neo","Malgun Gothic",sans-serif}
-form{width:100%;max-width:22rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:1.5rem;display:flex;flex-direction:column;gap:.9rem}
+form,.box{width:100%;max-width:22rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:1.5rem;display:flex;flex-direction:column;gap:.9rem}
 h1{font-size:1.2rem;font-weight:650;margin:0 0 .25rem}
 label{display:flex;flex-direction:column;gap:.3rem;font-size:.9rem;color:var(--muted)}
 input{font:inherit;color:var(--text);padding:.5rem .6rem;border:1px solid var(--border-strong);border-radius:var(--r-sm);background:var(--surface);width:100%;min-width:0}
@@ -348,9 +368,23 @@ button:disabled{opacity:.6;cursor:default}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 #err{margin:0;padding:.5rem .6rem;border-radius:var(--r-sm);background:var(--error-bg);color:var(--error);font-size:.9rem}
 #err:empty{display:none}
+a.button{display:block;text-align:center;text-decoration:none;font:inherit;padding:.55rem .75rem;border:1px solid var(--accent);border-radius:var(--r-sm);background:var(--accent);color:var(--accent-fg)}
 </style>
 </head>
-<body>
+`
+
+// oidcLoginHTML is the login page of the oidc mode: one link to the provider.
+const oidcLoginHTML = loginHead + `<body>
+<main class="box">
+<h1>` + productName + `</h1>
+<a class="button" href="/auth/login">로그인</a>
+</main>
+</body>
+</html>
+`
+
+// loginHTML is the login page. It loads nothing from outside the page.
+const loginHTML = loginHead + `<body>
 <form id="login" autocomplete="on">
 <h1>` + productName + `</h1>
 <label>이름<input id="name" name="username" autocomplete="username" required maxlength="64" autocapitalize="none" spellcheck="false"></label>

@@ -64,6 +64,7 @@ type Server struct {
 	insecureCookie   bool             // SWITCHBOARD_INSECURE_COOKIE=1: session cookie without Secure, for local http
 	trustForwarded   bool             // SWITCHBOARD_TRUST_FORWARDED=1: client IP from X-Forwarded-For
 	loginLimits      loginLimiter
+	oidc             *oidcLogin // SWITCHBOARD_ADMIN_AUTH=oidc (oidc.go)
 }
 
 var version = "dev"

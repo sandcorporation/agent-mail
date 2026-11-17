@@ -96,8 +96,9 @@ The dashboard shows all messages, sessions and registered role names, and lets t
 | unset | unset | Denied (default). `/api/admin/*` returns `401`; the page is the login form, which signs no one in. |
 | unset | set | Transition rule: the proxy secret below, exactly as before admin login. No login page; the header shows 프록시. A deprecation line is logged at start. |
 | `builtin` | ignored | Name, password and TOTP code on the login form. |
+| `oidc` | ignored | 로그인 button → OpenID Connect provider; the allowlist below decides. |
 
-`oidc` and `proxy` are reserved for later versions; any other value stops the server at start.
+`proxy` is reserved for a later version; any other value stops the server at start.
 
 Built-in admins live in the server database. Run the CLI inside the container, where `DB_PATH` already points at it:
 
@@ -109,6 +110,18 @@ docker compose exec agent-mail switchboard admin disable alice
 ```
 
 Passwords need at least 12 characters and are stored as argon2id hashes. `passwd`, `totp-reset` and `disable` end that admin's sessions; `--json` prints `{"name","action"[,"secret","otpauth_uri"]}`. `POST /auth/login` (`{"name","password","code"}`) accepts the TOTP code (RFC 6238: SHA-1, 30 s, 6 digits) of the current step ±1, never the same step twice, and allows 5 failures per 15 minutes per name and per client IP; every failure, including the rate limit, is the same `401 login failed`. Success sets the `sb_session` cookie (`HttpOnly`, `SameSite=Strict`, `Secure` unless `SWITCHBOARD_INSECURE_COOKIE=1` for plain-http local use). Sessions (`admin_sessions`, only a SHA-256 of the cookie is stored) last 12 hours from the last request. `POST /auth/logout` ends the session; `GET /api/admin/me` returns `{"user","mode"}`. Login and logout need the same write guard as admin writes (below). Behind a reverse proxy every client has the proxy's address; set `SWITCHBOARD_TRUST_FORWARDED=1` when the proxy sets `X-Forwarded-For` (its last entry is then the client IP), and only then.
+
+**OIDC mode**
+
+| Variable | Value |
+|---|---|
+| `SWITCHBOARD_OIDC_ISSUER` | Issuer URL; discovery is `<issuer>/.well-known/openid-configuration`, fetched on the first login. |
+| `SWITCHBOARD_OIDC_CLIENT_ID` / `SWITCHBOARD_OIDC_CLIENT_SECRET` | The confidential client registered at the provider. |
+| `SWITCHBOARD_OIDC_ADMINS` | Comma-separated; each entry is an email (`admin@example.com`) or `sub:<subject>`. |
+| `SWITCHBOARD_OIDC_SCOPES` | Default `openid email profile`; must include `openid`. |
+| `SWITCHBOARD_PUBLIC_URL` | The dashboard's public origin, e.g. `https://mail.example`. |
+
+Register the client at the provider with redirect URI `<SWITCHBOARD_PUBLIC_URL>/auth/callback`, the authorization-code grant and PKCE `S256`. `GET /auth/login` redirects there with state, nonce and PKCE kept in a 10-minute signed cookie (`sb_oidc`, `SameSite=Lax`, key new on every start, so a restart only fails logins in progress). The callback checks the ID token's issuer, audience, expiry, nonce and signature (provider JWKS); an email entry matches only with `email_verified: true`. Success sets the same `sb_session` as the built-in mode; every refusal is `403 login failed` and the reason is logged without tokens or secrets. Removing an admin from the list ends their sessions at the next start. A missing variable stops the server at start with the missing names. For Google, the issuer is `https://accounts.google.com`; for Keycloak, `https://idp.example/realms/<realm>`.
 
 The rest of this section is the transition rule: `/api/admin/*` returns `401` unless `SWITCHBOARD_ADMIN_PROXY_TOKEN` is configured and the request includes the matching `X-Switchboard-Admin` header. The browser does not know this value. Configure a separate random secret in the private deployment `.env` and in the service's private reverse-proxy configuration; do not reuse any role or Authelia credential. The proxy must authenticate the browser session with Authelia before forwarding and must overwrite (never pass through) any incoming `X-Switchboard-Admin` header with the configured secret. Keep the backend bound to loopback/private networking so clients cannot bypass the proxy boundary. Requests without the secret cannot use admin APIs. Admin writes (`PUT`, `POST`, `DELETE`) additionally need `Content-Type: application/json` and `X-Switchboard-Dashboard: 1`, and `Sec-Fetch-Site`, when the browser sends it, must be `same-origin`; otherwise they get `403`. This is CSRF protection: the proxy authenticates by cookie, and the custom header forces a CORS preflight that a cross-site page cannot pass. `GET` needs none of these.
 
@@ -131,6 +144,7 @@ docker compose stop
 mkdir -p backup
 docker run --rm -v agent-mail_agent_mail_data:/data -v "$PWD/backup:/backup" alpine sh -c 'cp /data/mail.db /backup/mail.db'
 docker compose start
+
 # Restore: stop service, copy a verified backup back to /data/mail.db, then start.
 ```
 
