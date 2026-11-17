@@ -162,7 +162,10 @@ func initSchema(db *sql.DB) error {
 	if e = migratePresence(db); e != nil {
 		return e
 	}
-	return migratePermissions(db)
+	if e = migratePermissions(db); e != nil {
+		return e
+	}
+	return migrateQuestionSettings(db)
 }
 
 func hasColumn(db *sql.DB, table, column string) (bool, error) {
@@ -308,21 +311,38 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
-// adminAPI exposes read-only mailbox reporting only to a reverse proxy that
+// adminAPI exposes mailbox reporting and settings only to a reverse proxy that
 // injects a server-held secret after authenticating its user. The backend
 // must remain private; caller-supplied identity headers are never trusted.
+// Writes (PUT, POST, DELETE) also need the dashboard CSRF guard.
 func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 	provided := r.Header.Get("X-Agent-Mail-Admin")
 	if s.adminProxyToken == "" || len(provided) != len(s.adminProxyToken) || subtle.ConstantTimeCompare([]byte(provided), []byte(s.adminProxyToken)) != 1 {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if r.Method != http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
+	case http.MethodPut, http.MethodPost, http.MethodDelete:
+		if !adminWriteAllowed(r) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	path := strings.TrimPrefix(r.URL.Path, "/api/admin/")
+	if path == "question-settings" || strings.HasPrefix(path, "question-settings/") {
+		target, hasTarget := strings.CutPrefix(path, "question-settings/")
+		s.questionSettingsAPI(w, r, target, hasTarget)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	switch path {
 	case "roles":
 		rows, err := s.db.Query(`SELECT role FROM roles ORDER BY role`)
