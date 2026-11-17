@@ -21,7 +21,7 @@ func decisionServer(t *testing.T) (*Server, *fakeClock) {
 	if _, err := s.db.Exec(`UPDATE question_settings SET can_ask=1 WHERE target='default'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec(`INSERT INTO roles VALUES('team/other',?,'now')`, teamOtherToken); err != nil {
+	if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES('team/other',?,'now')`, teamOtherToken); err != nil {
 		t.Fatal(err)
 	}
 	return s, clock

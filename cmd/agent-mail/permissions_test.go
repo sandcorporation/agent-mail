@@ -18,7 +18,7 @@ func permissionServer(t *testing.T) (*Server, *fakeClock) {
 	t.Helper()
 	s, clock := slotServer(t)
 	s.slotLease = time.Hour
-	if _, err := s.db.Exec(`INSERT INTO roles VALUES('sandcorp/boss',?,'now')`, bossToken); err != nil {
+	if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES('sandcorp/boss',?,'now')`, bossToken); err != nil {
 		t.Fatal(err)
 	}
 	s.bossRoles = map[string]bool{"sandcorp/boss": true}
@@ -428,7 +428,7 @@ func TestPermissionConcurrentAnswersAndSweepsActOnce(t *testing.T) {
 
 func TestGlobalRoleOptionActsAsNumberedRole(t *testing.T) {
 	h := newCLIHarnessWith(t, func(s *Server) {
-		if _, err := s.db.Exec(`INSERT INTO roles VALUES('team/worker',?,'now')`, workerToken); err != nil {
+		if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES('team/worker',?,'now')`, workerToken); err != nil {
 			t.Fatal(err)
 		}
 	})

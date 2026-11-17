@@ -121,6 +121,8 @@ tr.row-blocked td:first-child{box-shadow:inset 3px 0 var(--blocked)}
 .qans{margin:var(--s1) 0;overflow-wrap:anywhere}
 .msg{margin:var(--s2) 0;font-weight:600}.msg:empty{display:none}.msg.err{color:var(--error)}.msg.ok{color:var(--idle)}
 .settings-form{display:grid;gap:var(--s3);max-width:32rem;margin-top:var(--s4);padding-top:var(--s4);border-top:1px solid var(--border)}
+.settings-form+.toolbar{margin-top:var(--s6);padding-top:var(--s4);border-top:1px solid var(--border)}
+td.revoked{color:var(--error);font-weight:600}
 .settings-form label{display:flex;flex-direction:column;gap:var(--s1);font-size:.9em}
 .settings-form label.check{flex-direction:row;align-items:center;gap:var(--s2)}
 #settingsTbl td.watchers{white-space:normal;overflow-wrap:anywhere}
@@ -294,6 +296,9 @@ table.stack tbody tr:hover td{background:none}
 <label>지켜보는 역할 (쉼표로 구분, 최대 20) <input id="setWatchers" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="team/boss, ops/lead"></label>
 <div class="row"><button type="submit">저장</button><button type="button" id="setClear">비우기</button></div>
 </form>
+<div class="toolbar"><h2>역할</h2><button id="reloadRoles">새로 고침</button><span id="rolesNote" class="muted"></span></div>
+<div id="rolesMsg" class="msg" role="status" aria-live="polite"></div>
+<div class="wide"><table id="rolesTbl" class="stack"><thead><tr><th>역할</th><th>등록</th><th>끊은 때</th><th></th></tr></thead><tbody id="rolesTable"></tbody></table></div>
 </section>
 <script>
 const sessionLabel={idle:'유휴',busy:'바쁨',compacting:'compact 중',unknown:'모름',offline:'오프라인'};
@@ -329,7 +334,7 @@ async function apiSend(method,path,body){
 }
 function node(tag,text,cls){const n=document.createElement(tag);n.textContent=text;if(cls)n.className=cls;return n}
 async function initMail(){
-  try{for(const role of await api('roles'))$('role').append(new Option(role,role));await load()}
+  try{for(const v of await api('roles'))$('role').append(new Option(v.role,v.role));await load()}
   catch(e){$('conn').textContent=e.message}
 }
 function kTokens(n){if(n===null||n===undefined)return '-';return n<10000?(n/1000).toFixed(1)+'k':Math.round(n/1000)+'k'}
@@ -753,7 +758,7 @@ function updateDecisionExport(){
 }
 async function loadDecisionRoles(){
   try{
-    const roles=await api('roles'),seen=new Set(),list=$('decRoles');
+    const roles=(await api('roles')).map(v=>v.role),seen=new Set(),list=$('decRoles');
     const add=v=>{if(!seen.has(v)){seen.add(v);const o=document.createElement('option');o.value=v;list.append(o)}};
     for(const r of roles){const i=r.lastIndexOf('/');if(i>0)add(r.slice(0,i)+'/*')}
     for(const r of roles)add(r);
@@ -830,7 +835,32 @@ $('settingsForm').onsubmit=async e=>{
   }catch(err){setMsg($('settingsMsg'),err.message,'err')}
 };
 $('setClear').onclick=()=>{$('settingsForm').reset();setMsg($('settingsMsg'),'')};
-tabLoaders.settings=loadSettings;
+// ---- 역할 ----
+async function loadRoles(){
+  $('rolesNote').textContent='불러오는 중…';
+  try{
+    const rows=await api('roles');
+    const body=$('rolesTable');body.replaceChildren();
+    for(const v of rows){
+      const tr=node('tr','');
+      for(const [label,text] of [['역할',v.role],['등록',when(v.created_at)],['끊은 때',v.revoked_at?when(v.revoked_at):'-']]){const td=node('td',text,label==='끊은 때'&&v.revoked_at?'revoked':'');td.dataset.label=label;tr.append(td)}
+      const act=node('td','');
+      const revoke=!v.revoked_at;
+      const b=node('button',revoke?'끊기':'되살리기');b.type='button';
+      b.onclick=async()=>{
+        if(!confirm(revoke?v.role+' 역할을 끊을까요? 이 토큰으로 접속한 세션이 모두 끊깁니다.':v.role+' 역할을 되살릴까요?'))return;
+        try{await apiSend('POST','roles/'+targetPath(v.role)+(revoke?'/revoke':'/restore'));setMsg($('rolesMsg'),v.role+(revoke?' 역할을 끊었습니다.':' 역할을 되살렸습니다.'),'ok');loadRoles()}
+        catch(e){setMsg($('rolesMsg'),e.message,'err')}
+      };
+      act.append(b);tr.append(act);body.append(tr);
+    }
+    if(!rows.length)emptyRow(body,4,'역할 없음');
+    const off=rows.filter(v=>v.revoked_at).length;
+    $('rolesNote').textContent=rows.length+'개'+(off?' · 끊김 '+off:'');
+  }catch(e){$('rolesNote').textContent=e.message}
+}
+$('reloadRoles').onclick=loadRoles;
+tabLoaders.settings=()=>{loadSettings();loadRoles()};
 function showTab(name){
   for(const n of tabNames){
     const on=n===name,t=$('tab-'+n);

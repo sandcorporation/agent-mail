@@ -36,7 +36,7 @@ func slotServer(t *testing.T) (*Server, *fakeClock) {
 	clock := &fakeClock{t: time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)}
 	s.clock = clock.now
 	s.slotLease = time.Minute
-	if _, err := s.db.Exec(`INSERT INTO roles VALUES('team/worker',?,'now')`, workerToken); err != nil {
+	if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES('team/worker',?,'now')`, workerToken); err != nil {
 		t.Fatal(err)
 	}
 	return s, clock
@@ -323,7 +323,7 @@ func TestSlotTakeover(t *testing.T) {
 func TestSlotPrefixTokenRules(t *testing.T) {
 	s, _ := slotServer(t)
 	// A separately registered role whose name ends in -2 keeps its own token.
-	if _, err := s.db.Exec(`INSERT INTO roles VALUES('team/lead','secret-lead','now'),('team/lead-2','secret-lead-two','now')`); err != nil {
+	if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES('team/lead','secret-lead','now'),('team/lead-2','secret-lead-two','now')`); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {

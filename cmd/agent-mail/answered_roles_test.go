@@ -47,7 +47,7 @@ func TestProgressAnsweredWithSlotLikeRoleNames(t *testing.T) {
 				tokens[r] = "secret-" + r
 			}
 			for r, tok := range tokens {
-				if _, err := s.db.Exec(`INSERT INTO roles VALUES(?,?,'now')`, r, tok); err != nil {
+				if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES(?,?,'now')`, r, tok); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -111,7 +111,7 @@ func TestProgressAnsweredWithSlotLikeRoleNames(t *testing.T) {
 func TestProgressReplicaOfProductionCases(t *testing.T) {
 	s, _ := slotServer(t)
 	s.bossRoles = map[string]bool{"sandcorp/boss": true}
-	if _, err := s.db.Exec(`INSERT INTO roles VALUES('sandcorp/boss','x','now'),('sandcorp/worker-1','y','now')`); err != nil {
+	if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES('sandcorp/boss','x','now'),('sandcorp/worker-1','y','now')`); err != nil {
 		t.Fatal(err)
 	}
 	ins := func(id int64, from, to, at, task string, thread, reply int64) {
