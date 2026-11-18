@@ -27,6 +27,19 @@ const (
 	presenceUnknown   = "unknown"
 )
 
+// stretchStartSQL selects, for the slots row aliased s, the start of its open
+// presence_log row (0 when there is none). Progress and List read it.
+const stretchStartSQL = `COALESCE((SELECT MAX(p.started_at) FROM presence_log p WHERE p.base=s.base AND p.number=s.number AND p.ended_at IS NULL),0)`
+
+// stretchStart is when an online slot's current state began: the start of its
+// open presence_log row, or its registration when nothing was logged.
+func stretchStart(started, registered int64) time.Time {
+	if started == 0 {
+		started = registered
+	}
+	return fromMS(started)
+}
+
 // openPresenceState is the state of (base, number)'s open presence_log row;
 // ok is false when there is none.
 func openPresenceState(q identity.Queryer, base string, number int) (state string, ok bool, err error) {
