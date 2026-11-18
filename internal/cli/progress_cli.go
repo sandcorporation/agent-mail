@@ -80,7 +80,7 @@ func formatProgress(ss []wire.ServiceProgress, now time.Time) string {
 			}
 		}
 		if len(s.OpenTasks) > 0 {
-			b.WriteString("  진행 중 task\n")
+			b.WriteString("  답 기다리는 task\n")
 			for _, t := range s.OpenTasks {
 				fmt.Fprintf(&b, "    %s %s %d통 — %s\n", t.TaskID, relTime(now, t.LastAt), t.Messages, orUntitled(t.LastSubject))
 			}

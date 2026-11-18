@@ -166,7 +166,7 @@ var commands = []command{
 			optJSON, optProfile,
 		}},
 	{name: "progress", args: "[SERVICE]", nargs: 1, optArgs: true,
-		summary: "Show per-service progress: last report, live sessions, open directives (! over the threshold) and open tasks (boss roles only)",
+		summary: "Show per-service progress: last report, live sessions, open directives (! over the threshold) and tasks waiting on a directive (boss roles only)",
 		options: []option{{"--json", "", "print the server's whole JSON response unchanged (SERVICE is ignored)"}, optProfile}},
 	{name: "decisions",
 		summary: "Show the decision ledger (answered questions), newest first; a boss role sees all, other roles their own base",

@@ -65,7 +65,7 @@ const progressWebBlock = "web [busy] 마지막 소식 12분 전 — PR 열림\n"
 	"  답 없는 지시\n" +
 	"  ! #5 → web/coord read 5시간 지남 — 배포 준비\n" +
 	"    #6 → web/coord pending 10분 지남 — (제목 없음)\n" +
-	"  진행 중 task\n" +
+	"  답 기다리는 task\n" +
 	"    web-12 2일 전 3통 — 시험 추가\n"
 
 func TestProgressCommandText(t *testing.T) {

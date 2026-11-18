@@ -623,7 +623,7 @@ function progressCard(p,now,limit){
     c.append(ul);
   }
   if(p.open_tasks.length){
-    c.append(node('h4','진행 중 task ('+p.open_tasks.length+')'));
+    c.append(node('h4','답 기다리는 task ('+p.open_tasks.length+')'));
     const ul=node('ul','','plist plinks');
     for(const t of p.open_tasks)ul.append(linkItem(t.task_id,(t.last_subject||'(제목 없음)')+' · '+rel(now,t.last_at)+' · '+t.messages+'통',false,()=>openTask(t.task_id)));
     c.append(ul);
