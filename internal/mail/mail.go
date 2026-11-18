@@ -75,7 +75,7 @@ func (s *Service) AdminList(w http.ResponseWriter, r *http.Request) {
 	if box != "inbox" && box != "outbox" && box != "held" {
 		box = "all"
 	}
-	query := `SELECT ` + messageCols(`COALESCE(rs.status,m.status,'pending')`) + ` FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=m.recipient WHERE 1=1`
+	query := `SELECT ` + messageCols(StatusExpr) + ` FROM messages m ` + StatusJoin + ` WHERE 1=1`
 	args := []any{}
 	if role != "" {
 		query += ` AND (m.sender=? OR m.recipient=?)`
@@ -99,7 +99,7 @@ func (s *Service) AdminList(w http.ResponseWriter, r *http.Request) {
 	}
 	if status != "" {
 		values := statusValues(status)
-		query += ` AND COALESCE(rs.status,m.status,'pending') IN (?` + strings.Repeat(",?", len(values)-1) + `)`
+		query += ` AND ` + StatusExpr + ` IN (?` + strings.Repeat(",?", len(values)-1) + `)`
 		args = append(args, values...)
 	}
 	if thread != "" {
@@ -251,8 +251,8 @@ func (s *Service) List(w http.ResponseWriter, r *http.Request, role string) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	status := r.URL.Query().Get("status")
 	limit := 100
-	query := `SELECT ` + messageCols(`COALESCE(CASE WHEN rs.status IS NOT NULL THEN rs.status ELSE m.status END,'pending')`) + ` FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=CASE WHEN m.sender=? THEN m.recipient ELSE ? END WHERE `
-	args := []any{role, role}
+	query := `SELECT ` + messageCols(StatusExpr) + ` FROM messages m ` + StatusJoin + ` WHERE `
+	args := []any{}
 	if box == "outbox" {
 		query += `m.sender=? `
 	} else {
@@ -266,7 +266,7 @@ func (s *Service) List(w http.ResponseWriter, r *http.Request, role string) {
 	}
 	if status != "" {
 		values := statusValues(status)
-		query += `AND COALESCE(rs.status,m.status) IN (?` + strings.Repeat(",?", len(values)-1) + `) `
+		query += `AND ` + StatusExpr + ` IN (?` + strings.Repeat(",?", len(values)-1) + `) `
 		args = append(args, values...)
 	}
 	query += `ORDER BY m.id DESC LIMIT ?`
@@ -296,8 +296,25 @@ func (s *Service) Read(w http.ResponseWriter, r *http.Request, role string, id i
 	if m.Recipient == role {
 		_, _ = s.db.Exec(`INSERT INTO role_states(role,message_id,status,updated_at) VALUES(?,?,?,?) ON CONFLICT(role,message_id) DO UPDATE SET status=CASE WHEN role_states.status='pending' THEN 'read' ELSE role_states.status END,updated_at=excluded.updated_at`, role, id, "read", time.Now().UTC().Format(time.RFC3339Nano))
 	}
-	_ = s.db.QueryRow(`SELECT COALESCE(status,'pending') FROM role_states WHERE role=? AND message_id=?`, role, id).Scan(&m.Status)
+	if v, err := s.View(id); err == nil {
+		m = v
+	}
 	writeJSON(w, m)
+}
+
+// StatusJoin attaches the recipient's state row to messages aliased m, and
+// StatusExpr is the status that row gives. Every view of a message (read,
+// inbox, outbox, admin list, events, progress, metrics) uses the pair, so the
+// sender and the recipient see the same status. A message has one recipient
+// (group sends store one row each), so the recipient's state is the message's.
+const (
+	StatusJoin = `LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=m.recipient`
+	StatusExpr = `COALESCE(rs.status,m.status,'pending')`
+)
+
+// View returns message id with the status every mailbox view shows.
+func (s *Service) View(id int64) (wire.Message, error) {
+	return scanMessage(s.db.QueryRow(`SELECT `+messageCols(StatusExpr)+` FROM messages m `+StatusJoin+` WHERE m.id=?`, id))
 }
 
 // Get returns message id as stored.

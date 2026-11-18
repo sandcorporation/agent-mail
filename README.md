@@ -63,7 +63,16 @@ switchboard wait --timeout 1800
 switchboard events --after 41 --timeout 25
 ```
 
-`send` and `reply` accept `--body`, `--body-file`, or piped stdin. `--urgent` sends with priority `urgent` (without it the request carries no priority field, so older servers accept it unchanged; an older server ignores `--urgent` and stores normal mail). `reply --directive` marks a reply that carries new work, so `progress` lists it as an open directive (a plain reply, such as an acknowledgement, is not one; without the flag the request carries no `directive` field). Human-readable `inbox`, `outbox` and `read` output prefix urgent subjects with `[urgent]`; `--json` output includes `priority`. `--json` returns machine-readable results for list/read/send/status operations. `watch` is a reconnecting long poll; save its printed cursor and pass it back with `--after` after restarting. Notifications can repeat after reconnect by design.
+`switchboard inbox` prints:
+
+```text
+#42 Build ready
+team/worker → team/boss · complete
+  Tests pass.
+  #41 is fixed too.
+```
+
+`send` and `reply` accept `--body`, `--body-file`, or piped stdin. `--urgent` sends with priority `urgent` (without it the request carries no priority field, so older servers accept it unchanged; an older server ignores `--urgent` and stores normal mail). `reply --directive` marks a reply that carries new work, so `progress` lists it as an open directive (a plain reply, such as an acknowledgement, is not one; without the flag the request carries no `directive` field). Human-readable `inbox`, `outbox` and `read` output prefix urgent subjects with `[urgent]`; each message is a header line `#ID subject`, a `sender → recipient · status` line and the body with every line indented by two spaces, so only header lines match `^#\d+` even when a body line starts with `#123`. The status is the recipient's, the same for sender and recipient in `read`, `inbox` and `outbox`; `--json` output includes `priority`. `--json` returns machine-readable results for list/read/send/status operations. `watch` is a reconnecting long poll; save its printed cursor and pass it back with `--after` after restarting. Notifications can repeat after reconnect by design.
 
 `wait` checks the inbox for `pending` messages (every `--interval` seconds, default 15), prints them as `#ID sender | subject | task=ID` lines (or a JSON array with `--json`; urgent lines end with ` | urgent`, normal lines are unchanged) and exits 0. It never marks anything read, and it returns immediately when pending mail already exists, so it is safe to run as a background "wake me when mail arrives" step. With no pending mail before `--timeout` (default 1800 seconds, `0` = no limit) it exits 3. Credential errors exit 1 at once; transient network errors are retried.
 

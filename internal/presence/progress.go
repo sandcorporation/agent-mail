@@ -85,7 +85,7 @@ type progressMailRow struct {
 }
 
 func (s *Service) progressMailQuery(where string, args ...any) ([]progressMailRow, error) {
-	rows, err := s.db.Query(`SELECT m.id,m.sender,m.recipient,m.subject,COALESCE(m.task_id,''),COALESCE(rs.status,m.status,'pending'),m.created_at,COALESCE(m.thread_id,0),COALESCE(m.reply_to,0) FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=m.recipient WHERE `+where+` ORDER BY m.id`, args...)
+	rows, err := s.db.Query(`SELECT m.id,m.sender,m.recipient,m.subject,COALESCE(m.task_id,''),`+mail.StatusExpr+`,m.created_at,COALESCE(m.thread_id,0),COALESCE(m.reply_to,0) FROM messages m `+mail.StatusJoin+` WHERE `+where+` ORDER BY m.id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +230,7 @@ func (s *Service) Progress(pending time.Duration, base func(string) string) (wir
 		}
 	}
 	if len(bossSenders) > 0 {
-		directives, err := s.progressMailQuery(`m.sender IN (`+placeholders(len(bossSenders))+`) AND (COALESCE(m.reply_to,0)=0 OR m.directive=1) AND COALESCE(rs.status,m.status,'pending') NOT IN ('complete','completed')`, anySlice(bossSenders)...)
+		directives, err := s.progressMailQuery(`m.sender IN (`+placeholders(len(bossSenders))+`) AND (COALESCE(m.reply_to,0)=0 OR m.directive=1) AND `+mail.StatusExpr+` NOT IN ('complete','completed')`, anySlice(bossSenders)...)
 		if err != nil {
 			return out, err
 		}

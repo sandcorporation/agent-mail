@@ -175,7 +175,7 @@ func (s *Service) Events(w http.ResponseWriter, r *http.Request, role string) {
 // assigned and committed in order on the single connection, so no message with
 // a smaller ID can appear after a larger one has been seen.
 func (s *Service) pendingAfter(role string, cursor int64) ([]wire.MailEvent, error) {
-	rows, e := s.db.Query(`SELECT m.id,m.sender,m.recipient,m.subject,m.created_at,COALESCE(m.task_id,''),COALESCE(m.thread_id,0),COALESCE(m.priority,'normal'),COALESCE(m.addressed_to,''),m.body FROM messages m LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=m.recipient WHERE m.recipient=? AND m.id>? AND COALESCE(rs.status,m.status,'pending')='pending' ORDER BY m.id LIMIT ?`, role, cursor, eventBatch)
+	rows, e := s.db.Query(`SELECT m.id,m.sender,m.recipient,m.subject,m.created_at,COALESCE(m.task_id,''),COALESCE(m.thread_id,0),COALESCE(m.priority,'normal'),COALESCE(m.addressed_to,''),m.body FROM messages m `+StatusJoin+` WHERE m.recipient=? AND m.id>? AND `+StatusExpr+`='pending' ORDER BY m.id LIMIT ?`, role, cursor, eventBatch)
 	if e != nil {
 		return nil, e
 	}

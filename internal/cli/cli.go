@@ -802,22 +802,33 @@ func doRequest(c Config, req *http.Request, jsonMode bool) (int, error) {
 	return ExitOK, nil
 }
 
-func pretty(v any) {
+func pretty(v any) { prettyTo(os.Stdout, v) }
+
+// prettyTo prints messages for people. A header line starts with "#<id>";
+// every body line is indented by two spaces, so a body line that itself
+// starts with "#123" never reads as a header.
+func prettyTo(w io.Writer, v any) {
 	switch x := v.(type) {
 	case []any:
 		for _, y := range x {
-			pretty(y)
-			fmt.Println()
+			prettyTo(w, y)
+			fmt.Fprintln(w)
 		}
 	case map[string]any:
 		mark := ""
 		if x["priority"] == "urgent" {
 			mark = "[urgent] "
 		}
-		fmt.Printf("#%v %s%v\n%v → %v · %s\n%s\n", x["id"], mark, x["subject"], x["sender"], x["recipient"], x["status"], x["body"])
+		body, _ := x["body"].(string)
+		fmt.Fprintf(w, "#%v %s%v\n%v → %v · %s\n%s\n", x["id"], mark, x["subject"], x["sender"], x["recipient"], x["status"], indentBody(body))
 	default:
-		fmt.Println(v)
+		fmt.Fprintln(w, v)
 	}
+}
+
+// indentBody prefixes every line of body with two spaces.
+func indentBody(body string) string {
+	return "  " + strings.ReplaceAll(strings.ReplaceAll(body, "\r\n", "\n"), "\n", "\n  ")
 }
 
 func secondsOption(cmd string, p parsedArgs, name string, def int, min int) (time.Duration, error) {
