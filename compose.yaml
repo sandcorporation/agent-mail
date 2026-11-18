@@ -1,33 +1,33 @@
 services:
   agent-mail: # service name of the running deployment; keep until the host move (대장 결정 전 유지)
-    # Deployments set AGENT_MAIL_IMAGE to the deployment image at <commit sha> (see Jenkinsfile) and run without building.
+    # Deployments set SWITCHBOARD_IMAGE to the deployment image at <commit sha> (see Jenkinsfile) and run without building.
     # Without it, `docker compose up -d --build` builds a local image from this checkout (development).
-    image: ${AGENT_MAIL_IMAGE:-switchboard:local}
+    image: ${SWITCHBOARD_IMAGE:-switchboard:local}
     build: .
     restart: unless-stopped
     environment:
       DB_PATH: /data/mail.db
       LISTEN_ADDR: :8080
-      AGENT_MAIL_TOKENS: ${AGENT_MAIL_TOKENS:?set in external .env}
-      AGENT_MAIL_ENROLLMENT_TOKEN: ${AGENT_MAIL_ENROLLMENT_TOKEN:-}
-      AGENT_MAIL_ADMIN_PROXY_TOKEN: ${AGENT_MAIL_ADMIN_PROXY_TOKEN:-}
+      SWITCHBOARD_TOKENS: ${SWITCHBOARD_TOKENS:?set in external .env}
+      SWITCHBOARD_ENROLLMENT_TOKEN: ${SWITCHBOARD_ENROLLMENT_TOKEN:-}
+      SWITCHBOARD_ADMIN_PROXY_TOKEN: ${SWITCHBOARD_ADMIN_PROXY_TOKEN:-}
       # Admin login (README): builtin, or empty for the proxy secret above / default deny.
       SWITCHBOARD_ADMIN_AUTH: ${SWITCHBOARD_ADMIN_AUTH:-}
       SWITCHBOARD_INSECURE_COOKIE: ${SWITCHBOARD_INSECURE_COOKIE:-}
       SWITCHBOARD_TRUST_FORWARDED: ${SWITCHBOARD_TRUST_FORWARDED:-}
       # Optional; empty means the built-in default (see README).
-      AGENT_MAIL_BOSS_ROLES: ${AGENT_MAIL_BOSS_ROLES:-}
-      AGENT_MAIL_SWEEP_INTERVAL: ${AGENT_MAIL_SWEEP_INTERVAL:-}
-      AGENT_MAIL_LABEL_STALL: ${AGENT_MAIL_LABEL_STALL:-}
-      AGENT_MAIL_PERMISSION_TTL: ${AGENT_MAIL_PERMISSION_TTL:-}
-      AGENT_MAIL_ALERT_PENDING: ${AGENT_MAIL_ALERT_PENDING:-}
-      AGENT_MAIL_ALERT_ERROR: ${AGENT_MAIL_ALERT_ERROR:-}
-      AGENT_MAIL_ALERT_BLOCKED: ${AGENT_MAIL_ALERT_BLOCKED:-}
+      SWITCHBOARD_BOSS_ROLES: ${SWITCHBOARD_BOSS_ROLES:-}
+      SWITCHBOARD_SWEEP_INTERVAL: ${SWITCHBOARD_SWEEP_INTERVAL:-}
+      SWITCHBOARD_LABEL_STALL: ${SWITCHBOARD_LABEL_STALL:-}
+      SWITCHBOARD_PERMISSION_TTL: ${SWITCHBOARD_PERMISSION_TTL:-}
+      SWITCHBOARD_ALERT_PENDING: ${SWITCHBOARD_ALERT_PENDING:-}
+      SWITCHBOARD_ALERT_ERROR: ${SWITCHBOARD_ALERT_ERROR:-}
+      SWITCHBOARD_ALERT_BLOCKED: ${SWITCHBOARD_ALERT_BLOCKED:-}
       # Optional Discord notice for new questions; the webhook URL is a credential (keep it in the external .env).
-      AGENT_MAIL_DISCORD_WEBHOOK: ${AGENT_MAIL_DISCORD_WEBHOOK:-}
-      AGENT_MAIL_PUBLIC_URL: ${AGENT_MAIL_PUBLIC_URL:-}
-      AGENT_MAIL_DISCORD_USERNAME: ${AGENT_MAIL_DISCORD_USERNAME:-}
-      AGENT_MAIL_DISCORD_AVATAR_URL: ${AGENT_MAIL_DISCORD_AVATAR_URL:-}
+      SWITCHBOARD_DISCORD_WEBHOOK: ${SWITCHBOARD_DISCORD_WEBHOOK:-}
+      SWITCHBOARD_PUBLIC_URL: ${SWITCHBOARD_PUBLIC_URL:-}
+      SWITCHBOARD_DISCORD_USERNAME: ${SWITCHBOARD_DISCORD_USERNAME:-}
+      SWITCHBOARD_DISCORD_AVATAR_URL: ${SWITCHBOARD_DISCORD_AVATAR_URL:-}
     ports:
       - "${MAIL_BIND_ADDRESS:-127.0.0.1}:8097:8080"
     volumes:
