@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -36,28 +37,65 @@ func TestDefaultProfileKeepsExistingConfigPath(t *testing.T) {
 	}
 }
 
-func TestProfileDirFallsBackToOldName(t *testing.T) {
+func TestProfileDirCopiesOldProfileOnce(t *testing.T) {
 	cfg := t.TempDir()
 	newDir, oldDir := filepath.Join(cfg, "switchboard"), filepath.Join(cfg, "agent-mail")
-	write := func(dir, name string) {
+	write := func(dir, name, body string) {
 		t.Helper()
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, name), []byte("{}"), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0600); err != nil {
 			t.Fatal(err)
 		}
+	}
+	read := func(path string) string {
+		t.Helper()
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
 	}
 	if got := profilePath(cfg, "w.json"); got != filepath.Join(newDir, "w.json") {
 		t.Fatalf("none: %s", got)
 	}
-	write(oldDir, "w.json")
-	if got := profilePath(cfg, "w.json"); got != filepath.Join(oldDir, "w.json") {
+	if _, err := os.Stat(newDir); err == nil {
+		t.Fatal("no profile anywhere must not create the new directory")
+	}
+
+	// Only the old directory has it: copied once, owner-only, old file kept.
+	write(oldDir, "w.json", `{"role":"old"}`)
+	if got := profilePath(cfg, "w.json"); got != filepath.Join(newDir, "w.json") {
 		t.Fatalf("old only: %s", got)
 	}
-	write(newDir, "w.json")
+	if got := read(filepath.Join(newDir, "w.json")); got != `{"role":"old"}` {
+		t.Fatalf("copy: %s", got)
+	}
+	if read(filepath.Join(oldDir, "w.json")) != `{"role":"old"}` {
+		t.Fatal("old file changed")
+	}
+	if runtime.GOOS != "windows" {
+		for path, want := range map[string]os.FileMode{newDir: 0700, filepath.Join(newDir, "w.json"): 0600} {
+			if fi, err := os.Stat(path); err != nil || fi.Mode().Perm() != want {
+				t.Fatalf("%s mode %v, want %v (%v)", path, fi.Mode().Perm(), want, err)
+			}
+		}
+	}
+
+	// Second run: the new file wins, the old one is not copied again.
+	write(oldDir, "w.json", `{"role":"changed-old"}`)
 	if got := profilePath(cfg, "w.json"); got != filepath.Join(newDir, "w.json") {
-		t.Fatalf("both: %s", got)
+		t.Fatalf("second: %s", got)
+	}
+	if got := read(filepath.Join(newDir, "w.json")); got != `{"role":"old"}` {
+		t.Fatalf("new file overwritten: %s", got)
+	}
+
+	// The new directory exists without this profile: that profile is copied.
+	write(oldDir, "x.json", `{"role":"x"}`)
+	if got := profilePath(cfg, "x.json"); got != filepath.Join(newDir, "x.json") || read(got) != `{"role":"x"}` {
+		t.Fatalf("other profile: %s", got)
 	}
 	if got := profilePath(cfg, "other.json"); got != filepath.Join(newDir, "other.json") {
 		t.Fatalf("new profile: %s", got)

@@ -16,10 +16,10 @@ import (
 
 // Stall notices.
 //
-// A periodic sweep (AGENT_MAIL_SWEEP_INTERVAL, default 30s) sends ordinary
+// A periodic sweep (SWITCHBOARD_SWEEP_INTERVAL, default 30s) sends ordinary
 // mail from the system sender: offline notices to a session's presence parent
 // (presence.Service.SweepOffline) and label stall notices to the sender of
-// mail held longer than AGENT_MAIL_LABEL_STALL (mail.Service.SweepLabels).
+// mail held longer than SWITCHBOARD_LABEL_STALL (mail.Service.SweepLabels).
 // The same sweep sends due metrics alerts and prunes old presence_log and
 // alerts rows.
 

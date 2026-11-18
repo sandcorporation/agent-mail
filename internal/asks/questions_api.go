@@ -24,7 +24,7 @@ import (
 //
 // A session whose resolved question settings allow it (can_ask) asks one to
 // four multiple-choice questions (POST /api/questions). Like permission
-// requests, only a boss role (AGENT_MAIL_BOSS_ROLES) of a base other than the
+// requests, only a boss role (SWITCHBOARD_BOSS_ROLES) of a base other than the
 // asker's may answer, and the first answer wins. The asker's base may
 // withdraw a pending question. The dashboard answers through the same core
 // (AnswerQuestion with by="dashboard"), which skips the boss check. An owner

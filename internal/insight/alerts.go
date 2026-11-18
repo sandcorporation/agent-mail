@@ -16,9 +16,9 @@ import (
 // resolvable boss role from the system sender, normal priority:
 //
 //   - pending: a recipient role has pending non-system mail older than
-//     AGENT_MAIL_ALERT_PENDING; one alert per recipient role.
+//     SWITCHBOARD_ALERT_PENDING; one alert per recipient role.
 //   - error / blocked: an online session has been in error:* / blocked:*
-//     longer than AGENT_MAIL_ALERT_ERROR / AGENT_MAIL_ALERT_BLOCKED; one alert
+//     longer than SWITCHBOARD_ALERT_ERROR / SWITCHBOARD_ALERT_BLOCKED; one alert
 //     per session role.
 //
 // A zero threshold disables that kind. Each (kind, subject role) alerts at

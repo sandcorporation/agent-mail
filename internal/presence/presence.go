@@ -24,10 +24,10 @@ import (
 // heartbeat: state, context tokens and last turn time ride on the same body,
 // and each report renews the lease. There is one rule for offline: a session
 // is offline exactly when its slot lease has ended. The lease length is
-// AGENT_MAIL_PRESENCE_INTERVAL × AGENT_MAIL_PRESENCE_MISSED (60s × 3 = 3m by
+// SWITCHBOARD_PRESENCE_INTERVAL × SWITCHBOARD_PRESENCE_MISSED (60s × 3 = 3m by
 // default), so missing that many heartbeats both marks the session offline
-// and frees its number. AGENT_MAIL_SLOT_LEASE, when set, overrides the
-// product directly. Offline rows stay listed for AGENT_MAIL_PRESENCE_RETAIN
+// and frees its number. SWITCHBOARD_SLOT_LEASE, when set, overrides the
+// product directly. Offline rows stay listed for SWITCHBOARD_PRESENCE_RETAIN
 // (default 24h) unless another identity takes the number first.
 
 const (
@@ -38,7 +38,7 @@ const (
 
 // Config is the presence and lease settings read from the environment.
 type Config struct {
-	SlotLease time.Duration  // AGENT_MAIL_SLOT_LEASE; 0 means Interval × Missed
+	SlotLease time.Duration  // SWITCHBOARD_SLOT_LEASE; 0 means Interval × Missed
 	Interval  time.Duration  // expected heartbeat interval; 0 means defaultPresenceInterval
 	Missed    int            // heartbeats a session may miss; 0 means defaultPresenceMissed
 	Retain    *time.Duration // how long offline sessions stay listed; nil means defaultPresenceRetain

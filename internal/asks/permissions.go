@@ -23,8 +23,8 @@ import (
 //
 // A session asks for permission to use a tool (POST /api/permissions); the
 // server gives the request an opaque ID and an expiry
-// (AGENT_MAIL_PERMISSION_TTL, default 10m). Exactly one allow or deny answer
-// is accepted, and only from a boss role listed in AGENT_MAIL_BOSS_ROLES
+// (SWITCHBOARD_PERMISSION_TTL, default 10m). Exactly one allow or deny answer
+// is accepted, and only from a boss role listed in SWITCHBOARD_BOSS_ROLES
 // (matched by base or role). Sessions on one machine can read each other's
 // profile files, so any other role, the requester's parent included, is no
 // independent check; the boss credential lives on a separate machine. The

@@ -26,7 +26,7 @@ type Service struct {
 }
 
 // New returns the identity rules over db. clock is the current time,
-// bossRoles is AGENT_MAIL_BOSS_ROLES, groups is the server's group cache and
+// bossRoles is SWITCHBOARD_BOSS_ROLES, groups is the server's group cache and
 // logOffline records that a slot went offline (presence log) inside a revoke.
 func New(db *sql.DB, clock func() time.Time, bossRoles map[string]bool, groups *Groups, logOffline func(tx *sql.Tx, base string, number int, at time.Time) error) *Service {
 	return &Service{db: db, clock: clock, bossRoles: bossRoles, groups: groups, logOffline: logOffline}
@@ -157,7 +157,7 @@ func IsSystemSender(name string) bool {
 
 // Reserved reports whether name is the system sender or a numbered form
 // of it. Such names never Authenticate and never receive mail, even when an
-// old database or AGENT_MAIL_TOKENS holds a role row by that name.
+// old database or SWITCHBOARD_TOKENS holds a role row by that name.
 func Reserved(name string) bool {
 	if IsSystemSender(name) {
 		return true

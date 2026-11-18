@@ -14,7 +14,7 @@ import (
 
 // Label stall notices.
 //
-// When mail to label:<base>/<label> stays held for AGENT_MAIL_LABEL_STALL
+// When mail to label:<base>/<label> stays held for SWITCHBOARD_LABEL_STALL
 // (default 10m) because no session with that label connected, its sender
 // gets one notice per sweep and label covering every message that crossed the
 // limit since the last notice. The notice is stored in the same transaction
