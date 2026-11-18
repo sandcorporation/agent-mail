@@ -24,6 +24,7 @@ import (
 	"github.com/sandcorporation/agent-mail/internal/dashboard"
 	"github.com/sandcorporation/agent-mail/internal/identity"
 	"github.com/sandcorporation/agent-mail/internal/insight"
+	"github.com/sandcorporation/agent-mail/internal/live"
 	"github.com/sandcorporation/agent-mail/internal/mail"
 	"github.com/sandcorporation/agent-mail/internal/presence"
 	"github.com/sandcorporation/agent-mail/internal/store"
@@ -49,6 +50,8 @@ type Server struct {
 	admin       adminauth.Config    // admin login settings (internal/adminauth)
 	loginLimits adminauth.Limiter   // failed admin logins
 	joinLimits  adminauth.Limiter   // failed POST /api/join per client IP (identity.Service.Join)
+	live        live.Bus            // dashboard change stream (internal/live, served by live.go)
+	publicURL   string              // SWITCHBOARD_PUBLIC_URL; a WebSocket Origin it also accepts
 }
 
 // version is the build version /health reports (set by Run).
@@ -62,7 +65,7 @@ func Run(v string) {
 	if e != nil {
 		log.Fatal(e)
 	}
-	s := &Server{db: db, tokens: map[string]string{}, admin: adminauth.Config{ProxyToken: config.EnvAlias("ADMIN_PROXY_TOKEN")}, done: make(chan struct{})}
+	s := &Server{db: db, tokens: map[string]string{}, admin: adminauth.Config{ProxyToken: config.EnvAlias("ADMIN_PROXY_TOKEN")}, done: make(chan struct{}), publicURL: strings.TrimRight(config.EnvAlias("PUBLIC_URL"), "/")}
 	if v, from := config.EnvAliasFrom(os.Getenv, "SSE_KEEPALIVE"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil || d <= 0 {
@@ -194,7 +197,9 @@ func (s *Server) auth(r *http.Request) (string, bool) {
 	p, ok := s.authenticate(r)
 	return p.Role, ok
 }
-func (s *Server) api(w http.ResponseWriter, r *http.Request) {
+
+// serveAPI routes /api/ (api publishes the live change around it).
+func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/api/admin/") {
 		s.adminAPI(w, r)
 		return
@@ -324,8 +329,12 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
 	path := strings.TrimPrefix(r.URL.Path, "/api/admin/")
+	if path == "live" && r.Method == http.MethodGet {
+		s.liveSocket(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
 	if path == "question-settings" || strings.HasPrefix(path, "question-settings/") {
 		target, hasTarget := strings.CutPrefix(path, "question-settings/")
 		s.asks().QuestionSettingsAPI(w, r, target, hasTarget)

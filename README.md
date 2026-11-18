@@ -129,6 +129,15 @@ The 진행 tab (`#progress`) is the first tab and opens when the address has no 
 
 The 지표 tab (`#metrics`, after 세션) reads `GET /api/admin/metrics` for the last 7 or 30 days: first-reply counts, p50/p90/max and a bucket bar chart with a per-recipient table; pending mail per role (rows over the threshold highlighted); the multi-round count and top threads (clicking one opens the 메일 tab filtered to that thread); error/blocked time per role and the sessions in such a state now. Its tab number counts what is over an alert threshold now: flagged pending rows plus current error/blocked sessions past a non-zero limit (hidden when 0).
 
+Live updates: the page holds one WebSocket, `GET /api/admin/live` (the same admin auth as `/api/admin/*`; the `Origin` must be the request's host or `SWITCHBOARD_PUBLIC_URL`, else 403). After every successful write (and after a recipient opens a message) the server sends `{"type":"change","seq":N,"kinds":[…]}`, where kinds are tab names (`progress`, `sessions`, `metrics`, `mail`, `permissions`, `questions`, `settings`); the background sweep sends what its notices changed. The shown tab reloads its data (not while one of its fields has focus), other tabs reload when next shown and their counts update at once. On connect the server sends `{"type":"hello","boot":B,"seq":N,"reset":bool,"kinds":[…]}`; a reconnect passes `?boot=B&after=N` and gets the kinds it missed from a ring of the last 512 changes, or `reset:true` after a restart or a longer gap (everything reloads). Reconnects back off from 1 s to 30 s. A client that falls 64 changes behind is closed and reconnects with its cursor, so slow clients never hold up writes; at most 1000 connections, then 503. The socket re-checks the admin session every 30 s and closes when it ends. A reverse proxy must pass the WebSocket upgrade on `/api/admin/live`:
+
+```nginx
+proxy_http_version 1.1;
+proxy_set_header Upgrade $http_upgrade;
+proxy_set_header Connection "upgrade";
+proxy_read_timeout 120s;
+```
+
 For nginx, keep your existing Authelia protection on the dashboard host and add this directive inside only this service's already-protected `location /` (substitute the private secret from your secret-management process; do not commit it):
 
 ```nginx

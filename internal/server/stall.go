@@ -93,9 +93,11 @@ func (s *Server) startSweeper() func() {
 			case <-s.done:
 				return
 			case <-t.C:
-				if _, err := s.sweep(context.Background()); err != nil {
+				res, err := s.sweep(context.Background())
+				if err != nil {
 					log.Printf("stall sweep: %v", err)
 				}
+				s.publishSweep(res)
 			}
 		}
 	}()
@@ -127,4 +129,19 @@ func (s *Server) sweep(ctx context.Context) (sweepResult, error) {
 	}
 	_, err = presence.PruneLog(s.db, s.now())
 	return out, err
+}
+
+// publishSweep tells live dashboards what one sweep's notices changed.
+func (s *Server) publishSweep(res sweepResult) {
+	var kinds []string
+	if res.Offline > 0 {
+		kinds = append(kinds, "sessions", "progress", "mail")
+	}
+	if res.Label > 0 {
+		kinds = append(kinds, "mail", "progress")
+	}
+	if res.Alerts > 0 {
+		kinds = append(kinds, "mail", "metrics")
+	}
+	s.live.Publish(kinds...)
 }
