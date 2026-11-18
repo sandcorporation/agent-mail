@@ -58,6 +58,9 @@ func Init(db *sql.DB) error {
 	if e = migrateLabels(db); e != nil {
 		return e
 	}
+	if e = migrateDirective(db); e != nil {
+		return e
+	}
 	if e = migratePresence(db); e != nil {
 		return e
 	}
@@ -267,6 +270,23 @@ func migrateLabels(db *sql.DB) error {
 		}
 	}
 	_, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_held ON messages(held_at) WHERE status='held'`)
+	return err
+}
+
+// migrateDirective adds messages.directive (1: a reply sent with --directive,
+// which the progress view counts as a directive) and the index the answer
+// lookup by mention reads (mail.AnswerCandidates).
+func migrateDirective(db *sql.DB) error {
+	has, err := HasColumn(db, "messages", "directive")
+	if err != nil {
+		return err
+	}
+	if !has {
+		if _, err = db.Exec(`ALTER TABLE messages ADD COLUMN directive INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+	}
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_sender_recipient ON messages(sender,recipient,created_at)`)
 	return err
 }
 

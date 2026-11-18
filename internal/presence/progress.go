@@ -224,8 +224,9 @@ func (s *Service) Progress(pending time.Duration, base func(string) string) (wir
 		}
 	}
 
-	// Open directives: mail from a boss role, neither completed nor answered
-	// (mail.Answers), oldest first.
+	// Open directives: mail from a boss role that is a directive (a send, or
+	// a reply sent with --directive), neither completed by its recipient nor
+	// answered (mail.Answers), oldest first.
 	senders, err := s.distinctNames("sender")
 	if err != nil {
 		return out, err
@@ -237,7 +238,7 @@ func (s *Service) Progress(pending time.Duration, base func(string) string) (wir
 		}
 	}
 	if len(bossSenders) > 0 {
-		directives, err := s.progressMailQuery(`m.sender IN (`+placeholders(len(bossSenders))+`) AND COALESCE(rs.status,m.status,'pending') NOT IN ('complete','completed')`, anySlice(bossSenders)...)
+		directives, err := s.progressMailQuery(`m.sender IN (`+placeholders(len(bossSenders))+`) AND (COALESCE(m.reply_to,0)=0 OR m.directive=1) AND COALESCE(rs.status,m.status,'pending') NOT IN ('complete','completed')`, anySlice(bossSenders)...)
 		if err != nil {
 			return out, err
 		}
@@ -245,15 +246,18 @@ func (s *Service) Progress(pending time.Duration, base func(string) string) (wir
 		for i, m := range directives {
 			ds[i] = mail.FlowMail{ID: m.ID, Sender: m.Sender, Recipient: m.Recipient, Created: m.At, TaskID: m.TaskID, ThreadID: m.ThreadID, ReplyTo: m.ReplyTo}
 		}
-		candidates, err := mail.AnswerCandidates(s.db, ds)
+		candidates, err := mail.AnswerCandidates(s.db, ds, base, isBossName)
 		if err != nil {
 			return out, err
 		}
-		byThread, byTask := map[int64][]mail.FlowMail{}, map[string][]mail.FlowMail{}
+		byThread, byTask, byMention := map[int64][]mail.FlowMail{}, map[string][]mail.FlowMail{}, map[int64][]mail.FlowMail{}
 		for _, c := range candidates {
 			byThread[c.ThreadID] = append(byThread[c.ThreadID], c)
 			if c.TaskID != "" {
 				byTask[c.TaskID] = append(byTask[c.TaskID], c)
+			}
+			for _, id := range c.Mentioned() {
+				byMention[id] = append(byMention[id], c)
 			}
 		}
 	directive:
@@ -263,7 +267,7 @@ func (s *Service) Progress(pending time.Duration, base func(string) string) (wir
 			if d.TaskID != "" {
 				near = byTask[d.TaskID]
 			}
-			for _, group := range [][]mail.FlowMail{byThread[d.Thread()], byThread[d.ID], near} {
+			for _, group := range [][]mail.FlowMail{byThread[d.Thread()], byThread[d.ID], near, byMention[d.ID]} {
 				for _, c := range group {
 					if mail.Answers(d, c, base, isBossName) {
 						continue directive

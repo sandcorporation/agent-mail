@@ -17,9 +17,11 @@ import (
 // flowRow is a message for mailAt.
 type flowRow struct {
 	sender, recipient, subject, task string
+	body                             string // "b" when empty
 	at                               time.Time
 	thread, reply                    int64
 	status                           string
+	directive                        bool
 }
 
 func mailAt(t *testing.T, s *Server, m flowRow) int64 {
@@ -30,8 +32,11 @@ func mailAt(t *testing.T, s *Server, m flowRow) int64 {
 	if m.subject == "" {
 		m.subject = "s"
 	}
-	res, err := s.db.Exec(`INSERT INTO messages(sender,recipient,subject,body,created_at,task_id,thread_id,reply_to,status) VALUES(?,?,?,'b',?,?,?,?,?)`,
-		m.sender, m.recipient, m.subject, m.at.UTC().Format(time.RFC3339Nano), nullable(m.task), nullInt(m.thread), nullInt(m.reply), m.status)
+	if m.body == "" {
+		m.body = "b"
+	}
+	res, err := s.db.Exec(`INSERT INTO messages(sender,recipient,subject,body,created_at,task_id,thread_id,reply_to,status,directive) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		m.sender, m.recipient, m.subject, m.body, m.at.UTC().Format(time.RFC3339Nano), nullable(m.task), nullInt(m.thread), nullInt(m.reply), m.status, m.directive)
 	if err != nil {
 		t.Fatal(err)
 	}
