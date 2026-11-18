@@ -13,6 +13,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Question source of truth (server e2e)
+        run: bash scripts/ci/question_sot.sh
       - run: go test ./...
       - name: Build CLI archives
         shell: bash
