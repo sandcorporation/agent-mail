@@ -1,6 +1,7 @@
 package asks
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -70,6 +71,7 @@ func scanPermission(sc interface{ Scan(...any) error }, now time.Time) (wire.Per
 	var declared string
 	var created, expires, answered int64
 	err := sc.Scan(&v.ID, &v.Requester, &v.RequesterBase, &v.Tool, &v.Summary, &declared, &v.Parent, &v.ParentBase, &created, &expires, &v.Decision, &v.Note, &v.AnsweredBy, &answered)
+	v.DeclaredParent = declared
 	if declared != "" && v.Parent == "" {
 		v.IgnoredParent = declared
 	}
@@ -243,12 +245,10 @@ func (s *Service) requestPermission(w http.ResponseWriter, r *http.Request, p id
 
 // loadPermission returns the request when p may read it, else an HTTP code.
 func (s *Service) loadPermission(p identity.Principal, id string) (wire.PermissionView, int) {
-	if !strings.HasPrefix(id, permissionIDPrefix) || len(id) > 64 {
-		return wire.PermissionView{}, http.StatusNotFound
-	}
-	v, err := scanPermission(s.db.QueryRow(`SELECT `+permissionCols()+` FROM permissions WHERE id=?`, id), s.now())
-	if errors.Is(err, sql.ErrNoRows) {
-		return v, http.StatusNotFound
+	v, err := s.permissionByID(id)
+	var pe permissionErr
+	if errors.As(err, &pe) {
+		return v, pe.code
 	}
 	if err != nil {
 		return v, http.StatusInternalServerError
@@ -296,6 +296,16 @@ func (s *Service) listPermissions(w http.ResponseWriter, r *http.Request, p iden
 }
 
 func (s *Service) answerPermission(w http.ResponseWriter, r *http.Request, p identity.Principal, id string) {
+	s.answerPermissionHTTP(w, r, id, p.Role, func(v wire.PermissionView) bool { return s.mayAnswer(p, v) })
+}
+
+// PermissionByDashboard is answered_by for an answer given on the dashboard.
+const PermissionByDashboard = "dashboard"
+
+// answerPermissionHTTP decodes {decision, note} and answers through
+// AnswerPermission; the role endpoint and the dashboard both end here, so
+// they store the same row, send the same mail and answer the same JSON.
+func (s *Service) answerPermissionHTTP(w http.ResponseWriter, r *http.Request, id, by string, may func(wire.PermissionView) bool) {
 	var req struct {
 		Decision string `json:"decision"`
 		Note     string `json:"note"`
@@ -304,67 +314,97 @@ func (s *Service) answerPermission(w http.ResponseWriter, r *http.Request, p ide
 		http.Error(w, "invalid JSON", 400)
 		return
 	}
-	if req.Decision != "allow" && req.Decision != "deny" {
-		http.Error(w, `decision must be "allow" or "deny"`, 400)
+	v, err := s.AnswerPermission(r.Context(), id, by, req.Decision, req.Note, may)
+	var pe permissionErr
+	switch {
+	case errors.As(err, &pe):
+		http.Error(w, pe.msg, pe.code)
+		return
+	case err != nil:
+		http.Error(w, "could not store answer", 500)
 		return
 	}
-	if len(req.Note) > maxPermissionText {
-		http.Error(w, fmt.Sprintf("note must be at most %d bytes", maxPermissionText), 400)
-		return
+	writeJSON(w, v)
+}
+
+// permissionErr is an answer refused with an HTTP code.
+type permissionErr struct {
+	code int
+	msg  string
+}
+
+func (e permissionErr) Error() string { return e.msg }
+
+func refused(code int) error { return permissionErr{code, permissionErrors[code]} }
+
+// AnswerPermission stores one allow or deny answer by by (a role, or
+// PermissionByDashboard) and mails the requester. may reports whether by may
+// answer the request; nil lets anyone (the dashboard). Checks run 400 → 404 →
+// 403 → 409 → 410; the conditional UPDATE and the mail share one transaction,
+// so concurrent answers produce one success.
+func (s *Service) AnswerPermission(ctx context.Context, id, by, decision, note string, may func(wire.PermissionView) bool) (wire.PermissionView, error) {
+	if decision != "allow" && decision != "deny" {
+		return wire.PermissionView{}, permissionErr{400, `decision must be "allow" or "deny"`}
 	}
-	v, code := s.loadPermission(p, id)
-	if code == 0 && !s.mayAnswer(p, v) {
-		code = http.StatusForbidden
+	if len(note) > maxPermissionText {
+		return wire.PermissionView{}, permissionErr{400, fmt.Sprintf("note must be at most %d bytes", maxPermissionText)}
 	}
-	if code != 0 {
-		permissionError(w, code)
-		return
+	v, err := s.permissionByID(id)
+	if err != nil {
+		return v, err
+	}
+	if may != nil && !may(v) {
+		return wire.PermissionView{}, refused(http.StatusForbidden)
 	}
 	now := s.now()
-	err := s.inTx(r.Context(), func(tx *sql.Tx) error {
+	err = s.inTx(ctx, func(tx *sql.Tx) error {
 		res, e := tx.Exec(`UPDATE permissions SET decision=?,note=?,answered_by=?,answered_at=? WHERE id=? AND decision='' AND expires_at>?`,
-			req.Decision, req.Note, p.Role, ms(now), id, ms(now))
+			decision, note, by, ms(now), id, ms(now))
 		if e != nil {
 			return e
 		}
 		if n, _ := res.RowsAffected(); n != 1 {
-			var decision string
-			if e = tx.QueryRow(`SELECT decision FROM permissions WHERE id=?`, id).Scan(&decision); e != nil {
+			var d string
+			if e = tx.QueryRow(`SELECT decision FROM permissions WHERE id=?`, id).Scan(&d); e != nil {
 				return e
 			}
-			if decision != "" {
-				return errAnswered
+			if d != "" {
+				return refused(http.StatusConflict)
 			}
-			return errExpired
+			return refused(http.StatusGone)
 		}
 		if v, e = scanPermission(tx.QueryRow(`SELECT `+permissionCols()+` FROM permissions WHERE id=?`, id), now); e != nil {
 			return e
 		}
-		word := map[string]string{"allow": "allowed", "deny": "denied"}[req.Decision]
-		body := fmt.Sprintf("Request %s (%s) was %s by %s.", id, v.Tool, word, p.Role)
-		if req.Note != "" {
-			body += "\nNote: " + req.Note
+		word := map[string]string{"allow": "allowed", "deny": "denied"}[decision]
+		body := fmt.Sprintf("Request %s (%s) was %s by %s.", id, v.Tool, word, by)
+		if note != "" {
+			body += "\nNote: " + note
 		}
 		if box, ok := identity.Mailbox(tx, v.Requester); ok {
 			return mail.InsertSystemMail(tx, box, "permission "+word+": "+v.Tool, body, id, "urgent", "", now)
 		}
 		return nil
 	})
-	switch {
-	case errors.Is(err, errAnswered):
-		permissionError(w, http.StatusConflict)
-		return
-	case errors.Is(err, errExpired):
-		permissionError(w, http.StatusGone)
-		return
-	case err != nil:
-		http.Error(w, "could not store answer", 500)
-		return
+	if err != nil {
+		return wire.PermissionView{}, err
 	}
 	if box, ok := identity.Mailbox(s.db, v.Requester); ok {
 		s.hub.Publish(box)
 	}
-	writeJSON(w, v)
+	return v, nil
+}
+
+// permissionByID loads one request without an access check (404 when unknown).
+func (s *Service) permissionByID(id string) (wire.PermissionView, error) {
+	if !strings.HasPrefix(id, permissionIDPrefix) || len(id) > 64 {
+		return wire.PermissionView{}, refused(http.StatusNotFound)
+	}
+	v, err := scanPermission(s.db.QueryRow(`SELECT `+permissionCols()+` FROM permissions WHERE id=?`, id), s.now())
+	if errors.Is(err, sql.ErrNoRows) {
+		return v, refused(http.StatusNotFound)
+	}
+	return v, err
 }
 
 func sortedKeys(m map[string]bool) []string {
@@ -375,8 +415,3 @@ func sortedKeys(m map[string]bool) []string {
 	sort.Strings(out)
 	return out
 }
-
-var (
-	errAnswered = errors.New("already answered")
-	errExpired  = errors.New("expired")
-)

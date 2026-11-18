@@ -23,7 +23,7 @@ The product was called Agent Mail. Until the aliases are removed, the old names 
 
 - Go service and CLI share one module; SQLite is local to the service and persisted on a named Docker volume. SQLite keeps deployment small and avoids a separate database service.
 - Every API call uses a bearer credential mapped server side to exactly one role. Existing `SWITCHBOARD_TOKENS=role=token,...` deployments are imported into SQLite at startup. New roles can enroll at runtime when the operator sets an external `SWITCHBOARD_ENROLLMENT_TOKEN`; senders cannot impersonate another sender, and recipients must be registered roles.
-- The dashboard is an administrator view of all roles and mailboxes. Its only writes are question answers and question settings. It uses same-origin requests and never receives role credentials; message and question content is rendered as text.
+- The dashboard is an administrator view of all roles and mailboxes. Its only writes are question and permission answers, question settings and role revokes. It uses same-origin requests and never receives role credentials; message and question content is rendered as text.
 - Watch is durable long polling. The cursor is the last delivered global message ID. Multiple watchers can replay from the same cursor and receive duplicate notifications; consumers should deduplicate by message ID. A watch only reports new mail; it does not mark mail read or wake a stopped LLM.
 
 ## Message and status semantics
@@ -89,7 +89,7 @@ Nothing deploys until such a job exists. Host-specific values are not in this re
 
 ### Protected administrator dashboard
 
-The dashboard shows all messages, sessions and registered role names, and lets the administrator answer questions, edit question settings and revoke or restore roles (설정 tab, 역할 table: 끊기 / 되살리기, each behind a confirm). Who may use it is set by `SWITCHBOARD_ADMIN_AUTH`:
+The dashboard shows all messages, sessions and registered role names, and lets the administrator answer questions and permission requests, edit question settings and revoke or restore roles (설정 tab, 역할 table: 끊기 / 되살리기, each behind a confirm). Who may use it is set by `SWITCHBOARD_ADMIN_AUTH`:
 
 | `SWITCHBOARD_ADMIN_AUTH` | `SWITCHBOARD_ADMIN_PROXY_TOKEN` | Admin access |
 |---|---|---|
@@ -198,6 +198,8 @@ All `/api/*` routes except registration require `Authorization: Bearer <role-tok
   - `POST /api/permissions/{id}/answer` with `{decision: "allow"|"deny", note?}` (note up to 500 bytes): 200 with the request, 400 bad decision, 404 unknown ID, 403 caller may not answer (anyone but a boss of another base, the parent included), 409 already answered, 410 expired. The requester receives an **urgent** mail (`permission allowed: Bash` / `permission denied: Bash`, `task_id` = request ID).
   - `GET /api/permissions/{id}` (requester's base, parent or boss; else 403, unknown 404) and `GET /api/permissions[?pending=1]` (requests of the caller's base and those it is parent of or may answer, newest 100; `can_answer` marks the ones the caller can answer now).
   - CLI: `switchboard permission request --tool NAME --summary TEXT`, `permission show ID`, `permission answer ID --decision allow|deny [--note TEXT]`, `permission list [--pending]`, each with `--json`.
+  - Admin (admin auth; the answer also needs the admin write guard): `GET /api/admin/permissions[?status=pending|closed|allowed|denied|expired][&limit=N]` returns `{permissions:[…]}` newest first (default 100, at most 500; `closed` is everything no longer pending), `GET /api/admin/permissions/{id}` one request; both add `requester_base`, `parent_base` and `declared_parent` to the role view and set `can_answer` for every pending request. `POST /api/admin/permissions/{id}/answer` with `{decision, note?}` goes through the same server function as the role answer (`answered_by` is `dashboard`): the same row, requester mail, JSON and 400/404/409/410 codes.
+  - Dashboard: the 권한 요청 tab lists pending requests (count on the tab) with every stored field and 허용 / 거절 buttons with a note (each behind a confirm), and the closed ones (allowed, denied, expired) with who answered and when.
 - **Question settings** (admin proxy only). Per-role settings for remote questions: `can_ask`, `watchers` (up to 20 role names) and `discord`. A target is `default` (always present, created as `can_ask=false, watchers=[], discord=false`, cannot be deleted), an exact role such as `svc/coordinator` (it also covers `svc/coordinator-N`), or a prefix such as `svc/*` (every role starting with `svc/`). A role resolves to its exact entry (after stripping `-N`), else the longest matching prefix, else `default`.
   - `GET /api/admin/question-settings` returns `[{target, can_ask, watchers, discord, updated_at}]` with `default` first.
   - `PUT /api/admin/question-settings/{target}` with `{can_ask, watchers, discord}` (missing fields are `false`/`[]`, duplicate watchers are dropped, unknown fields are 400) creates or replaces the entry and returns the row. `DELETE /api/admin/question-settings/{target}` removes it (`default` is 400, a missing entry 404). An invalid target or watcher name, or more than 20 watchers, is 400. Both writes need the admin write guard above.

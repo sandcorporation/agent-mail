@@ -11,8 +11,8 @@ import (
 
 // Page serves the admin overview. It only calls same-origin /api/admin/*
 // endpoints, sends no Authorization header and stores nothing in the browser.
-// Its only writes are question answers, question settings and role revokes
-// and restores, sent with the
+// Its only writes are question answers, permission answers, question
+// settings and role revokes and restores, sent with the
 // admin write guard headers. Message and question fields are rendered as text
 // nodes, never as HTML.
 func Page(w http.ResponseWriter, r *http.Request) {
@@ -110,6 +110,14 @@ tr.row-blocked td:first-child{box-shadow:inset 3px 0 var(--blocked)}
 .st-idle{color:var(--idle)}.st-busy{color:var(--busy);font-weight:600}.st-compacting{color:var(--compacting);font-weight:600}
 .st-error{color:var(--error);font-weight:600}.st-blocked{color:var(--blocked);font-weight:600}
 .st-offline,.st-unknown{color:var(--offline)}
+.pill.allowed{color:var(--idle);background:var(--idle-bg)}.pill.denied{color:var(--error);background:var(--surface-2)}.pill.expired{color:var(--offline);background:var(--offline-bg)}
+.pcard.allowed,.pcard.denied,.pcard.expired{background:var(--surface-2)}
+.pcard summary{cursor:pointer;overflow-wrap:anywhere}
+.pdl{display:grid;grid-template-columns:auto 1fr;gap:var(--s1) var(--s3);margin:var(--s2) 0;font-size:.9em}
+.pdl dt{color:var(--muted)}.pdl dd{margin:0;overflow-wrap:anywhere;white-space:pre-wrap;min-width:0}
+.panswer{display:flex;gap:var(--s2);align-items:end;flex-wrap:wrap}
+.panswer label{display:flex;flex-direction:column;gap:var(--s1);flex:1 1 14rem;min-width:0;font-size:.9em}
+.panswer input{width:100%;min-width:0}
 .qcard{scroll-margin-top:3.5rem}
 .qcard.focus{outline:2px solid var(--accent);outline-offset:2px}
 .qcard.answered,.qcard.withdrawn{background:var(--surface-2)}
@@ -267,8 +275,12 @@ table.stack tbody tr:hover td{background:none}
 <div id="list"></div>
 </section>
 <section id="panel-permissions" role="tabpanel" aria-labelledby="tab-permissions" tabindex="0" class="card" hidden>
-<div class="toolbar"><h2>권한 요청</h2></div>
-<p class="empty">준비 중</p>
+<div class="toolbar"><h2>권한 요청</h2><button id="reloadPerms">새로 고침</button><span id="permsNote" class="muted" role="status" aria-live="polite"></span></div>
+<div id="permsMsg" class="msg" role="status" aria-live="polite"></div>
+<h3>대기</h3>
+<div id="permPending"></div>
+<h3>지난 기록</h3>
+<div id="permHistory"></div>
 </section>
 <section id="panel-questions" role="tabpanel" aria-labelledby="tab-questions" tabindex="0" class="card" hidden>
 <div class="toolbar"><h2>질문</h2>
@@ -893,6 +905,82 @@ async function loadRoles(){
 }
 $('reloadRoles').onclick=loadRoles;
 tabLoaders.settings=()=>{loadSettings();loadRoles()};
+// ---- 권한 요청 ----
+// GET /api/admin/permissions?status=pending and ?status=closed; answers go to
+// POST /api/admin/permissions/{id}/answer, the same server function as
+// permission answer. Every field is a text node.
+const permStatusLabel={pending:'대기',allowed:'허용',denied:'거절',expired:'만료'};
+function permFields(v){
+  const dl=node('dl','','pdl');
+  const rows=[['ID',v.id],['요청한 역할',v.requester],['기본 역할',v.requester_base],['도구',v.tool],['요약',v.summary],
+    ['부모',v.parent||'-'],['부모 기본 역할',v.parent_base||'-'],['보고된 부모',v.declared_parent||'-'],
+    ['요청',when(v.created_at)],['만료',when(v.expires_at)],['결과',permStatusLabel[v.status]||v.status]];
+  if(v.decision)rows.push(['결정',v.decision]);
+  if(v.note)rows.push(['메모',v.note]);
+  if(v.answered_by)rows.push(['답한 쪽',v.answered_by],['답한 때',when(v.answered_at)]);
+  for(const [k,t] of rows)dl.append(node('dt',k),node('dd',t));
+  return dl;
+}
+function permHead(v){
+  const h=node('h3','');
+  h.append(node('span',permStatusLabel[v.status]||v.status,'pill '+v.status),document.createTextNode(v.tool+' · '+v.requester));
+  return h;
+}
+function permAnswerForm(v){
+  const form=node('form','','panswer');
+  const lab=node('label','메모');const note=node('input','');note.maxLength=500;note.autocomplete='off';lab.append(note);
+  const allow=node('button','허용');allow.type='button';
+  const deny=node('button','거절');deny.type='button';
+  const send=async decision=>{
+    const word=decision==='allow'?'허용':'거절';
+    if(!confirm(v.requester+'의 '+v.tool+' 요청을 '+word+'할까요? 답은 바꿀 수 없습니다.'))return;
+    allow.disabled=deny.disabled=true;
+    try{
+      await apiSend('POST','permissions/'+encodeURIComponent(v.id)+'/answer',{decision:decision,note:note.value});
+      setMsg($('permsMsg'),v.id+' '+word+'했습니다.','ok');loadPermissions();
+    }catch(e){setMsg($('permsMsg'),e.message,'err');allow.disabled=deny.disabled=false}
+  };
+  allow.onclick=()=>send('allow');deny.onclick=()=>send('deny');
+  form.onsubmit=e=>e.preventDefault();
+  form.append(lab,allow,deny);
+  return form;
+}
+function permPendingCard(v){
+  const c=node('article','','card pcard pending');
+  c.append(permHead(v),permFields(v));
+  if(v.can_answer)c.append(permAnswerForm(v));
+  return c;
+}
+function permHistoryCard(v){
+  const c=node('details','','card pcard '+v.status),sum=node('summary','');
+  sum.append(node('span',permStatusLabel[v.status]||v.status,'pill '+v.status),
+    document.createTextNode(v.tool+' · '+v.requester+' · '+when(v.created_at)+(v.answered_by?' · '+v.answered_by:'')));
+  c.append(sum,permFields(v));
+  return c;
+}
+let permTimer=0;
+async function loadPermissions(){
+  $('permsNote').textContent='불러오는 중…';
+  try{
+    const [open,closed]=await Promise.all([api('permissions?status=pending'),api('permissions?status=closed&limit=200')]);
+    const p=open.permissions,h=closed.permissions;
+    $('permPending').replaceChildren(...p.map(permPendingCard));
+    if(!p.length)$('permPending').append(node('p','대기 중인 요청 없음','empty'));
+    $('permHistory').replaceChildren(...h.map(permHistoryCard));
+    if(!h.length)$('permHistory').append(node('p','기록 없음','empty'));
+    setTabCount('permissions',p.length||null);
+    $('permsNote').textContent='대기 '+p.length+' · 기록 '+h.length+'(최대 200)';
+    // A pending request turns expired by time alone: reload at the next expiry.
+    clearTimeout(permTimer);
+    const next=Math.min(...p.map(v=>new Date(v.expires_at).getTime()));
+    if(isFinite(next))permTimer=setTimeout(loadPermissions,Math.max(1000,next-Date.now()+500));
+  }catch(e){$('permsNote').textContent=e.message}
+}
+async function refreshPermissionCount(){
+  try{const p=(await api('permissions?status=pending')).permissions;setTabCount('permissions',p.length||null)}catch(e){}
+}
+$('reloadPerms').onclick=()=>{setMsg($('permsMsg'),'');loadPermissions()};
+tabLoaders.permissions=loadPermissions;
 function showTab(name){
   for(const n of tabNames){
     const on=n===name,t=$('tab-'+n);
@@ -953,6 +1041,7 @@ loadMe();
 route();
 if(!tabLoaded.has('questions'))refreshQuestionCount();
 if(!tabLoaded.has('metrics'))refreshMetricsCount();
+if(!tabLoaded.has('permissions'))refreshPermissionCount();
 </script>
 </body>
 </html>

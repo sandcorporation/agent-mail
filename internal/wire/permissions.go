@@ -19,7 +19,20 @@ type PermissionView struct {
 	AnsweredAt    *time.Time `json:"answered_at,omitempty"`
 	CanAnswer     bool       `json:"can_answer"` // the caller may answer it now
 
-	RequesterBase, ParentBase string `json:"-"` // server-side only
+	RequesterBase, ParentBase, DeclaredParent string `json:"-"` // server-side only
+}
+
+// AdminPermission is the dashboard's view of one request: the role view plus
+// the stored bases and the parent the requester's slot reported.
+type AdminPermission struct {
+	PermissionView
+	RequesterBaseOut  string `json:"requester_base"`
+	ParentBaseOut     string `json:"parent_base,omitempty"`
+	DeclaredParentOut string `json:"declared_parent,omitempty"`
+}
+
+type AdminPermissionList struct {
+	Permissions []AdminPermission `json:"permissions"`
 }
 
 type PermissionList struct {

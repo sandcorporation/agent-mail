@@ -335,6 +335,10 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 		s.asks().AdminQuestionsAPI(w, r, strings.TrimPrefix(rest, "/"))
 		return
 	}
+	if rest, ok := strings.CutPrefix(path, "permissions"); ok && (rest == "" || strings.HasPrefix(rest, "/")) {
+		s.asks().AdminPermissionsAPI(w, r, strings.TrimPrefix(rest, "/"))
+		return
+	}
 	if rest, ok := strings.CutPrefix(path, "roles"); ok && (rest == "" || strings.HasPrefix(rest, "/")) {
 		s.ids().AdminRolesAPI(w, r, strings.TrimPrefix(rest, "/"))
 		return
