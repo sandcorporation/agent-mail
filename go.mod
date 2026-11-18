@@ -3,6 +3,7 @@ module github.com/sandcorporation/agent-mail
 go 1.24.0
 
 require (
+	github.com/coder/websocket v1.8.13
 	github.com/coreos/go-oidc/v3 v3.17.0
 	golang.org/x/crypto v0.40.0
 	golang.org/x/oauth2 v0.32.0

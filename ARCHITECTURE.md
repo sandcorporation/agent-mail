@@ -7,7 +7,7 @@ The Go HTTP server authenticates each request by hashing the bearer token (SHA-2
 | Package | Holds | Imports (internal) |
 |---|---|---|
 | `cmd/agent-mail` | `main` only: no arguments runs the server, anything else the client; the `-X main.version` ldflag | `server`, `cli`, `adminauth` |
-| `internal/server` | composition: settings from the environment → `Server`, the router (`/api/`, `/api/admin/`, `/auth/`, `/`, `/health`), role auth, the admin write guard, the per-request service builders (`services.go`), the background sweep (`stall.go`) | every domain package |
+| `internal/server` | composition: settings from the environment → `Server`, the router (`/api/`, `/api/admin/`, `/auth/`, `/`, `/health`), role auth, the admin write guard, the per-request service builders (`services.go`), the background sweep (`stall.go`), the live dashboard socket and the change publish around `/api/` (`live.go`) | every domain package, `live` |
 | `internal/identity` | roles, token hashing and revoke, `-N` slots and resume, groups and boss rules, whoami, invites and join | `config`, `store`, `wire` |
 | `internal/adminauth` | admin modes, sessions, users, login and its rate limit, OIDC, proxy; the `admin` CLI commands | `cli`, `config`, `store` |
 | `internal/mail` | messages, labels, the event hub, SSE and long poll, idempotency, `answered` | `identity`, `store`, `wire` |
@@ -16,6 +16,7 @@ The Go HTTP server authenticates each request by hashing the bearer token (SHA-2
 | `internal/insight` | metrics, metrics alerts, the Discord question notice | `config`, `identity`, `mail`, `store`, `wire` |
 | `internal/dashboard` | the admin page (HTML, CSS and JS in one document) | `config` |
 | `internal/cli` | the client: every subcommand, profiles, the HTTP client | `config`, `wire` |
+| `internal/live` | the dashboard change bus: numbered change kinds, a ring for resume, bounded per-client queues that drop slow clients | none |
 | `internal/wire` | the HTTP API shapes and the checks client and server share | none |
 | `internal/store` | `Open`, the schema and its additive migrations, `InTx`, token hashing | none |
 | `internal/config` | env names and their old aliases, header and profile-folder prefixes, the product name | none |

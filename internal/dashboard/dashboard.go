@@ -85,6 +85,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13.5px/1.55 var(--mono);mar
 .wide{overflow-x:auto}
 .head{display:flex;align-items:center;gap:var(--s3);padding:var(--s2) 0 var(--s3)}
 .who{margin-left:auto;display:flex;align-items:center;gap:var(--s2);min-width:0}
+.live{width:.55rem;height:.55rem;border-radius:50%;background:var(--offline);flex:none}.live.on{background:var(--idle)}
 #whoName{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:12rem}
 .toolbar{display:flex;gap:var(--s2) var(--s3);align-items:center;flex-wrap:wrap;margin-bottom:var(--s3)}
 .toolbar [role=status],.toolbar .muted{font-size:.85em}
@@ -211,7 +212,7 @@ table.stack tbody tr:hover td{background:none}
 </style>
 </head>
 <body>
-<header class="head"><h1>` + headerText + `</h1><span class="who"><span id="whoName" class="muted"></span><button type="button" id="logout" hidden>로그아웃</button></span></header>
+<header class="head"><h1>` + headerText + `</h1><span class="who"><span id="live" class="live" title="실시간 연결 끊김"></span><span id="whoName" class="muted"></span><button type="button" id="logout" hidden>로그아웃</button></span></header>
 <nav id="tabs" class="tabs" role="tablist" aria-label="탭">
 <button type="button" role="tab" id="tab-progress" data-tab="progress" aria-controls="panel-progress" aria-selected="true" tabindex="0"><span class="tab-name">진행</span><span class="tab-count"></span></button>
 <button type="button" role="tab" id="tab-sessions" data-tab="sessions" aria-controls="panel-sessions" aria-selected="false" tabindex="-1"><span class="tab-name">세션</span><span class="tab-count"></span></button>
@@ -981,7 +982,52 @@ async function refreshPermissionCount(){
 }
 $('reloadPerms').onclick=()=>{setMsg($('permsMsg'),'');loadPermissions()};
 tabLoaders.permissions=loadPermissions;
+// ---- 실시간 ----
+// GET /api/admin/live (WebSocket) sends {type:'hello',boot,seq,reset,kinds}
+// and {type:'change',seq,kinds}; kinds are tab names. The shown tab reloads
+// (not while a field in it has focus), the others reload when next shown.
+// Reconnects back off exponentially (1s to 30s) and resume with boot+after.
+const liveReload={progress:loadProgress,sessions:loadSessions,metrics:loadMetrics,mail:load,permissions:loadPermissions,questions:loadQuestions,settings:()=>{loadSettings();loadRoles()}};
+const liveCounts={questions:refreshQuestionCount,permissions:refreshPermissionCount,metrics:refreshMetricsCount};
+let liveBoot='',liveSeq=0,liveDelay=1000,liveDirty=new Set(),liveStale=new Set(),liveTimer=0;
+function liveMark(kinds){
+  for(const k of kinds){
+    if(!liveReload[k])continue;
+    if(k===curTab)liveDirty.add(k);
+    else{if(tabLoaded.has(k))liveStale.add(k);if(liveCounts[k])liveCounts[k]()}
+  }
+  if(liveDirty.size&&!liveTimer)liveTimer=setTimeout(liveFlush,300);
+}
+function liveFlush(){
+  liveTimer=0;
+  const a=document.activeElement,busy=a&&a.matches&&a.matches('input,textarea,select')&&$('panel-'+curTab).contains(a);
+  if(busy){liveTimer=setTimeout(liveFlush,2000);return}
+  for(const k of liveDirty){if(k===curTab)liveReload[k]();else if(tabLoaded.has(k))liveStale.add(k)}
+  liveDirty.clear();
+}
+function liveConnect(){
+  const u=new URL('/api/admin/live',location.href);
+  u.protocol=location.protocol==='https:'?'wss:':'ws:';
+  if(liveBoot){u.searchParams.set('boot',liveBoot);u.searchParams.set('after',String(liveSeq))}
+  let ws;
+  try{ws=new WebSocket(u)}catch(e){liveRetry();return}
+  ws.onmessage=e=>{
+    let m;try{m=JSON.parse(e.data)}catch(err){return}
+    if(m.type==='hello'){
+      liveDelay=1000;$('live').className='live on';$('live').title='실시간';
+      const all=m.reset;liveBoot=m.boot;liveSeq=m.seq;
+      liveMark(all?Object.keys(liveReload):m.kinds||[]);
+    }else if(m.type==='change'){liveSeq=m.seq;liveMark(m.kinds||[])}
+  };
+  ws.onclose=()=>{$('live').className='live';$('live').title='실시간 연결 끊김';liveRetry()};
+}
+function liveRetry(){
+  const d=liveDelay;liveDelay=Math.min(liveDelay*2,30000);
+  setTimeout(liveConnect,d/2+Math.random()*d/2);
+}
+let curTab='';
 function showTab(name){
+  curTab=name;
   for(const n of tabNames){
     const on=n===name,t=$('tab-'+n);
     t.setAttribute('aria-selected',on?'true':'false');
@@ -989,6 +1035,8 @@ function showTab(name){
     $('panel-'+n).hidden=!on;
   }
   if(!tabLoaded.has(name)){tabLoaded.add(name);if(tabLoaders[name])tabLoaders[name]()}
+  else if(liveStale.has(name))liveReload[name]();
+  liveStale.delete(name);
 }
 // Routes: #progress #sessions #metrics #mail #permissions #questions #settings, #decisions (질문 tab,
 // 결정 view) and #q=<id> (질문 + focusQuestion). No hash or an unknown one shows 진행.
@@ -1042,6 +1090,7 @@ route();
 if(!tabLoaded.has('questions'))refreshQuestionCount();
 if(!tabLoaded.has('metrics'))refreshMetricsCount();
 if(!tabLoaded.has('permissions'))refreshPermissionCount();
+liveConnect();
 </script>
 </body>
 </html>

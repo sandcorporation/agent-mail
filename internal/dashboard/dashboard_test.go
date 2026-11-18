@@ -152,3 +152,24 @@ func TestDashboardPermissionsTab(t *testing.T) {
 		t.Fatal("permissions tab is still a placeholder")
 	}
 }
+
+func TestDashboardLiveUpdates(t *testing.T) {
+	w := httptest.NewRecorder()
+	Page(w, httptest.NewRequest("GET", "/", nil))
+	body := w.Body.String()
+	for _, want := range []string{
+		"new URL('/api/admin/live',location.href)", "u.protocol=location.protocol==='https:'?'wss:':'ws:'",
+		"u.searchParams.set('boot',liveBoot);u.searchParams.set('after',String(liveSeq))",
+		"liveDelay=Math.min(liveDelay*2,30000)", "m.type==='hello'", "m.type==='change'", "liveConnect();",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("live updates missing %q", want)
+		}
+	}
+	// Every tab has a live reload.
+	for _, name := range []string{"progress", "sessions", "metrics", "mail", "permissions", "questions", "settings"} {
+		if !regexp.MustCompile(`liveReload=\{[^}]*\b` + name + `:`).MatchString(body) {
+			t.Fatalf("no live reload for %s", name)
+		}
+	}
+}
