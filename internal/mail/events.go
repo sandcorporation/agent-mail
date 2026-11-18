@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 // Hub wakes event subscribers when mail is stored for their role. A wake-up

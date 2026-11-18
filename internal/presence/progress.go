@@ -6,16 +6,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/identity"
-	"github.com/sandcorporation/agent-mail/internal/mail"
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/identity"
+	"github.com/sandcorporation/switchboard/internal/mail"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 // Progress view (the dashboard's 진행 tab, GET /api/progress for boss roles).
 //
 // It answers, per service, "what is it doing now, and when did we last hear
-// from it?" from data Agent Mail already holds: live sessions and mail. A service is the part of a role before the first "/" (the whole name
-// when there is none): agent-mail/coordinator-1 belongs to agent-mail.
+// from it?" from data Switchboard already holds: live sessions and mail. A service is the part of a role before the first "/" (the whole name
+// when there is none): switchboard/coordinator-1 belongs to switchboard.
 //
 // Mail from the system sender is not activity of its service. A role is a
 // boss role when its name or its base is in SWITCHBOARD_BOSS_ROLES.

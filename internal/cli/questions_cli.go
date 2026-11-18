@@ -8,10 +8,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
-// cliQuestion serves agent-mail question ask|show|list|answer|withdraw.
+// cliQuestion serves switchboard question ask|show|list|answer|withdraw.
 func cliQuestion(c Config, p parsedArgs) (int, error) {
 	const actions = "ask, show, list, answer, withdraw"
 	if len(p.pos) == 0 {

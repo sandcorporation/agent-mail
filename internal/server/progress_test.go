@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/identity"
-	"github.com/sandcorporation/agent-mail/internal/insight"
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/identity"
+	"github.com/sandcorporation/switchboard/internal/insight"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 func mustProgress(t *testing.T, s *Server) wire.ProgressReport {
@@ -159,7 +159,7 @@ func TestProgressAPI(t *testing.T) {
 	}
 	mailAt(t, s, flowRow{sender: "b", recipient: "a", subject: "hi", at: time.Now()})
 	r := httptest.NewRequest("GET", "/api/admin/progress", nil)
-	r.Header.Set("X-Agent-Mail-Admin", "proxy-secret")
+	r.Header.Set("X-Switchboard-Admin", "proxy-secret")
 	aw := httptest.NewRecorder()
 	s.api(aw, r)
 	if aw.Code != 200 {
@@ -190,7 +190,7 @@ func TestAdminMessagesTaskAndIDFilter(t *testing.T) {
 	b := mailAt(t, s, flowRow{sender: "b", recipient: "a", task: "T-1", at: now})
 	get := func(q string) []wire.Message {
 		r := httptest.NewRequest("GET", "/api/admin/messages?"+q, nil)
-		r.Header.Set("X-Agent-Mail-Admin", "proxy-secret")
+		r.Header.Set("X-Switchboard-Admin", "proxy-secret")
 		w := httptest.NewRecorder()
 		s.api(w, r)
 		var out []wire.Message

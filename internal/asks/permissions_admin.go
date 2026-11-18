@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 // AdminPermissionsAPI serves the dashboard's permission endpoints behind the

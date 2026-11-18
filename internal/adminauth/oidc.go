@@ -28,7 +28,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
-	"github.com/sandcorporation/agent-mail/internal/config"
+	"github.com/sandcorporation/switchboard/internal/config"
 	"golang.org/x/oauth2"
 )
 

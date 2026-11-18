@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sandcorporation/agent-mail/internal/identity"
-	"github.com/sandcorporation/agent-mail/internal/store"
+	"github.com/sandcorporation/switchboard/internal/identity"
+	"github.com/sandcorporation/switchboard/internal/store"
 )
 
 // legacyRolesDB is a database written by a binary from before hashed tokens:

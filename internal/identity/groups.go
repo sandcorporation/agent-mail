@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 // Collaborator groups and per-group bosses (#71 §2, §4).

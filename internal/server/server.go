@@ -18,17 +18,17 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/adminauth"
-	"github.com/sandcorporation/agent-mail/internal/asks"
-	"github.com/sandcorporation/agent-mail/internal/config"
-	"github.com/sandcorporation/agent-mail/internal/dashboard"
-	"github.com/sandcorporation/agent-mail/internal/identity"
-	"github.com/sandcorporation/agent-mail/internal/insight"
-	"github.com/sandcorporation/agent-mail/internal/live"
-	"github.com/sandcorporation/agent-mail/internal/mail"
-	"github.com/sandcorporation/agent-mail/internal/presence"
-	"github.com/sandcorporation/agent-mail/internal/store"
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/adminauth"
+	"github.com/sandcorporation/switchboard/internal/asks"
+	"github.com/sandcorporation/switchboard/internal/config"
+	"github.com/sandcorporation/switchboard/internal/dashboard"
+	"github.com/sandcorporation/switchboard/internal/identity"
+	"github.com/sandcorporation/switchboard/internal/insight"
+	"github.com/sandcorporation/switchboard/internal/live"
+	"github.com/sandcorporation/switchboard/internal/mail"
+	"github.com/sandcorporation/switchboard/internal/presence"
+	"github.com/sandcorporation/switchboard/internal/store"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 type Server struct {
@@ -45,7 +45,7 @@ type Server struct {
 	bossRoles   map[string]bool     // SWITCHBOARD_BOSS_ROLES; may answer any permission request
 	discord     *insight.Discord    // SWITCHBOARD_DISCORD_WEBHOOK; nil sends no question notices
 	alerts      *insight.Thresholds // SWITCHBOARD_ALERT_*; nil means insight.DefaultThresholds
-	oldHeaders  config.AliasCounter // requests that used an X-Agent-Mail-* header
+	oldHeaders  config.AliasCounter // requests that used an old-prefix header
 	groups      identity.Groups     // collaborator groups (internal/identity)
 	admin       adminauth.Config    // admin login settings (internal/adminauth)
 	loginLimits adminauth.Limiter   // failed admin logins
@@ -136,7 +136,7 @@ func Run(v string) {
 		_ = srv.Shutdown(ctx)
 		close(stopped)
 	}()
-	log.Printf("agent-mail listening on %s", addr)
+	log.Printf("switchboard listening on %s", addr)
 	if e = srv.ListenAndServe(); e != nil && !errors.Is(e, http.ErrServerClosed) {
 		log.Fatal(e)
 	}
@@ -391,7 +391,7 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 
 // adminWriteAllowed is the CSRF guard for every non-GET admin request. The
 // custom header forces a CORS preflight, which a cross-site page cannot pass.
-// dashboard is the X-Switchboard-Dashboard (or old X-Agent-Mail-Dashboard) value.
+// dashboard is the X-Switchboard-Dashboard (or old-prefix) header value.
 func adminWriteAllowed(r *http.Request, dashboard string) bool {
 	ct := strings.TrimSpace(strings.SplitN(r.Header.Get("Content-Type"), ";", 2)[0])
 	if !strings.EqualFold(ct, "application/json") || dashboard != "1" {

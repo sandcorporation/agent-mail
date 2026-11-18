@@ -1,4 +1,4 @@
-// Package cli is the client: every agent-mail / switchboard command, the
+// Package cli is the client: every switchboard command, the
 // credential profiles and the HTTP calls. It talks to the server over HTTP only.
 package cli
 
@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/config"
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/config"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 // Exit codes shared by every CLI command.
@@ -542,7 +542,7 @@ func configPath() string {
 }
 
 // profilePath returns <config>/switchboard/<file>. When only the old
-// <config>/agent-mail/ holds that profile, it is copied once into the new
+// <config>/<config.LegacyConfigDir>/ holds that profile, it is copied once into the new
 // directory (0700 directory, 0600 file) and the old file is left in place;
 // from then on only the new file is read and written. An existing new file
 // is never overwritten. If the copy fails, the old file is used as is.
@@ -1170,7 +1170,7 @@ func cliSlot(c Config, p parsedArgs) (int, error) {
 }
 
 // progName is the name the CLI was invoked as, for help and messages:
-// agent-mail when run under the old name, otherwise switchboard.
+// the old name (config.LegacyConfigDir) when run under it, otherwise switchboard.
 func progName() string {
 	base := strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe")
 	if base == config.LegacyConfigDir {

@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/config"
+	"github.com/sandcorporation/switchboard/internal/config"
 )
 
 const discordNoticeTimeout = 5 * time.Second

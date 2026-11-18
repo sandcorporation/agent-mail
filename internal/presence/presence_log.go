@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/identity"
+	"github.com/sandcorporation/switchboard/internal/identity"
 )
 
 // Presence history.

@@ -14,8 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/sandcorporation/agent-mail/internal/config"
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/config"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 // cliInvite is `switchboard invite --prefix P [--role R] [--ttl 72h]`: it

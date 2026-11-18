@@ -1,9 +1,9 @@
 package server
 
 import (
-	"github.com/sandcorporation/agent-mail/internal/asks"
-	"github.com/sandcorporation/agent-mail/internal/dashboard"
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/asks"
+	"github.com/sandcorporation/switchboard/internal/dashboard"
+	"github.com/sandcorporation/switchboard/internal/wire"
 
 	"bufio"
 	"encoding/json"
@@ -133,7 +133,7 @@ func TestDecisionFilters(t *testing.T) {
 			t.Errorf("%s: %d", bad, w.Code)
 		}
 	}
-	if w := adminRequest(s, "GET", "/api/admin/decisions", "", map[string]string{"X-Agent-Mail-Admin": "wrong"}); w.Code != 401 {
+	if w := adminRequest(s, "GET", "/api/admin/decisions", "", map[string]string{"X-Switchboard-Admin": "wrong"}); w.Code != 401 {
 		t.Fatalf("wrong admin secret: %d", w.Code)
 	}
 }

@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/config"
-	"github.com/sandcorporation/agent-mail/internal/identity"
-	"github.com/sandcorporation/agent-mail/internal/presence"
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/config"
+	"github.com/sandcorporation/switchboard/internal/identity"
+	"github.com/sandcorporation/switchboard/internal/presence"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 // Stall notices.

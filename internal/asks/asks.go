@@ -10,9 +10,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/identity"
-	"github.com/sandcorporation/agent-mail/internal/mail"
-	"github.com/sandcorporation/agent-mail/internal/store"
+	"github.com/sandcorporation/switchboard/internal/identity"
+	"github.com/sandcorporation/switchboard/internal/mail"
+	"github.com/sandcorporation/switchboard/internal/store"
 )
 
 // Config holds the ask settings.

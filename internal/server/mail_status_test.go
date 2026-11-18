@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 // statusViews returns the status of message id as each view shows it: the

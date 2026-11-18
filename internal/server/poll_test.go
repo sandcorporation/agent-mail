@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/cli"
-	"github.com/sandcorporation/agent-mail/internal/mail"
+	"github.com/sandcorporation/switchboard/internal/cli"
+	"github.com/sandcorporation/switchboard/internal/mail"
 )
 
 type pollResult struct {
@@ -26,7 +26,7 @@ func poll(t *testing.T, ctx context.Context, base, token, role, query string, he
 	t.Helper()
 	req, _ := http.NewRequestWithContext(ctx, "GET", base+"/api/events/poll"+query, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("X-Agent-Mail-Role", role)
+	req.Header.Set("X-Switchboard-Role", role)
 	for k, v := range header {
 		req.Header.Set(k, v)
 	}
@@ -179,7 +179,7 @@ func TestPollEndsOnDisconnectAndShutdown(t *testing.T) {
 		defer close(gone)
 		req, _ := http.NewRequestWithContext(ctx, "GET", base+"/api/events/poll?timeout=3000", nil)
 		req.Header.Set("Authorization", "Bearer secret-b")
-		req.Header.Set("X-Agent-Mail-Role", "b")
+		req.Header.Set("X-Switchboard-Role", "b")
 		if resp, err := http.DefaultClient.Do(req); err == nil {
 			resp.Body.Close()
 		}

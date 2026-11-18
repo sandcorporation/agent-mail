@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 // openIDs lists the open directive ids of every service, ascending.

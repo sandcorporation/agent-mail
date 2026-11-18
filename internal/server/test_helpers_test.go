@@ -4,8 +4,8 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/sandcorporation/agent-mail/internal/adminauth"
-	"github.com/sandcorporation/agent-mail/internal/cli"
+	"github.com/sandcorporation/switchboard/internal/adminauth"
+	"github.com/sandcorporation/switchboard/internal/cli"
 )
 
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
@@ -41,7 +41,7 @@ type discordPayload struct {
 	} `json:"allowed_mentions"`
 }
 
-// runMain is cmd/agent-mail's main: the server without arguments, else the
+// runMain is cmd/switchboard's main: the server without arguments, else the
 // client.
 func runMain() {
 	args := append([]string(nil), os.Args[1:]...)

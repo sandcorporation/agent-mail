@@ -7,13 +7,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sandcorporation/agent-mail/internal/asks"
-	"github.com/sandcorporation/agent-mail/internal/store"
+	"github.com/sandcorporation/switchboard/internal/asks"
+	"github.com/sandcorporation/switchboard/internal/store"
 )
 
 func adminRequest(s *Server, method, path, body string, headers map[string]string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, path, bytes.NewBufferString(body))
-	r.Header.Set("X-Agent-Mail-Admin", "proxy-secret")
+	r.Header.Set("X-Switchboard-Admin", "proxy-secret")
 	for k, v := range headers {
 		r.Header.Set(k, v)
 	}
@@ -22,7 +22,7 @@ func adminRequest(s *Server, method, path, body string, headers map[string]strin
 	return w
 }
 
-var dashboardHeaders = map[string]string{"Content-Type": "application/json", "X-Agent-Mail-Dashboard": "1", "Sec-Fetch-Site": "same-origin"}
+var dashboardHeaders = map[string]string{"Content-Type": "application/json", "X-Switchboard-Dashboard": "1", "Sec-Fetch-Site": "same-origin"}
 
 func adminWrite(s *Server, method, path, body string) *httptest.ResponseRecorder {
 	return adminRequest(s, method, path, body, dashboardHeaders)
@@ -161,7 +161,7 @@ func TestAdminWriteGuard(t *testing.T) {
 		return h
 	}
 	forbidden := map[string]map[string]string{
-		"no dashboard header": without("X-Agent-Mail-Dashboard", nil),
+		"no dashboard header": without("X-Switchboard-Dashboard", nil),
 		"no content type":     without("Content-Type", nil),
 		"wrong content type":  without("", map[string]string{"Content-Type": "text/plain"}),
 		"cross-site":          without("", map[string]string{"Sec-Fetch-Site": "cross-site"}),

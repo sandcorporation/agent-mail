@@ -6,7 +6,7 @@ The Go HTTP server authenticates each request by hashing the bearer token (SHA-2
 
 | Package | Holds | Imports (internal) |
 |---|---|---|
-| `cmd/agent-mail` | `main` only: no arguments runs the server, anything else the client; the `-X main.version` ldflag | `server`, `cli`, `adminauth` |
+| `cmd/switchboard` | `main` only: no arguments runs the server, anything else the client; the `-X main.version` ldflag | `server`, `cli`, `adminauth` |
 | `internal/server` | composition: settings from the environment → `Server`, the router (`/api/`, `/api/admin/`, `/auth/`, `/`, `/health`), role auth, the admin write guard, the per-request service builders (`services.go`), the background sweep (`stall.go`), the live dashboard socket and the change publish around `/api/` (`live.go`) | every domain package, `live` |
 | `internal/identity` | roles, token hashing and revoke, `-N` slots and resume, groups and boss rules, whoami, invites and join | `config`, `store`, `wire` |
 | `internal/adminauth` | admin modes, sessions, users, login and its rate limit, OIDC, proxy; the `admin` CLI commands | `cli`, `config`, `store` |

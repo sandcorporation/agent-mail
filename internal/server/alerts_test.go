@@ -1,7 +1,7 @@
 package server
 
 import (
-	"github.com/sandcorporation/agent-mail/internal/insight"
+	"github.com/sandcorporation/switchboard/internal/insight"
 
 	"sort"
 	"strings"
@@ -80,7 +80,7 @@ func TestAlertsEachKindOncePerDay(t *testing.T) {
 		t.Fatalf("alerts:\n%s", strings.Join(got, "\n"))
 	}
 	for _, m := range systemMail(t, s, "secret-a", "a") {
-		if m.Priority != "normal" || !strings.Contains(m.Body, "agent-mail metrics") || !strings.Contains(m.Body, "#metrics") {
+		if m.Priority != "normal" || !strings.Contains(m.Body, "switchboard metrics") || !strings.Contains(m.Body, "#metrics") {
 			t.Fatalf("alert mail: %+v", m)
 		}
 		if strings.HasPrefix(m.Subject, "[지표] pending") {

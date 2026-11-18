@@ -2,7 +2,7 @@
 
 // Deploys the production branch head only (job branch specifier */production).
 //
-//   main push -> GitHub Actions promote.yml: checks || image (ghcr.io/sandcorporation/agent-mail:<sha>) -> production fast-forward
+//   main push -> GitHub Actions promote.yml: checks || image (see images below, tagged <sha>) -> production fast-forward
 //   production push -> this job: no build, no tests. Waits briefly for the image of that sha, pulls it on the
 //                      deploy node, recreates the service, waits for the container health check and runs /health.
 //                      If the new container is not healthy it switches back to the previous successful image.
@@ -15,12 +15,12 @@
 sandcorpDeploy(
   name: 'Agent Mail',
   deployFrom: 'production',
-  deployNode: 'agent-mail-deploy',
-  images: [[repo: 'ghcr.io/sandcorporation/agent-mail', envVar: 'AGENT_MAIL_IMAGE']],
+  deployNode: 'agent-mail-deploy', // 대장 결정 전 유지: node label on the deploy host
+  images: [[repo: 'ghcr.io/sandcorporation/agent-mail', envVar: 'AGENT_MAIL_IMAGE']], // 대장 결정 전 유지: image.yml pushes both names
   imageWaitHint: 'https://github.com/sandcorporation/switchboard/actions/workflows/promote.yml',
-  composeProject: 'agent-mail',
+  composeProject: 'agent-mail', // 대장 결정 전 유지: the data volume belongs to this project
   composeFiles: ['compose.yaml'],
-  service: 'agent-mail',
+  service: 'agent-mail', // 대장 결정 전 유지: must match compose.yaml
   healthCmd: 'wget -q -O - http://127.0.0.1:8080/health',
   // Stop before touching the running service if the deploy .env lacks these. Without MAIL_BIND_ADDRESS Compose
   // would silently bind to loopback and every remote client would lose the mailbox.

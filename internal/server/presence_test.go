@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/cli"
-	"github.com/sandcorporation/agent-mail/internal/presence"
-	"github.com/sandcorporation/agent-mail/internal/store"
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/cli"
+	"github.com/sandcorporation/switchboard/internal/presence"
+	"github.com/sandcorporation/switchboard/internal/store"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 // presenceServer is slotServer with the lease derived from presence settings:
@@ -288,7 +288,7 @@ func TestPresenceAuth(t *testing.T) {
 	for secret, code := range map[string]int{"": 401, "wrong-secret": 401, "proxy-secret": 200} {
 		r := httptest.NewRequest("GET", "/api/admin/presence?role=team/worker", nil)
 		if secret != "" {
-			r.Header.Set("X-Agent-Mail-Admin", secret)
+			r.Header.Set("X-Switchboard-Admin", secret)
 		}
 		w := httptest.NewRecorder()
 		s.api(w, r)
@@ -412,7 +412,7 @@ func TestStatusCommand(t *testing.T) {
 	if out = h.mustRun(nil, "help", "slot"); !strings.Contains(out, "error:<kind>") || !strings.Contains(out, "blocked:<kind>") {
 		t.Fatalf("slot help: %q", out)
 	}
-	if out = h.mustRun(nil, "help", "status"); !strings.Contains(out, "agent-mail status [ROLE]") {
+	if out = h.mustRun(nil, "help", "status"); !strings.Contains(out, "switchboard status [ROLE]") {
 		t.Fatalf("status help: %q", out)
 	}
 }

@@ -1,7 +1,7 @@
 package server
 
 import (
-	"github.com/sandcorporation/agent-mail/internal/insight"
+	"github.com/sandcorporation/switchboard/internal/insight"
 
 	"bytes"
 	"encoding/json"
@@ -167,7 +167,7 @@ func TestDiscordLinkOmittedWithoutPublicURL(t *testing.T) {
 func TestDiscordUsernameAndAvatar(t *testing.T) {
 	hook := newWebhook(t)
 	s := discordQuestionServer(t, hook, map[string]string{
-		"AGENT_MAIL_DISCORD_USERNAME":   "agent-mail",
+		"AGENT_MAIL_DISCORD_USERNAME":   "mail-bot",
 		"AGENT_MAIL_DISCORD_AVATAR_URL": "https://mail.example/avatar.png",
 	})
 	askQuestionAs(t, s, workerToken, "team/worker-2", 201)
@@ -177,7 +177,7 @@ func TestDiscordUsernameAndAvatar(t *testing.T) {
 	if len(got) != 1 || json.Unmarshal(got[0], &p) != nil {
 		t.Fatalf("notice: %s", got)
 	}
-	if p.Username != "agent-mail" || p.AvatarURL != "https://mail.example/avatar.png" {
+	if p.Username != "mail-bot" || p.AvatarURL != "https://mail.example/avatar.png" {
 		t.Fatalf("payload %+v", p)
 	}
 }

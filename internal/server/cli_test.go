@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sandcorporation/agent-mail/internal/cli"
+	"github.com/sandcorporation/switchboard/internal/cli"
 )
 
 type cliResult struct {
@@ -56,7 +56,7 @@ func (h *cliHarness) run(env []string, args ...string) cliResult {
 	h.t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run=^TestCLIHelperProcess$")
 	argJSON, _ := json.Marshal(args)
-	cmd.Env = append(os.Environ(), "AGENT_MAIL_TEST_CLI=1", "AGENT_MAIL_CONFIG_DIR="+h.dir, "AGENT_MAIL_PROFILE=", "AGENT_MAIL_TEST_ARGS="+string(argJSON))
+	cmd.Env = append(os.Environ(), "SWITCHBOARD_TEST_CLI=1", "AGENT_MAIL_CONFIG_DIR="+h.dir, "AGENT_MAIL_PROFILE=", "SWITCHBOARD_TEST_ARGS="+string(argJSON))
 	cmd.Env = append(cmd.Env, clearNewEnv...)
 	cmd.Env = append(cmd.Env, env...)
 	var out, errOut strings.Builder
@@ -156,7 +156,7 @@ func TestUnknownOptionsAndCommandsAreUsageErrors(t *testing.T) {
 		{"--profile"},
 	} {
 		r := h.run(nil, args...)
-		if r.code != cli.ExitUsage || !strings.Contains(r.stderr, "agent-mail:") {
+		if r.code != cli.ExitUsage || !strings.Contains(r.stderr, "switchboard:") {
 			t.Fatalf("%v: code=%d stderr=%s", args, r.code, r.stderr)
 		}
 	}
@@ -232,7 +232,7 @@ func TestCommandHelpListsOptions(t *testing.T) {
 		"inbox":  {"--status STATUS", "--q TEXT"},
 		"wait":   {"--timeout SECONDS", "Exit codes"},
 		"config": {"--endpoint URL", "--token-file PATH"},
-		"reply":  {"Usage: agent-mail reply ID", "--body TEXT"},
+		"reply":  {"Usage: switchboard reply ID", "--body TEXT"},
 	} {
 		for _, form := range [][]string{{cmd, "--help"}, {"help", cmd}} {
 			out := h.mustRun(nil, form...)

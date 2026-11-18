@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/store"
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/store"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 // Invites and join (#71 §3).

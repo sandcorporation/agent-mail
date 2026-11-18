@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 func adminPermissionList(t *testing.T, s *Server, query string) []wire.AdminPermission {
@@ -48,7 +48,7 @@ func TestAdminPermissionAnswerMatchesBossAnswer(t *testing.T) {
 	if w := adminRequest(s, "POST", path, body, map[string]string{"Content-Type": "application/json"}); w.Code != 403 {
 		t.Fatalf("without the dashboard header: %d", w.Code)
 	}
-	if w := adminRequest(s, "POST", path, body, map[string]string{"Content-Type": "application/json", "X-Agent-Mail-Dashboard": "1", "Sec-Fetch-Site": "cross-site"}); w.Code != 403 {
+	if w := adminRequest(s, "POST", path, body, map[string]string{"Content-Type": "application/json", "X-Switchboard-Dashboard": "1", "Sec-Fetch-Site": "cross-site"}); w.Code != 403 {
 		t.Fatalf("cross-site: %d", w.Code)
 	}
 	if w := adminRequestWith(s, "POST", path, body, dashboardHeaders); w.Code != 401 {

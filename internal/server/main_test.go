@@ -14,10 +14,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sandcorporation/agent-mail/internal/dashboard"
-	"github.com/sandcorporation/agent-mail/internal/identity"
-	"github.com/sandcorporation/agent-mail/internal/store"
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/dashboard"
+	"github.com/sandcorporation/switchboard/internal/identity"
+	"github.com/sandcorporation/switchboard/internal/store"
+	"github.com/sandcorporation/switchboard/internal/wire"
 	_ "modernc.org/sqlite"
 )
 
@@ -117,7 +117,7 @@ func TestAdminReadAPIRequiresProxySecretAndIsReadOnly(t *testing.T) {
 		r := httptest.NewRequest(method, path, nil)
 		r.Header.Set("Remote-User", "admin") // spoofable identity alone must never grant access
 		if secret != "" {
-			r.Header.Set("X-Agent-Mail-Admin", secret)
+			r.Header.Set("X-Switchboard-Admin", secret)
 		}
 		w := httptest.NewRecorder()
 		s.api(w, r)
@@ -185,8 +185,8 @@ func TestProtectedReverseProxyAdminRequest(t *testing.T) {
 		// Model the trusted proxy's overwrite: attacker supplied values never
 		// reach the backend, and the browser's Authorization is not forwarded.
 		r.Header.Del("Authorization")
-		r.Header.Del("X-Agent-Mail-Role")
-		r.Header.Set("X-Agent-Mail-Admin", "proxy-secret")
+		r.Header.Del("X-Switchboard-Role")
+		r.Header.Set("X-Switchboard-Admin", "proxy-secret")
 		s.api(w, r)
 	}))
 	defer proxy.Close()
@@ -201,7 +201,7 @@ func TestProtectedReverseProxyAdminRequest(t *testing.T) {
 	}
 	jar.SetCookies(mustURL(t, proxy.URL), []*http.Cookie{{Name: "authelia_session", Value: "valid"}})
 	req, _ := http.NewRequest("GET", proxy.URL+"/api/admin/roles", nil)
-	req.Header.Set("X-Agent-Mail-Admin", "attacker-value")
+	req.Header.Set("X-Switchboard-Admin", "attacker-value")
 	req.Header.Set("Authorization", "Bearer role-token")
 	resp, err := client.Do(req)
 	if err != nil {
@@ -237,11 +237,11 @@ func TestActualCLILifecycle(t *testing.T) {
 	if err := os.WriteFile(enrollFile, []byte("enrollment-secret\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	env := append(append(os.Environ(), clearNewEnv...), "AGENT_MAIL_TEST_CLI=1", "AGENT_MAIL_CONFIG_DIR="+dir)
+	env := append(append(os.Environ(), clearNewEnv...), "SWITCHBOARD_TEST_CLI=1", "AGENT_MAIL_CONFIG_DIR="+dir)
 	run := func(args ...string) string {
 		cmd := exec.Command(os.Args[0], "-test.run=^TestCLIHelperProcess$")
 		argJSON, _ := json.Marshal(args)
-		cmd.Env = append(env, "AGENT_MAIL_TEST_ARGS="+string(argJSON))
+		cmd.Env = append(env, "SWITCHBOARD_TEST_ARGS="+string(argJSON))
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("CLI %v failed: %v: %s", args, err, output)
@@ -251,10 +251,10 @@ func TestActualCLILifecycle(t *testing.T) {
 	if out := run("--help"); !strings.Contains(out, "role addressed durable mailbox") {
 		t.Fatalf("root help: %s", out)
 	}
-	if out := run("send", "--help"); !strings.Contains(out, "Usage: agent-mail send") {
+	if out := run("send", "--help"); !strings.Contains(out, "Usage: switchboard send") {
 		t.Fatalf("command help: %s", out)
 	}
-	if out := run("config", "--help"); !strings.Contains(out, "Usage: agent-mail config set") {
+	if out := run("config", "--help"); !strings.Contains(out, "Usage: switchboard config set") {
 		t.Fatalf("config help: %s", out)
 	}
 	if out := run("register", "--endpoint", httpServer.URL, "--role", "team/cli", "--token-file", roleFile, "--enrollment-token-file", enrollFile); !strings.Contains(out, "registered") {
@@ -273,15 +273,15 @@ func TestActualCLILifecycle(t *testing.T) {
 }
 
 func TestCLIHelperProcess(t *testing.T) {
-	if os.Getenv("AGENT_MAIL_TEST_CLI") != "1" {
+	if os.Getenv("SWITCHBOARD_TEST_CLI") != "1" {
 		return
 	}
 	var args []string
-	if err := json.Unmarshal([]byte(os.Getenv("AGENT_MAIL_TEST_ARGS")), &args); err != nil {
+	if err := json.Unmarshal([]byte(os.Getenv("SWITCHBOARD_TEST_ARGS")), &args); err != nil {
 		t.Fatal(err)
 	}
-	arg0 := "agent-mail"
-	if v := os.Getenv("AGENT_MAIL_TEST_ARG0"); v != "" {
+	arg0 := "switchboard"
+	if v := os.Getenv("SWITCHBOARD_TEST_ARG0"); v != "" {
 		arg0 = v
 	}
 	os.Args = append([]string{arg0}, args...)
@@ -296,7 +296,7 @@ func call(s *Server, method, path, token string, body any, idem string) *httptes
 	r.Header.Set("Authorization", "Bearer "+token)
 	var role string
 	_ = s.db.QueryRow(`SELECT role FROM roles WHERE token=?`, store.TokenHash(token)).Scan(&role)
-	r.Header.Set("X-Agent-Mail-Role", role)
+	r.Header.Set("X-Switchboard-Role", role)
 	if idem != "" {
 		r.Header.Set("Idempotency-Key", idem)
 	}
@@ -356,7 +356,7 @@ func TestPersistenceRetryAndStatus(t *testing.T) {
 			t.Fatalf("%s filter: %d %s", spelling, w.Code, w.Body)
 		}
 		r := httptest.NewRequest("GET", "/api/admin/messages?status="+spelling, nil)
-		r.Header.Set("X-Agent-Mail-Admin", "proxy-secret")
+		r.Header.Set("X-Switchboard-Admin", "proxy-secret")
 		s.admin.ProxyToken = "proxy-secret"
 		rec := httptest.NewRecorder()
 		s.api(rec, r)
@@ -372,7 +372,7 @@ func TestAuthorizationAndWatchCursor(t *testing.T) {
 	}
 	rMismatch := httptest.NewRequest("GET", "/api/messages", nil)
 	rMismatch.Header.Set("Authorization", "Bearer secret-a")
-	rMismatch.Header.Set("X-Agent-Mail-Role", "b")
+	rMismatch.Header.Set("X-Switchboard-Role", "b")
 	wMismatch := httptest.NewRecorder()
 	s.api(wMismatch, rMismatch)
 	if wMismatch.Code != 401 {
@@ -381,7 +381,7 @@ func TestAuthorizationAndWatchCursor(t *testing.T) {
 	call(s, "POST", "/api/messages", "secret-a", map[string]any{"recipient": "b", "subject": "s", "body": "b"}, "")
 	r := httptest.NewRequest("GET", "/api/watch?after=0", nil)
 	r.Header.Set("Authorization", "Bearer secret-b")
-	r.Header.Set("X-Agent-Mail-Role", "b")
+	r.Header.Set("X-Switchboard-Role", "b")
 	w := httptest.NewRecorder()
 	s.api(w, r)
 	if w.Code != 200 || !bytes.Contains(w.Body.Bytes(), []byte(`"cursor":1`)) {

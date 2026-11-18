@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/cli"
-	"github.com/sandcorporation/agent-mail/internal/store"
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/cli"
+	"github.com/sandcorporation/switchboard/internal/store"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 const bossToken = "secret-boss"
@@ -104,7 +104,7 @@ func TestPermissionParentIsToldButCannotAnswer(t *testing.T) {
 	// The boss gets the answer command; the parent only an informational mail.
 	boss := systemMail(t, s, bossToken, "sandcorp/boss")
 	if len(boss) != 1 || boss[0].Priority != "urgent" || boss[0].TaskID != v.ID || !strings.Contains(boss[0].Body, "rm -rf build/") ||
-		!strings.Contains(boss[0].Body, "agent-mail permission answer "+v.ID) {
+		!strings.Contains(boss[0].Body, "switchboard permission answer "+v.ID) {
 		t.Fatalf("boss notice: %+v", boss)
 	}
 	notes := systemMail(t, s, "secret-a", "a")
@@ -151,7 +151,7 @@ func TestPermissionBossParentGetsTheAnswerMail(t *testing.T) {
 	registerWorker(t, s, "/w", "a")
 	v := askAs(t, s, workerToken, "team/worker-1", 201)
 	for _, c := range []struct{ token, role string }{{"secret-a", "a"}, {bossToken, "sandcorp/boss"}} {
-		if got := systemMail(t, s, c.token, c.role); len(got) != 1 || !strings.Contains(got[0].Body, "agent-mail permission answer "+v.ID) {
+		if got := systemMail(t, s, c.token, c.role); len(got) != 1 || !strings.Contains(got[0].Body, "switchboard permission answer "+v.ID) {
 			t.Fatalf("%s notice: %+v", c.role, got)
 		}
 	}

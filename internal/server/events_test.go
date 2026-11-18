@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/wire"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -28,7 +28,7 @@ func openEvents(t *testing.T, base, token, role string, header map[string]string
 	ctx, cancel := context.WithCancel(context.Background())
 	req, _ := http.NewRequestWithContext(ctx, "GET", base+"/api/events"+query, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("X-Agent-Mail-Role", role)
+	req.Header.Set("X-Switchboard-Role", role)
 	for k, v := range header {
 		req.Header.Set(k, v)
 	}
@@ -215,7 +215,7 @@ func TestEventsRejectsBadCredentialsAndCursor(t *testing.T) {
 		if c.token != "" {
 			req.Header.Set("Authorization", "Bearer "+c.token)
 		}
-		req.Header.Set("X-Agent-Mail-Role", c.role)
+		req.Header.Set("X-Switchboard-Role", c.role)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -227,7 +227,7 @@ func TestEventsRejectsBadCredentialsAndCursor(t *testing.T) {
 	}
 	req, _ := http.NewRequest("GET", base+"/api/events", nil)
 	req.Header.Set("Authorization", "Bearer secret-b")
-	req.Header.Set("X-Agent-Mail-Role", "b")
+	req.Header.Set("X-Switchboard-Role", "b")
 	req.Header.Set("Last-Event-ID", "abc")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

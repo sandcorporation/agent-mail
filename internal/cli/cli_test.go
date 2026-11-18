@@ -5,16 +5,18 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/sandcorporation/switchboard/internal/config"
 )
 
 func TestHelpDoesNotReadConfigOrConnect(t *testing.T) {
 	old := os.Args
 	defer func() { os.Args = old }()
-	os.Args = []string{"agent-mail", "send", "--help"}
+	os.Args = []string{"switchboard", "send", "--help"}
 	if !hasHelp(os.Args[2:]) {
 		t.Fatal("subcommand help was not recognized")
 	}
-	os.Args = []string{"agent-mail", "--help"}
+	os.Args = []string{"switchboard", "--help"}
 	if profileName() != "default" {
 		t.Fatal("help profile setup unexpectedly required config")
 	}
@@ -26,7 +28,7 @@ func TestDefaultProfileKeepsExistingConfigPath(t *testing.T) {
 	t.Setenv("AGENT_MAIL_PROFILE", "")
 	old := os.Args
 	defer func() { os.Args = old }()
-	os.Args = []string{"agent-mail"}
+	os.Args = []string{"switchboard"}
 	if got, want := configPath(), filepath.Join(dir, "config.json"); got != want {
 		t.Fatalf("configPath()=%q, want %q", got, want)
 	}
@@ -39,7 +41,7 @@ func TestDefaultProfileKeepsExistingConfigPath(t *testing.T) {
 
 func TestProfileDirCopiesOldProfileOnce(t *testing.T) {
 	cfg := t.TempDir()
-	newDir, oldDir := filepath.Join(cfg, "switchboard"), filepath.Join(cfg, "agent-mail")
+	newDir, oldDir := filepath.Join(cfg, "switchboard"), filepath.Join(cfg, config.LegacyConfigDir)
 	write := func(dir, name, body string) {
 		t.Helper()
 		if err := os.MkdirAll(dir, 0700); err != nil {
@@ -105,7 +107,7 @@ func TestProfileDirCopiesOldProfileOnce(t *testing.T) {
 func TestProgNameFollowsInvocation(t *testing.T) {
 	old := os.Args
 	defer func() { os.Args = old }()
-	for arg0, want := range map[string]string{"/usr/local/bin/agent-mail": "agent-mail", "agent-mail.exe": "agent-mail", "/usr/local/bin/switchboard": "switchboard", "switchboard.exe": "switchboard", "agent-mail.test": "switchboard"} {
+	for arg0, want := range map[string]string{"/usr/local/bin/" + config.LegacyConfigDir: config.LegacyConfigDir, config.LegacyConfigDir + ".exe": config.LegacyConfigDir, "/usr/local/bin/switchboard": "switchboard", "switchboard.exe": "switchboard", config.LegacyConfigDir + ".test": "switchboard"} {
 		os.Args = []string{filepath.FromSlash(arg0)}
 		if got := progName(); got != want {
 			t.Errorf("%s: %s, want %s", arg0, got, want)

@@ -13,9 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/adminauth"
-	"github.com/sandcorporation/agent-mail/internal/cli"
-	"github.com/sandcorporation/agent-mail/internal/store"
+	"github.com/sandcorporation/switchboard/internal/adminauth"
+	"github.com/sandcorporation/switchboard/internal/cli"
+	"github.com/sandcorporation/switchboard/internal/config"
+	"github.com/sandcorporation/switchboard/internal/store"
 )
 
 // authHandler is the server's real routing for admin pages and endpoints.
@@ -148,7 +149,7 @@ func TestAdminTransitionRule(t *testing.T) {
 	if w := doAuth(s, authReq{method: "GET", path: "/api/admin/roles"}); w.Code != 401 {
 		t.Fatalf("no proxy header=%d", w.Code)
 	}
-	for _, h := range []string{"X-Switchboard-Admin", "X-Agent-Mail-Admin"} {
+	for _, h := range []string{"X-Switchboard-Admin", config.LegacyHeaderPrefix + "Admin"} {
 		if w := doAuth(s, authReq{method: "GET", path: "/api/admin/roles", headers: map[string]string{h: "proxy-secret"}}); w.Code != 200 {
 			t.Fatalf("%s=%d", h, w.Code)
 		}

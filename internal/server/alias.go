@@ -3,11 +3,11 @@ package server
 import (
 	"net/http"
 
-	"github.com/sandcorporation/agent-mail/internal/config"
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/config"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
-// header returns X-Switchboard-<name>, else X-Agent-Mail-<name>. Using the
+// header returns X-Switchboard-<name>, else the old-prefix header. Using the
 // old header counts toward the alias metrics.
 func (s *Server) header(r *http.Request, name string) string {
 	if v := r.Header.Get(config.HeaderPrefix + name); v != "" {

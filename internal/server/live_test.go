@@ -35,7 +35,7 @@ func liveDial(t *testing.T, srv *httptest.Server, query string, h http.Header) (
 
 func adminHeaders(origin string) http.Header {
 	h := http.Header{}
-	h.Set("X-Agent-Mail-Admin", "proxy-secret")
+	h.Set("X-Switchboard-Admin", "proxy-secret")
 	if origin != "" {
 		h.Set("Origin", origin)
 	}
@@ -68,7 +68,7 @@ func liveWrite(t *testing.T, srv *httptest.Server, method, path, body string, h 
 	return resp.StatusCode
 }
 
-var asA = map[string]string{"Authorization": "Bearer secret-a", "X-Agent-Mail-Role": "a"}
+var asA = map[string]string{"Authorization": "Bearer secret-a", "X-Switchboard-Role": "a"}
 
 func TestLiveSocketAuthAndOrigin(t *testing.T) {
 	s, srv := liveServer(t)
@@ -119,7 +119,7 @@ func TestLiveSocketPushesChangesAndResumes(t *testing.T) {
 	if code := liveWrite(t, srv, "POST", "/api/messages", `{"recipient":"nobody"}`, asA); code < 400 {
 		t.Fatalf("bad send: %d", code)
 	}
-	if code := liveWrite(t, srv, "PUT", "/api/admin/question-settings/default", `{"can_ask":true}`, map[string]string{"X-Agent-Mail-Admin": "proxy-secret", "X-Agent-Mail-Dashboard": "1"}); code != 200 {
+	if code := liveWrite(t, srv, "PUT", "/api/admin/question-settings/default", `{"can_ask":true}`, map[string]string{"X-Switchboard-Admin": "proxy-secret", "X-Switchboard-Dashboard": "1"}); code != 200 {
 		t.Fatalf("settings: %d", code)
 	}
 	if m = liveRead(t, c); m.Seq != hello.Seq+2 || !slices.Equal(m.Kinds, []string{"settings"}) {
