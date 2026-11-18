@@ -598,7 +598,6 @@ function openMail(f){
   window.scrollTo({top:0});
 }
 function openMessage(id){openMail({id:id})}
-function openTask(task){openMail({task:task})}
 // ---- 진행 ----
 // One GET /api/admin/progress fills a card per service. The tab number is the
 // open directives older than the pending alert threshold (0 hides it).
@@ -633,12 +632,6 @@ function progressCard(p,now,limit){
     c.append(node('h4','답 없는 지시 ('+p.open_directives.length+')'));
     const ul=node('ul','','plist plinks');
     for(const d of p.open_directives)ul.append(linkItem('#'+d.id+' '+(d.subject||'(제목 없음)'),d.to+' · '+(statusLabel[d.status]||d.status)+' · '+dur(d.age_s)+' 지남'+(d.over_threshold?' · 문턱('+dur(limit)+') 넘음':''),d.over_threshold,()=>openMessage(d.id)));
-    c.append(ul);
-  }
-  if(p.open_tasks.length){
-    c.append(node('h4','답 기다리는 task ('+p.open_tasks.length+')'));
-    const ul=node('ul','','plist plinks');
-    for(const t of p.open_tasks)ul.append(linkItem(t.task_id,(t.last_subject||'(제목 없음)')+' · '+rel(now,t.last_at)+' · '+t.messages+'통',false,()=>openTask(t.task_id)));
     c.append(ul);
   }
   return c;

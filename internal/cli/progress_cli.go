@@ -79,12 +79,6 @@ func formatProgress(ss []wire.ServiceProgress, now time.Time) string {
 				fmt.Fprintf(&b, "  %s #%d → %s %s %s 지남 — %s\n", mark, d.ID, d.To, d.Status, humanDur(d.AgeS), orUntitled(d.Subject))
 			}
 		}
-		if len(s.OpenTasks) > 0 {
-			b.WriteString("  답 기다리는 task\n")
-			for _, t := range s.OpenTasks {
-				fmt.Fprintf(&b, "    %s %s %d통 — %s\n", t.TaskID, relTime(now, t.LastAt), t.Messages, orUntitled(t.LastSubject))
-			}
-		}
 	}
 	return b.String()
 }

@@ -134,40 +134,6 @@ func TestProgressOpenDirectives(t *testing.T) {
 	}
 }
 
-func TestProgressOpenTasksWindowAndCap(t *testing.T) {
-	s, clock := slotServer(t)
-	s.bossRoles = map[string]bool{"ops/lead": true}
-	now := clock.now()
-	// 12 waiting tasks within the window: only the newest 10 are listed.
-	for i := 0; i < 12; i++ {
-		mailAt(t, s, flowRow{sender: "ops/lead", recipient: "team/worker", subject: fmt.Sprintf("t%d", i), task: fmt.Sprintf("T%02d", i), at: now.Add(-time.Duration(12-i) * time.Hour), status: "pending"})
-	}
-	// T00 also has a later message that does not answer (to another base): it
-	// becomes the newest, with that subject.
-	mailAt(t, s, flowRow{sender: "team/worker", recipient: "web/dev", subject: "T00 update", task: "T00", at: now.Add(-time.Minute), status: "complete"})
-	// Directive completed by its recipient: not waiting.
-	mailAt(t, s, flowRow{sender: "ops/lead", recipient: "team/worker", task: "DONE", at: now.Add(-time.Minute), status: "complete"})
-	// Older than 14 days: outside the window.
-	mailAt(t, s, flowRow{sender: "ops/lead", recipient: "team/worker", task: "OLD", at: now.Add(-15 * 24 * time.Hour), status: "pending"})
-
-	r := mustProgress(t, s)
-	tasks := serviceNamed(t, r, "team").OpenTasks
-	var ids []string
-	for _, x := range tasks {
-		ids = append(ids, x.TaskID)
-	}
-	if got := strings.Join(ids, ","); got != "T00,T11,T10,T09,T08,T07,T06,T05,T04,T03" {
-		t.Fatalf("open tasks %s", got)
-	}
-	if tasks[0].LastSubject != "T00 update" || tasks[0].Messages != 2 || !tasks[0].LastAt.Equal(now.Add(-time.Minute)) {
-		t.Fatalf("T00 %+v", tasks[0])
-	}
-	// The task waits on the recipient's service, where its directive is open.
-	if ops := serviceNamed(t, r, "ops").OpenTasks; len(ops) != 0 {
-		t.Fatalf("ops tasks %+v", ops)
-	}
-}
-
 func TestProgressAPI(t *testing.T) {
 	s := testServer(t)
 	s.admin.ProxyToken = "proxy-secret"
@@ -199,10 +165,13 @@ func TestProgressAPI(t *testing.T) {
 	if aw.Code != 200 {
 		t.Fatalf("admin: %d %s", aw.Code, aw.Body)
 	}
-	for _, want := range []string{`"service":"b"`, `"badge":"none"`, `"sessions":[]`, `"last_report":{"id":1,"from":"b","to":"a","subject":"hi"`, `"open_directives":[]`, `"open_tasks":[]`} {
+	for _, want := range []string{`"service":"b"`, `"badge":"none"`, `"sessions":[]`, `"last_report":{"id":1,"from":"b","to":"a","subject":"hi"`, `"open_directives":[]`} {
 		if !strings.Contains(aw.Body.String(), want) {
 			t.Fatalf("admin missing %s: %s", want, aw.Body)
 		}
+	}
+	if strings.Contains(aw.Body.String(), `"open_tasks"`) {
+		t.Fatalf("admin still has open_tasks: %s", aw.Body)
 	}
 	r = httptest.NewRequest("GET", "/api/admin/progress", nil)
 	aw = httptest.NewRecorder()
@@ -238,23 +207,22 @@ func TestAdminMessagesTaskAndIDFilter(t *testing.T) {
 	}
 }
 
-func TestProgressOpenTasksIgnoreSystemMail(t *testing.T) {
+func TestProgressDirectivesIgnoreSystemMail(t *testing.T) {
 	s, clock := slotServer(t)
 	now := clock.now()
-	// Task ids carried only by system mail (old name and numbered form) are not tasks.
+	// System mail (old name and numbered form) is never a directive.
 	mailAt(t, s, flowRow{sender: identity.SystemSender, recipient: "sandcorp/boss", task: "alert:stall:team/worker:2026-11-17", at: now.Add(-time.Hour), status: "pending"})
 	mailAt(t, s, flowRow{sender: identity.SystemSender + "-2", recipient: "sandcorp/boss", task: "q_abc", at: now.Add(-time.Hour), status: "pending"})
 	mailAt(t, s, flowRow{sender: identity.LegacySystemSender, recipient: "sandcorp/boss", task: "alert:pending:x", at: now.Add(-time.Hour), status: "pending"})
 	mailAt(t, s, flowRow{sender: identity.LegacySystemSender + "-3", recipient: "sandcorp/boss", task: "q_old", at: now.Add(-time.Hour), status: "pending"})
-	// A task id with a real directive is listed; the system mail on it neither
-	// counts nor answers it.
+	// A real directive stays open; the system mail on its task id does not
+	// answer it.
 	s.bossRoles = map[string]bool{"sandcorp/boss": true}
 	mailAt(t, s, flowRow{sender: "sandcorp/boss", recipient: "team/worker", task: "REAL", at: now.Add(-2 * time.Hour), status: "pending"})
 	mailAt(t, s, flowRow{sender: identity.SystemSender, recipient: "sandcorp/boss", task: "REAL", at: now.Add(-time.Minute), status: "pending"})
 	mailAt(t, s, flowRow{sender: identity.LegacySystemSender, recipient: "team/worker", task: "REAL", at: now.Add(-time.Minute), status: "pending"})
 
-	tasks := serviceNamed(t, mustProgress(t, s), "team").OpenTasks
-	if len(tasks) != 1 || tasks[0].TaskID != "REAL" || tasks[0].Messages != 1 {
-		t.Fatalf("open tasks %+v", tasks)
+	if got := openDirectiveTasks(t, s); strings.Join(got, ",") != "team:REAL" {
+		t.Fatalf("open directives %v", got)
 	}
 }

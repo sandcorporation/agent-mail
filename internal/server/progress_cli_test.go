@@ -15,11 +15,10 @@ const progressJSON = `{"generated_at":"2026-11-17T12:00:00Z","pending_alert_s":1
 	`"last_report":{"id":7,"from":"web/coord","to":"team/boss","subject":"PR 열림","at":"2026-11-17T11:48:00Z"},` +
 	`"last_activity_at":"2026-11-17T11:50:00Z",` +
 	`"open_directives":[{"id":5,"to":"web/coord","subject":"배포 준비","status":"read","age_s":18000,"over_threshold":true},` +
-	`{"id":6,"to":"web/coord","subject":"","status":"pending","age_s":600,"over_threshold":false}],` +
-	`"open_tasks":[{"task_id":"web-12","last_subject":"시험 추가","last_at":"2026-11-15T12:00:00Z","messages":3}]},` +
+	`{"id":6,"to":"web/coord","subject":"","status":"pending","age_s":600,"over_threshold":false}]},` +
 	`{"service":"api","badge":"idle","sessions":[{"role":"api","state":"idle","since":"2026-11-17T10:00:00Z","directory":"srv","last_seen":"2026-11-17T11:59:00Z"}],` +
-	`"last_report":null,"last_activity_at":"2026-11-17T11:59:30Z","open_directives":[],"open_tasks":[]},` +
-	`{"service":"old","badge":"none","sessions":[],"last_report":null,"last_activity_at":null,"open_directives":[],"open_tasks":[]}` +
+	`"last_report":null,"last_activity_at":"2026-11-17T11:59:30Z","open_directives":[]},` +
+	`{"service":"old","badge":"none","sessions":[],"last_report":null,"last_activity_at":null,"open_directives":[]}` +
 	`]}`
 
 // fakeProgressAPI stands in for GET /api/progress: it records each request and
@@ -64,9 +63,7 @@ const progressWebBlock = "web [busy] 마지막 소식 12분 전 — PR 열림\n"
 	"    web/worker-1 error:api -\n" +
 	"  답 없는 지시\n" +
 	"  ! #5 → web/coord read 5시간 지남 — 배포 준비\n" +
-	"    #6 → web/coord pending 10분 지남 — (제목 없음)\n" +
-	"  답 기다리는 task\n" +
-	"    web-12 2일 전 3통 — 시험 추가\n"
+	"    #6 → web/coord pending 10분 지남 — (제목 없음)\n"
 
 func TestProgressCommandText(t *testing.T) {
 	h, api := progressHarness(t)
