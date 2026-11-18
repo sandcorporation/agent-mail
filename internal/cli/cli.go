@@ -136,6 +136,7 @@ var commands = []command{
 			optSubject, optBody, optBodyF,
 			{"--to", "ROLE", "send the reply to ROLE instead of the original sender"},
 			optUrgent,
+			{"--directive", "", "the reply carries new work: count it as a directive in progress"},
 			optJSON, optProfile,
 		}},
 	{name: "ack", args: "ID", nargs: 1, summary: "Acknowledge a message", options: []option{optJSON, optProfile}},
@@ -386,7 +387,12 @@ func dispatch(args []string) (int, error) {
 		if e != nil {
 			return 0, e
 		}
-		b, _ := json.Marshal(withPriority(p, map[string]any{"subject": p.values["--subject"], "body": body, "recipient": p.values["--to"]}))
+		msg := withPriority(p, map[string]any{"subject": p.values["--subject"], "body": body, "recipient": p.values["--to"]})
+		if p.bool("--directive") {
+			// Omitted otherwise, like priority, so older servers accept the request.
+			msg["directive"] = true
+		}
+		b, _ := json.Marshal(msg)
 		req, _ := http.NewRequest("POST", endpoint(c, "/api/messages/"+p.pos[0]+"/reply"), bytes.NewReader(b))
 		req.Header.Set("Content-Type", "application/json")
 		return doRequest(c, req, p.bool("--json"))

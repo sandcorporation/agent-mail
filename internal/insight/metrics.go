@@ -143,7 +143,7 @@ func (s *Service) Metrics(days int) (wire.MetricsReport, error) {
 // created_at is RFC 3339 text whose fraction length varies, so the SQL bound
 // is one second early and the exact cut is made on the parsed time.
 func (s *Service) windowMail(from time.Time) ([]mail.FlowMail, error) {
-	rows, err := s.db.Query(`SELECT id,sender,recipient,subject,created_at,COALESCE(task_id,''),COALESCE(thread_id,0),COALESCE(reply_to,0) FROM messages WHERE created_at>=? ORDER BY id`,
+	rows, err := s.db.Query(`SELECT `+mail.FlowCols+` FROM messages WHERE created_at>=? ORDER BY id`,
 		from.Add(-time.Second).UTC().Format("2006-01-02T15:04:05"))
 	if err != nil {
 		return nil, err
@@ -200,14 +200,18 @@ var latencyBucketBounds = []struct {
 }
 
 // firstReplies measures thread-starting mail in msgs (sorted oldest first):
-// no thread_id or reply_to, not from the system, and not carrying a task_id
-// an earlier message in the window already carried.
+// no thread_id or reply_to (or a reply sent with --directive), not from the
+// system, and not carrying a task_id an earlier message in the window
+// already carried. Whether and when it was answered follows mail.Answers.
 func firstReplies(msgs []mail.FlowMail, base func(string) string, isBoss func(string) bool) wire.FirstReplyMetrics {
-	byThread, byTask := map[int64][]mail.FlowMail{}, map[string][]mail.FlowMail{}
+	byThread, byTask, byMention := map[int64][]mail.FlowMail{}, map[string][]mail.FlowMail{}, map[int64][]mail.FlowMail{}
 	for _, m := range msgs {
 		byThread[m.Thread()] = append(byThread[m.Thread()], m)
 		if m.TaskID != "" {
 			byTask[m.TaskID] = append(byTask[m.TaskID], m)
+		}
+		for _, id := range m.Mentioned() {
+			byMention[id] = append(byMention[id], m)
 		}
 	}
 	var all []int64
@@ -220,14 +224,18 @@ func firstReplies(msgs []mail.FlowMail, base func(string) string, isBoss func(st
 		if root.TaskID != "" {
 			taskSeen[root.TaskID] = true
 		}
-		if identity.IsSystemSender(root.Sender) || root.ThreadID != 0 || root.ReplyTo != 0 || continued {
+		// A reply starts nothing unless sent as a directive (reply --directive).
+		if identity.IsSystemSender(root.Sender) || ((root.ThreadID != 0 || root.ReplyTo != 0) && !root.Directive) || continued {
 			continue
 		}
 		to := base(root.Recipient)
 		var first *mail.FlowMail
-		candidates := byThread[root.ID]
+		candidates := append(append([]mail.FlowMail{}, byThread[root.Thread()]...), byMention[root.ID]...)
+		if root.Thread() != root.ID {
+			candidates = append(candidates, byThread[root.ID]...)
+		}
 		if root.TaskID != "" {
-			candidates = append(append([]mail.FlowMail{}, candidates...), byTask[root.TaskID]...)
+			candidates = append(candidates, byTask[root.TaskID]...)
 		}
 		for i := range candidates {
 			if m := candidates[i]; mail.Answers(root, m, base, isBoss) && (first == nil || m.Created.Before(first.Created) || (m.Created.Equal(first.Created) && m.ID < first.ID)) {
