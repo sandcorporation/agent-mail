@@ -40,7 +40,7 @@ Expected downtime: from step 2 to the end of step 4, about 5 minutes for a datab
    ```
 
 3. Jenkins node with the label `$LABEL` (the old node keeps the label until step 4).
-4. `.env` (mode `0600`) in the job workspace or at `DEPLOY_ENV_FILE`, same keys as on `old-host`; `MAIL_BIND_ADDRESS=10.0.0.2`.
+4. `.env` (mode `0600`), same keys as on `old-host`; `MAIL_BIND_ADDRESS=10.0.0.2`. Put it at `DEPLOY_ENV_FILE` now, or in the job workspace only after the job's first checkout on `new-host` (step 4).
 5. Empty volume and a dry start:
 
    ```sh
@@ -83,7 +83,11 @@ docker run --rm -v "$VOLUME":/data -v ~/move:/in alpine sh -c \
 
 ## 4. Start on `new-host`
 
-1. Move the `$LABEL` label from the old node to the new node and run the Jenkins job (or `docker compose -p "$PROJECT" up -d --no-build` with `SWITCHBOARD_IMAGE=$IMAGE:<sha>`).
+1. Move the `$LABEL` label from the old node to the new node and run the Jenkins job (or `docker compose -p "$PROJECT" up -d --no-build` with `SWITCHBOARD_IMAGE=$IMAGE:<sha>`). With a workspace `.env` the job needs two runs on `new-host`:
+   - The first run makes the checkout and stops at the `requiredEnv` check before replacing anything; this failure is expected. A pending `production` push can start it as soon as the label moves.
+   - Then `install -D -m 600 <copy of the .env> <workspace>/.env` and run the job again.
+
+   A `.env` placed before the first checkout is lost: the git plugin's first clone into a folder without `.git` empties the workspace.
 2. Health and version:
 
    ```sh
