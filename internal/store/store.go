@@ -93,7 +93,10 @@ func Init(db *sql.DB) error {
 	if e = migrateInvites(db); e != nil {
 		return e
 	}
-	return migrateQuestions(db)
+	if e = migrateQuestions(db); e != nil {
+		return e
+	}
+	return migrateRoleAliases(db)
 }
 
 func HasColumn(db *sql.DB, table, column string) (bool, error) {
@@ -395,4 +398,12 @@ func InTx(ctx context.Context, db *sql.DB, f func(*sql.Tx) error) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// migrateRoleAliases adds role_aliases: an old role name (left by a rename)
+// and the role it now points to. Mail and tokens under the old name reach the
+// new role.
+func migrateRoleAliases(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS role_aliases(alias TEXT PRIMARY KEY, role TEXT NOT NULL, created_at TEXT NOT NULL)`)
+	return err
 }
