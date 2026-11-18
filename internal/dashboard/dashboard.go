@@ -401,6 +401,7 @@ async function initMail(){
 }
 function kTokens(n){if(n===null||n===undefined)return '-';return n<10000?(n/1000).toFixed(1)+'k':Math.round(n/1000)+'k'}
 function when(t){return t?new Date(t).toLocaleString('ko-KR'):'-'}
+function byLabel(by){return by==='panel'?'세션 패널':by}
 function ago(now,t){if(!t)return '-';const s=Math.max(0,Math.round((new Date(now)-new Date(t))/1000));return s<120?s+'초 전':s<7200?Math.round(s/60)+'분 전':Math.round(s/3600)+'시간 전'}
 const sessionCols=['역할','상태','컨텍스트','마지막 턴','기계','폴더','라벨','부모','마지막 보고'];
 async function loadSessions(){
@@ -723,7 +724,7 @@ function questionCard(q){
     }
     c.append(f);
   });
-  if(q.status==='answered')c.append(node('p','답한 쪽: '+q.answered_by+' · '+when(q.answered_at),'muted'));
+  if(q.status==='answered')c.append(node('p','답한 쪽: '+byLabel(q.answered_by)+' · '+when(q.answered_at),'muted'));
   if(q.status==='withdrawn')c.append(node('p','거둔 때: '+when(q.withdrawn_at),'muted'));
   return c;
 }
@@ -841,7 +842,7 @@ async function loadDecisions(){
 }
 function decisionRow(d){
   const row=node('div','','dec');
-  row.append(node('p',d.asker+' · '+when(d.answered_at)+' · '+d.id+' · 답한 쪽 '+d.answered_by,'muted'));
+  row.append(node('p',d.asker+' · '+when(d.answered_at)+' · '+d.id+' · 답한 쪽 '+byLabel(d.answered_by),'muted'));
   for(const it of d.items){
     const p=node('p','');
     let chosen=(it.chosen||[]).join(', ');

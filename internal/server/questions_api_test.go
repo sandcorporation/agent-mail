@@ -140,11 +140,13 @@ func TestQuestionByBossGoesToOwner(t *testing.T) {
 		t.Fatalf("boss ask: %d %s", w.Code, w.Body)
 	}
 	v := decodeQuestion(t, w.Body.Bytes())
-	if v.Status != "pending" || v.CanAnswer || v.Asker != "sandcorp/boss" {
+	if v.Status != "pending" || !v.CanAnswer || v.Asker != "sandcorp/boss" {
 		t.Fatalf("boss question: %+v", v)
 	}
-	// Another boss (none here) is the only role path; the asker cannot answer.
-	answerQuestionAs(t, s, bossToken, "sandcorp/boss", v.ID, sampleAnswers(), 403)
+	// Only the asker's exact role answers from its panel; a numbered slot of
+	// the same base and an ordinary role do not.
+	answerQuestionAs(t, s, bossToken, "sandcorp/boss-2", v.ID, sampleAnswers(), 403)
+	answerQuestionAs(t, s, workerToken, "team/worker", v.ID, sampleAnswers(), 403)
 
 	var listed bool
 	for _, q := range adminQuestionList(t, s, "") {
@@ -181,6 +183,58 @@ func TestQuestionByBossGoesToOwner(t *testing.T) {
 	if !mailed {
 		t.Fatal("answer mail did not reach the asker's inbox")
 	}
+}
+
+// The asker of an owner question answers it itself from its session panel:
+// the answer is stored as "panel", mailed to the asker and kept as a decision.
+func TestOwnerQuestionAnsweredFromPanel(t *testing.T) {
+	s := questionServer(t)
+	s.admin.ProxyToken = "proxy-secret"
+	v := askQuestionAs(t, s, bossToken, "sandcorp/boss", 201)
+	if v.Answerer != wire.AnswererOwner {
+		t.Fatalf("not an owner question: %+v", v)
+	}
+	r := callAs(s, "GET", "/api/questions/"+v.ID, bossToken, "sandcorp/boss", nil)
+	if got := decodeQuestion(t, r.Body.Bytes()); !got.CanAnswer {
+		t.Fatalf("asker cannot answer: %+v", got)
+	}
+	r = callAs(s, "GET", "/api/questions/"+v.ID, bossToken, "sandcorp/boss-2", nil)
+	if got := decodeQuestion(t, r.Body.Bytes()); got.CanAnswer {
+		t.Fatalf("sibling slot can answer: %+v", got)
+	}
+	answerQuestionAs(t, s, workerToken, "team/worker", v.ID, sampleAnswers(), 403)
+	answerQuestionAs(t, s, bossToken, "sandcorp/boss-2", v.ID, sampleAnswers(), 403)
+
+	got := answerQuestionAs(t, s, bossToken, "sandcorp/boss", v.ID, sampleAnswers(), 200)
+	if got.Status != "answered" || got.AnsweredBy != "panel" || len(got.Answers) != 2 {
+		t.Fatalf("panel answer: %+v", got)
+	}
+	answerQuestionAs(t, s, bossToken, "sandcorp/boss", v.ID, sampleAnswers(), 409)
+
+	var decided bool
+	for _, d := range adminDecisions(t, s, "") {
+		decided = decided || (d.ID == v.ID && d.AnsweredBy == "panel")
+	}
+	if !decided {
+		t.Fatal("panel answer missing from decisions")
+	}
+	var mailed bool
+	for _, m := range systemMail(t, s, bossToken, "sandcorp/boss") {
+		mailed = mailed || (m.TaskID == v.ID && strings.HasPrefix(m.Subject, "[질문 답] "+v.ID))
+	}
+	if !mailed {
+		t.Fatal("answer mail did not reach the asker's inbox")
+	}
+}
+
+// An ordinary question is never answered by its asker.
+func TestOrdinaryQuestionAskerCannotAnswer(t *testing.T) {
+	s := questionServer(t)
+	v := askQuestionAs(t, s, workerToken, "team/worker", 201)
+	if v.Answerer != "" {
+		t.Fatalf("not ordinary: %+v", v)
+	}
+	answerQuestionAs(t, s, workerToken, "team/worker", v.ID, sampleAnswers(), 403)
 }
 
 func TestQuestionAskValidation(t *testing.T) {
