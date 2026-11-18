@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/identity"
+	"github.com/sandcorporation/switchboard/internal/identity"
 )
 
 // FlowMail is the part of a message the flow metrics read.

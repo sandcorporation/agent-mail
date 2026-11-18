@@ -2,7 +2,7 @@
 // old AGENT_MAIL_* names, and the header and profile-directory names.
 package config
 
-// Switchboard is the product's name; agent-mail is the old one. Until the
+// Switchboard is the product's name; LegacyConfigDir holds the old one. Until the
 // aliases are removed (#71 §5, phase P3), every environment variable, header
 // and the profile directory answer to both names. The new name wins when both
 // are set. Old-name use is counted so the removal can wait until it is zero.
@@ -17,9 +17,9 @@ const (
 	EnvPrefix          = "SWITCHBOARD_"
 	legacyEnvPrefix    = "AGENT_MAIL_"
 	HeaderPrefix       = "X-Switchboard-"
-	LegacyHeaderPrefix = "X-Agent-Mail-"
+	LegacyHeaderPrefix = "X-Agent-Mail-" // remove in phase 3 (3단계에 제거): the admin proxy still sends it
 	ConfigDirName      = "switchboard"
-	LegacyConfigDir    = "agent-mail"
+	LegacyConfigDir    = "agent-mail" // remove in phase 3 (3단계에 제거): old binary and profile directory name
 )
 
 // ProductName is the only place the product name lives (dashboard, login

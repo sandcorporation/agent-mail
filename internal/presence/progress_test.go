@@ -3,7 +3,7 @@ package presence
 import (
 	"testing"
 
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 func TestProgressBadgePriority(t *testing.T) {

@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/cli"
-	"github.com/sandcorporation/agent-mail/internal/store"
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/cli"
+	"github.com/sandcorporation/switchboard/internal/store"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 // fakeClock is a settable clock for lease tests.
@@ -46,7 +46,7 @@ func slotServer(t *testing.T) (*Server, *fakeClock) {
 	return s, clock
 }
 
-// callAs calls the API with an explicit X-Agent-Mail-Role header.
+// callAs calls the API with an explicit X-Switchboard-Role header.
 func callAs(s *Server, method, path, token, role string, body any) *httptest.ResponseRecorder {
 	var b bytes.Buffer
 	if body != nil {
@@ -54,7 +54,7 @@ func callAs(s *Server, method, path, token, role string, body any) *httptest.Res
 	}
 	r := httptest.NewRequest(method, path, &b)
 	r.Header.Set("Authorization", "Bearer "+token)
-	r.Header.Set("X-Agent-Mail-Role", role)
+	r.Header.Set("X-Switchboard-Role", role)
 	w := httptest.NewRecorder()
 	s.api(w, r)
 	return w
@@ -405,7 +405,7 @@ func TestSlotAdminTableIsProxyOnly(t *testing.T) {
 	for secret, code := range map[string]int{"": 401, "proxy-secret": 200} {
 		r := httptest.NewRequest("GET", "/api/admin/slots", nil)
 		if secret != "" {
-			r.Header.Set("X-Agent-Mail-Admin", secret)
+			r.Header.Set("X-Switchboard-Admin", secret)
 		}
 		w := httptest.NewRecorder()
 		s.api(w, r)

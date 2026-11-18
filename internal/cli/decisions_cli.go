@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 // decisionQueryOptions maps CLI options to GET /api/decisions parameters.

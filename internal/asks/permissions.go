@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/identity"
-	"github.com/sandcorporation/agent-mail/internal/mail"
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/identity"
+	"github.com/sandcorporation/switchboard/internal/mail"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 // Permission requests.
@@ -209,7 +209,7 @@ func (s *Service) requestPermission(w http.ResponseWriter, r *http.Request, p id
 		}
 		subject := "permission: " + req.Tool + " for " + p.Role
 		deadline := expires.UTC().Format(time.RFC3339)
-		body := fmt.Sprintf("%s asks to use %s: %s\nAnswer before %s: agent-mail permission answer %s --decision allow|deny",
+		body := fmt.Sprintf("%s asks to use %s: %s\nAnswer before %s: switchboard permission answer %s --decision allow|deny",
 			p.Role, req.Tool, req.Summary, deadline, id)
 		info := fmt.Sprintf("%s asks to use %s: %s\nRequest %s expires at %s. A boss role must answer it; you are told as the parent and cannot answer.",
 			p.Role, req.Tool, req.Summary, id, deadline)

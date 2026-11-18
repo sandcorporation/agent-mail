@@ -1,8 +1,8 @@
 package server
 
 import (
-	"github.com/sandcorporation/agent-mail/internal/dashboard"
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/dashboard"
+	"github.com/sandcorporation/switchboard/internal/wire"
 
 	"encoding/json"
 	"net/http/httptest"
@@ -40,7 +40,7 @@ func TestAdminQuestionAnswer(t *testing.T) {
 	if w := adminRequest(s, "POST", path, adminAnswerBody(t), map[string]string{"Content-Type": "application/json"}); w.Code != 403 {
 		t.Fatalf("unguarded answer=%d", w.Code)
 	}
-	if w := adminRequest(s, "POST", path, adminAnswerBody(t), map[string]string{"Content-Type": "application/json", "X-Agent-Mail-Dashboard": "1", "Sec-Fetch-Site": "cross-site"}); w.Code != 403 {
+	if w := adminRequest(s, "POST", path, adminAnswerBody(t), map[string]string{"Content-Type": "application/json", "X-Switchboard-Dashboard": "1", "Sec-Fetch-Site": "cross-site"}); w.Code != 403 {
 		t.Fatalf("cross-site answer=%d", w.Code)
 	}
 	if w := adminWrite(s, "POST", path, `{"answers":[{"selected":["없음"]},{"selected":["web"]}]}`); w.Code != 400 {

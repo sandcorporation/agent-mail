@@ -1,4 +1,4 @@
-// Command agent-mail is the mail server (no arguments) and its client (any
+// Command switchboard is the mail server (no arguments) and its client (any
 // subcommand). The server is assembled in internal/server and the client
 // lives in internal/cli.
 package main
@@ -6,9 +6,9 @@ package main
 import (
 	"os"
 
-	"github.com/sandcorporation/agent-mail/internal/adminauth"
-	"github.com/sandcorporation/agent-mail/internal/cli"
-	"github.com/sandcorporation/agent-mail/internal/server"
+	"github.com/sandcorporation/switchboard/internal/adminauth"
+	"github.com/sandcorporation/switchboard/internal/cli"
+	"github.com/sandcorporation/switchboard/internal/server"
 )
 
 // version is set at build time with -ldflags "-X main.version=…".

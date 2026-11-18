@@ -7,13 +7,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/asks"
-	"github.com/sandcorporation/agent-mail/internal/identity"
-	"github.com/sandcorporation/agent-mail/internal/insight"
-	"github.com/sandcorporation/agent-mail/internal/mail"
-	"github.com/sandcorporation/agent-mail/internal/presence"
-	"github.com/sandcorporation/agent-mail/internal/store"
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/asks"
+	"github.com/sandcorporation/switchboard/internal/identity"
+	"github.com/sandcorporation/switchboard/internal/insight"
+	"github.com/sandcorporation/switchboard/internal/mail"
+	"github.com/sandcorporation/switchboard/internal/presence"
+	"github.com/sandcorporation/switchboard/internal/store"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 // queryer is the part of *sql.DB and *sql.Tx the server code reads through,
@@ -38,7 +38,7 @@ func (s *Server) inTx(ctx context.Context, f func(*sql.Tx) error) error {
 }
 
 // authenticate is the role check every /api/ request goes through: the bearer
-// token against X-Switchboard-Role (or the old X-Agent-Mail-Role), by the
+// token against X-Switchboard-Role (or the old-prefix role header), by the
 // rules in identity.Service.Authenticate.
 func (s *Server) authenticate(r *http.Request) (identity.Principal, bool) {
 	return s.ids().Authenticate(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), s.header(r, "Role"))

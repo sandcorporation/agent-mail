@@ -1,8 +1,8 @@
 services:
-  agent-mail:
-    # Deployments set AGENT_MAIL_IMAGE to ghcr.io/sandcorporation/agent-mail:<commit sha> and run without building.
+  agent-mail: # service name of the running deployment; keep until the host move (대장 결정 전 유지)
+    # Deployments set AGENT_MAIL_IMAGE to the deployment image at <commit sha> (see Jenkinsfile) and run without building.
     # Without it, `docker compose up -d --build` builds a local image from this checkout (development).
-    image: ${AGENT_MAIL_IMAGE:-agent-mail:local}
+    image: ${AGENT_MAIL_IMAGE:-switchboard:local}
     build: .
     restart: unless-stopped
     environment:

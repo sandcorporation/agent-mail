@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 // cliProgress reads GET /api/progress (boss roles only; the server answers
@@ -122,7 +122,7 @@ func humanDur(s int64) string {
 }
 
 // shortDir keeps the last two path elements of a session folder
-// (…/workspace/agent-mail); "-" when the session sent none.
+// (…/workspace/switchboard); "-" when the session sent none.
 func shortDir(dir string) string {
 	if dir == "" {
 		return "-"

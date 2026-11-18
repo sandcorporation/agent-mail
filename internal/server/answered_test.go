@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/identity"
+	"github.com/sandcorporation/switchboard/internal/identity"
 )
 
 // answeredFixture writes boss directives to team/worker (#63) and returns the

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/store"
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/store"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 const (
@@ -71,7 +71,7 @@ func listAs(t *testing.T, s *Server, token, role, box string) []wire.Message {
 func adminMessages(t *testing.T, s *Server, query string) []wire.Message {
 	t.Helper()
 	r := httptest.NewRequest("GET", "/api/admin/messages"+query, nil)
-	r.Header.Set("X-Agent-Mail-Admin", adminToken)
+	r.Header.Set("X-Switchboard-Admin", adminToken)
 	w := httptest.NewRecorder()
 	s.api(w, r)
 	if w.Code != 200 {

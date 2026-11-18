@@ -8,8 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sandcorporation/agent-mail/internal/cli"
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/cli"
+	"github.com/sandcorporation/switchboard/internal/config"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 // clearNewEnv blanks the SWITCHBOARD_* client variables for CLI helper
@@ -49,17 +50,17 @@ func TestHeadersAcceptBothNamesAndCountOld(t *testing.T) {
 	if c := get(map[string]string{"X-Switchboard-Role": "a"}); c != 200 {
 		t.Fatalf("new header: %d", c)
 	}
-	if n := s.oldHeaders.Snapshot()["X-Agent-Mail-Role"]; n != 0 {
+	if n := s.oldHeaders.Snapshot()[config.LegacyHeaderPrefix+"Role"]; n != 0 {
 		t.Fatalf("new header counted as old: %d", n)
 	}
-	if c := get(map[string]string{"X-Agent-Mail-Role": "a"}); c != 200 {
+	if c := get(map[string]string{config.LegacyHeaderPrefix + "Role": "a"}); c != 200 {
 		t.Fatalf("old header: %d", c)
 	}
 	// The new header wins: a wrong old one beside it is ignored.
-	if c := get(map[string]string{"X-Switchboard-Role": "a", "X-Agent-Mail-Role": "b"}); c != 200 {
+	if c := get(map[string]string{"X-Switchboard-Role": "a", config.LegacyHeaderPrefix + "Role": "b"}); c != 200 {
 		t.Fatalf("both headers: %d", c)
 	}
-	if n := s.oldHeaders.Snapshot()["X-Agent-Mail-Role"]; n != 1 {
+	if n := s.oldHeaders.Snapshot()[config.LegacyHeaderPrefix+"Role"]; n != 1 {
 		t.Fatalf("old header count=%d, want 1", n)
 	}
 
@@ -68,15 +69,16 @@ func TestHeadersAcceptBothNamesAndCountOld(t *testing.T) {
 	if w := adminRequestWith(s, "GET", "/api/admin/metrics", "", newAdmin); w.Code != 200 {
 		t.Fatalf("new admin header: %d", w.Code)
 	}
-	if w := adminRequest(s, "GET", "/api/admin/metrics", "", nil); w.Code != 200 {
+	oldAdmin := map[string]string{config.LegacyHeaderPrefix + "Admin": "proxy-secret"}
+	if w := adminRequestWith(s, "GET", "/api/admin/metrics", "", oldAdmin); w.Code != 200 {
 		t.Fatalf("old admin header: %d", w.Code)
 	}
-	w := adminRequest(s, "GET", "/api/admin/metrics", "", nil)
+	w := adminRequestWith(s, "GET", "/api/admin/metrics", "", oldAdmin)
 	var m wire.MetricsReport
 	if err := json.Unmarshal(w.Body.Bytes(), &m); err != nil || m.Aliases == nil {
 		t.Fatalf("admin metrics aliases: %v %s", err, w.Body)
 	}
-	if m.Aliases.OldHeaders["X-Agent-Mail-Admin"] != 2 || m.Aliases.OldHeaders["X-Agent-Mail-Role"] != 1 || m.Aliases.OldEnv == nil {
+	if m.Aliases.OldHeaders[config.LegacyHeaderPrefix+"Admin"] != 2 || m.Aliases.OldHeaders[config.LegacyHeaderPrefix+"Role"] != 1 || m.Aliases.OldEnv == nil {
 		t.Fatalf("aliases: %+v", m.Aliases)
 	}
 	// The boss-facing /api/metrics keeps its shape.
@@ -92,13 +94,13 @@ func TestHeadersAcceptBothNamesAndCountOld(t *testing.T) {
 func TestDashboardWriteAcceptsBothHeaders(t *testing.T) {
 	s := testServer(t)
 	s.admin.ProxyToken = "proxy-secret"
-	for _, h := range []string{"X-Switchboard-Dashboard", "X-Agent-Mail-Dashboard"} {
+	for _, h := range []string{"X-Switchboard-Dashboard", config.LegacyHeaderPrefix + "Dashboard"} {
 		hs := map[string]string{"Content-Type": "application/json", h: "1", "Sec-Fetch-Site": "same-origin"}
 		if w := adminRequest(s, "PUT", "/api/admin/question-settings/a", `{}`, hs); w.Code == 403 {
 			t.Fatalf("%s refused: %d %s", h, w.Code, w.Body)
 		}
 	}
-	if s.oldHeaders.Snapshot()["X-Agent-Mail-Dashboard"] != 1 {
+	if s.oldHeaders.Snapshot()[config.LegacyHeaderPrefix+"Dashboard"] != 1 {
 		t.Fatalf("dashboard count: %v", s.oldHeaders.Snapshot())
 	}
 }
@@ -115,7 +117,7 @@ func adminRequestWith(s *Server, method, path, body string, headers map[string]s
 
 // TestCLIProfileOldAndNewEnv runs the CLI with the profile picked by the old
 // and by the new variable, and with the profile saved only in the old
-// <config>/agent-mail/ directory (copied once into <config>/switchboard/).
+// <config>/<config.LegacyConfigDir>/ directory (copied once into <config>/switchboard/).
 func TestCLIProfileOldAndNewEnv(t *testing.T) {
 	h := newCLIHarness(t)
 	h.mustRun(nil, "--profile", "pa", "config", "set", "--endpoint", h.url, "--role", "a", "--token-file", h.tokens["a"])
@@ -125,10 +127,10 @@ func TestCLIProfileOldAndNewEnv(t *testing.T) {
 			t.Fatalf("%v outbox: %s", env, out)
 		}
 	}
-	if out := h.mustRun([]string{"AGENT_MAIL_TEST_ARG0=/usr/bin/switchboard"}, "send", "--help"); !strings.Contains(out, "Usage: switchboard send") {
+	if out := h.mustRun(nil, "send", "--help"); !strings.Contains(out, "Usage: switchboard send") {
 		t.Fatalf("help under the new name: %s", out)
 	}
-	if out := h.mustRun(nil, "--help"); !strings.Contains(out, "Usage: agent-mail [--profile") {
+	if out := h.mustRun([]string{"SWITCHBOARD_TEST_ARG0=/usr/bin/" + config.LegacyConfigDir}, "--help"); !strings.Contains(out, "Usage: "+config.LegacyConfigDir+" [--profile") {
 		t.Fatalf("help under the old name: %s", out)
 	}
 	if r := h.run([]string{"SWITCHBOARD_PROFILE=nope", "AGENT_MAIL_PROFILE=pa"}, "outbox"); r.code == cli.ExitOK {
@@ -137,7 +139,7 @@ func TestCLIProfileOldAndNewEnv(t *testing.T) {
 
 	// No CONFIG_DIR: the profile lives in the user config dir; only the old directory has it.
 	cfg := t.TempDir()
-	oldDir := filepath.Join(cfg, "agent-mail")
+	oldDir := filepath.Join(cfg, config.LegacyConfigDir)
 	if err := os.MkdirAll(oldDir, 0700); err != nil {
 		t.Fatal(err)
 	}

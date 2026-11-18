@@ -6,10 +6,10 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
-// cliPermission serves agent-mail permission request|show|answer|list.
+// cliPermission serves switchboard permission request|show|answer|list.
 func cliPermission(c Config, p parsedArgs) (int, error) {
 	if len(p.pos) == 0 {
 		return 0, usagef("permission: missing action (request, show, answer, list)")

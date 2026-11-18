@@ -3,7 +3,7 @@ package server
 import (
 	"database/sql"
 
-	"github.com/sandcorporation/agent-mail/internal/store"
+	"github.com/sandcorporation/switchboard/internal/store"
 )
 
 // seedRoles inserts role rows with plain tokens the way an old binary would,

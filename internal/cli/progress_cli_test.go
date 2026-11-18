@@ -20,7 +20,7 @@ func TestProgressDurations(t *testing.T) {
 		}
 	}
 	for dir, want := range map[string]string{
-		"/home/u/workspace/agent-mail": "…/workspace/agent-mail", "/home/u/workspace/agent-mail/": "…/workspace/agent-mail",
+		"/home/u/workspace/switchboard": "…/workspace/switchboard", "/home/u/workspace/switchboard/": "…/workspace/switchboard",
 		`C:\Users\u\workspace\web`: "…/workspace/web", "/srv/x": "/srv/x", "": "-",
 	} {
 		if got := shortDir(dir); got != want {

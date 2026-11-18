@@ -2,7 +2,7 @@
 # The Jenkins deploy job (Jenkinsfile) watches production only: it does not build or test, it pulls the image for that sha.
 #
 #   check    ci.yml (workflow_call) — the same checks as pull requests. If it fails nothing is promoted.
-#   image    image.yml (workflow_call), in parallel with check — ghcr.io/sandcorporation/agent-mail:<sha>.
+#   image    image.yml (workflow_call), in parallel with check — the deployment image tagged <sha>.
 #   promote  needs check and image. Fast-forwards production to this sha (scripts/ci/promote.sh ff).
 #            If production is already newer (an older run finished late) it skips instead of failing.
 # production only moves forward. Roll back with a revert PR on main, or for emergencies the Jenkins ROLLBACK_SHA parameter.

@@ -6,7 +6,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/sandcorporation/agent-mail/internal/config"
+	"github.com/sandcorporation/switchboard/internal/config"
 )
 
 // Page serves the admin overview. It only calls same-origin /api/admin/*

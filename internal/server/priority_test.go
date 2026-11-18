@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sandcorporation/agent-mail/internal/store"
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/store"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 func decodeMessage(t *testing.T, raw []byte) wire.Message {
@@ -73,7 +73,7 @@ func TestSendPriorityDefaultsUrgentAndValidation(t *testing.T) {
 	}
 	s.admin.ProxyToken = "proxy-secret"
 	r := httptest.NewRequest("GET", "/api/admin/messages?role=b", nil)
-	r.Header.Set("X-Agent-Mail-Admin", "proxy-secret")
+	r.Header.Set("X-Switchboard-Admin", "proxy-secret")
 	aw := httptest.NewRecorder()
 	s.api(aw, r)
 	var admin []wire.Message

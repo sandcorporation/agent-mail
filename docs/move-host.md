@@ -9,8 +9,17 @@ Placeholders:
 | `mail.example` | public name behind the reverse proxy |
 | `10.0.0.1` / `10.0.0.2` | private address of `old-host` / `new-host` |
 | `203.0.113.2` | public address of `new-host` (if it serves the proxy) |
-| `agent-mail_agent_mail_data` | data volume (Compose project `agent-mail`, volume `agent_mail_data`) |
 | `<sha>` | commit at the head of `production` |
+
+Deployment names, set in each shell below. They are bound to the running deployment and its data, so they stay until a separate migration:
+
+```sh
+PROJECT=agent-mail                        # 대장 결정 전 유지: Compose project (compose.yaml, Jenkinsfile)
+VOLUME=${PROJECT}_agent_mail_data         # data volume of that project
+IMAGE=ghcr.io/sandcorporation/agent-mail  # 대장 결정 전 유지: image Jenkins pulls (also pushed as .../switchboard)
+LABEL=agent-mail-deploy                   # 대장 결정 전 유지: Jenkins deploy node label
+BACKUP=/srv/backup/agent-mail             # 대장 결정 전 유지: backup directory on the host
+```
 
 Addresses side by side:
 
@@ -23,23 +32,23 @@ Expected downtime: from step 2 to the end of step 4, about 5 minutes for a datab
 
 ## 1. Prepare `new-host`
 
-1. Docker with Compose, pull access to `ghcr.io/sandcorporation/agent-mail`. The image is multi-arch (`linux/amd64`, `linux/arm64`).
+1. Docker with Compose, pull access to `$IMAGE`. The image is multi-arch (`linux/amd64`, `linux/arm64`).
 2. Check the architecture is served:
 
    ```sh
-   docker buildx imagetools inspect ghcr.io/sandcorporation/agent-mail:<sha>
+   docker buildx imagetools inspect "$IMAGE:<sha>"
    ```
 
-3. Jenkins node with the label `agent-mail-deploy` (the old node keeps the label until step 4).
+3. Jenkins node with the label `$LABEL` (the old node keeps the label until step 4).
 4. `.env` (mode `0600`) in the job workspace or at `DEPLOY_ENV_FILE`, same keys as on `old-host`; `MAIL_BIND_ADDRESS=10.0.0.2`.
 5. Empty volume and a dry start:
 
    ```sh
-   docker volume create agent-mail_agent_mail_data
-   AGENT_MAIL_IMAGE=ghcr.io/sandcorporation/agent-mail:<sha> docker compose -p agent-mail up -d --no-build
+   docker volume create "$VOLUME"
+   AGENT_MAIL_IMAGE="$IMAGE:<sha>" docker compose -p "$PROJECT" up -d --no-build
    curl -fsS http://10.0.0.2:8097/health          # {"ok":true,"version":"<short sha>"}
-   docker compose -p agent-mail down               # keep the volume
-   docker run --rm -v agent-mail_agent_mail_data:/data alpine rm -f /data/mail.db /data/mail.db-wal /data/mail.db-shm
+   docker compose -p "$PROJECT" down               # keep the volume
+   docker run --rm -v "$VOLUME":/data alpine rm -f /data/mail.db /data/mail.db-wal /data/mail.db-shm
    ```
 
 6. Firewall: `10.0.0.2:8097` reachable from the proxy and the clients' private network only.
@@ -47,7 +56,7 @@ Expected downtime: from step 2 to the end of step 4, about 5 minutes for a datab
 ## 2. Freeze `old-host`
 
 ```sh
-docker compose -p agent-mail stop
+docker compose -p "$PROJECT" stop
 ```
 
 A clean stop checkpoints the WAL into `mail.db`. Do not start it again.
@@ -58,9 +67,9 @@ On `old-host`:
 
 ```sh
 mkdir -p ~/move
-docker run --rm -v agent-mail_agent_mail_data:/data alpine sh -c \
+docker run --rm -v "$VOLUME":/data alpine sh -c \
   'apk add -q sqlite && sqlite3 /data/mail.db ".backup /data/move.db" && sqlite3 /data/move.db "PRAGMA integrity_check"'
-docker run --rm -v agent-mail_agent_mail_data:/data -v ~/move:/out alpine sh -c 'mv /data/move.db /out/ && sha256sum /out/move.db'
+docker run --rm -v "$VOLUME":/data -v ~/move:/out alpine sh -c 'mv /data/move.db /out/ && sha256sum /out/move.db'
 scp ~/move/move.db new-host:move/
 ```
 
@@ -68,13 +77,13 @@ On `new-host`:
 
 ```sh
 sha256sum ~/move/move.db                        # must match old-host
-docker run --rm -v agent-mail_agent_mail_data:/data -v ~/move:/in alpine sh -c \
+docker run --rm -v "$VOLUME":/data -v ~/move:/in alpine sh -c \
   'cp /in/move.db /data/mail.db && chown "$(stat -c %u:%g /data)" /data/mail.db && sha256sum /data/mail.db'
 ```
 
 ## 4. Start on `new-host`
 
-1. Move the `agent-mail-deploy` label from the old node to the new node and run the Jenkins job (or `docker compose -p agent-mail up -d --no-build` with `AGENT_MAIL_IMAGE=ghcr.io/sandcorporation/agent-mail:<sha>`).
+1. Move the `$LABEL` label from the old node to the new node and run the Jenkins job (or `docker compose -p "$PROJECT" up -d --no-build` with `AGENT_MAIL_IMAGE=$IMAGE:<sha>`).
 2. Health and version:
 
    ```sh
@@ -84,10 +93,10 @@ docker run --rm -v agent-mail_agent_mail_data:/data -v ~/move:/in alpine sh -c \
 3. Role smoke from a client, pointed at the new address:
 
    ```sh
-   export AGENT_MAIL_ENDPOINT=http://10.0.0.2:8097
-   agent-mail inbox                                # existing mail is there
-   agent-mail send --to <own role> --subject move-smoke --body ok
-   agent-mail inbox                                # move-smoke arrives
+   export SWITCHBOARD_ENDPOINT=http://10.0.0.2:8097
+   switchboard inbox                                # existing mail is there
+   switchboard send --to <own role> --subject move-smoke --body ok
+   switchboard inbox                                # move-smoke arrives
    ```
 
 4. Dashboard through the proxy: messages and roles from before the move are listed.
@@ -96,21 +105,21 @@ docker run --rm -v agent-mail_agent_mail_data:/data -v ~/move:/in alpine sh -c \
 
 1. Proxy upstream for `mail.example`: `10.0.0.1:8097` -> `10.0.0.2:8097`; validate the configuration, then reload.
 2. DNS for `mail.example` -> `203.0.113.2` if the proxy moved.
-3. Clients that use the private address directly: update `AGENT_MAIL_ENDPOINT` in their profiles.
+3. Clients that use the private address directly: update `SWITCHBOARD_ENDPOINT` in their profiles.
 4. `curl -fsS https://mail.example/health` returns the new version.
 
 ## 6. Keep `old-host` for 7 days
 
 - Container stopped, volume and `.env` untouched, no Jenkins label.
-- `docker compose -p agent-mail stop` only; never `down -v`.
+- `docker compose -p "$PROJECT" stop` only; never `down -v`.
 - After 7 days without rollback: remove the container, then the volume.
 
 ## Rollback
 
 Before any client wrote to `new-host`:
 
-1. Stop `new-host`: `docker compose -p agent-mail stop`.
-2. Put the label back on the old node, start `old-host`: `docker compose -p agent-mail start`.
+1. Stop `new-host`: `docker compose -p "$PROJECT" stop`.
+2. Put the label back on the old node, start `old-host`: `docker compose -p "$PROJECT" start`.
 3. Proxy upstream and DNS back to `old-host`.
 
 After clients wrote to `new-host`: run steps 2-3 in the other direction (freeze `new-host`, copy its `mail.db` to `old-host`, verify sha256), then the three steps above.
@@ -128,19 +137,20 @@ Backup hook (online, container keeps running):
 ```sh
 #!/bin/sh
 set -eu
-out=/srv/backup/agent-mail
+out=/srv/backup/agent-mail  # 대장 결정 전 유지: backup directory (BACKUP above)
+VOLUME=agent-mail_agent_mail_data  # 대장 결정 전 유지: data volume (VOLUME above)
 stamp=$(date +%Y%m%d-%H%M%S)
 mkdir -p "$out"
-docker run --rm -v agent-mail_agent_mail_data:/data -v "$out":/out alpine sh -c \
+docker run --rm -v "$VOLUME":/data -v "$out":/out alpine sh -c \
   "apk add -q sqlite && sqlite3 /data/mail.db \".backup /out/mail-$stamp.db\" && sqlite3 /out/mail-$stamp.db 'PRAGMA integrity_check'"
 find "$out" -name 'mail-*.db' -mtime +14 -delete
 ```
 
-Register the hook (or `/srv/backup/agent-mail`) with the host's backup job, and test a restore once:
+Register the hook (or `$BACKUP`) with the host's backup job, and test a restore once:
 
 ```sh
-docker compose -p agent-mail stop
-docker run --rm -v agent-mail_agent_mail_data:/data -v /srv/backup/agent-mail:/in alpine sh -c \
+docker compose -p "$PROJECT" stop
+docker run --rm -v "$VOLUME":/data -v "$BACKUP":/in alpine sh -c \
   'rm -f /data/mail.db-wal /data/mail.db-shm && cp /in/mail-<stamp>.db /data/mail.db && chown "$(stat -c %u:%g /data)" /data/mail.db'
-docker compose -p agent-mail start
+docker compose -p "$PROJECT" start
 ```

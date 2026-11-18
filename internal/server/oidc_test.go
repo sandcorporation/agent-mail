@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/adminauth"
+	"github.com/sandcorporation/switchboard/internal/adminauth"
 )
 
 // fakeIdP is an OpenID Connect provider on httptest: discovery, JWKS and a

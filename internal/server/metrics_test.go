@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/cli"
-	"github.com/sandcorporation/agent-mail/internal/identity"
-	"github.com/sandcorporation/agent-mail/internal/insight"
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/cli"
+	"github.com/sandcorporation/switchboard/internal/identity"
+	"github.com/sandcorporation/switchboard/internal/insight"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 // flowRow is a message for mailAt.
@@ -350,7 +350,7 @@ func TestMetricsAPI(t *testing.T) {
 	admin := func(secret string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("GET", "/api/admin/metrics", nil)
 		if secret != "" {
-			r.Header.Set("X-Agent-Mail-Admin", secret)
+			r.Header.Set("X-Switchboard-Admin", secret)
 		}
 		w := httptest.NewRecorder()
 		s.api(w, r)

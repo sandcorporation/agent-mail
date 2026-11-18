@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/wire"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 // Service is the identity rules over the roles, slots and groups tables. It
@@ -72,7 +72,7 @@ func sameSecret(a, b string) bool {
 }
 
 // Authenticate checks the bearer token t against the role header h
-// (X-Switchboard-Role, or the old X-Agent-Mail-Role). A role row
+// (X-Switchboard-Role, or the old-prefix role header). A role row
 // with exactly that name always wins, so a pre-existing role ending in -N
 // keeps its own token. Otherwise "<base>-N" is accepted with the token of
 // <base>. The slot need not be currently leased: the base token can claim any
@@ -148,7 +148,7 @@ const SystemSender = "switchboard/system"
 
 // LegacySystemSender is the system sender's old name. It stays reserved, and
 // mail sent under it still counts as system mail.
-const LegacySystemSender = "agent-mail/system"
+const LegacySystemSender = "agent-mail/system" // remove in phase 3 (3단계에 제거): stored as sender in old mail
 
 // IsSystemSender reports whether name is the system sender under either name.
 func IsSystemSender(name string) bool {

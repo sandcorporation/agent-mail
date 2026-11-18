@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/identity"
-	"github.com/sandcorporation/agent-mail/internal/mail"
+	"github.com/sandcorporation/switchboard/internal/identity"
+	"github.com/sandcorporation/switchboard/internal/mail"
 )
 
 // Metrics alerts.
@@ -52,7 +52,7 @@ func shortAge(d time.Duration) string {
 	return fmt.Sprintf("%dh%dm", h, m)
 }
 
-const alertHint = "자세히: `switchboard metrics`(옛 이름 `agent-mail metrics`) 또는 대시보드 #metrics 탭."
+const alertHint = "자세히: `switchboard metrics` 또는 대시보드 #metrics 탭."
 
 // dueAlerts lists the alerts whose threshold is crossed at now, before
 // dedupe.

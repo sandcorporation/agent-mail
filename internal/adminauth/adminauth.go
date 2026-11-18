@@ -33,8 +33,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sandcorporation/agent-mail/internal/config"
-	"github.com/sandcorporation/agent-mail/internal/store"
+	"github.com/sandcorporation/switchboard/internal/config"
+	"github.com/sandcorporation/switchboard/internal/store"
 )
 
 const (
@@ -78,7 +78,7 @@ type Service struct {
 	cfg          *Config
 	db           *sql.DB
 	clock        func() time.Time
-	header       func(r *http.Request, name string) string // X-Switchboard-<name>, else the old X-Agent-Mail-<name>
+	header       func(r *http.Request, name string) string // X-Switchboard-<name>, else the old-prefix header
 	writeAllowed func(r *http.Request) bool                // the dashboard write guard
 	limits       *Limiter                                  // failed logins
 }

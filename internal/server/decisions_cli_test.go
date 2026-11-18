@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/sandcorporation/agent-mail/internal/cli"
+	"github.com/sandcorporation/switchboard/internal/cli"
 )
 
 const decisionsJSON = `{"decisions":[` +
