@@ -8,65 +8,27 @@ import (
 	"time"
 )
 
-// waitingTasks lists "service:task" for every task the progress view shows.
-func waitingTasks(t *testing.T, s *Server) []string {
+// openDirectiveTasks lists "service:task" for every open directive with a
+// task id that the progress view shows.
+func openDirectiveTasks(t *testing.T, s *Server) []string {
 	t.Helper()
 	var got []string
 	for _, p := range mustProgress(t, s).Services {
-		for _, x := range p.OpenTasks {
-			got = append(got, p.Service+":"+x.TaskID)
-		}
-	}
-	sort.Strings(got)
-	return got
-}
-
-// oldOpenTasks counts task ids under the rule before #144: any non-system
-// mail with the task id whose status is not complete.
-func oldOpenTasks(t *testing.T, s *Server) int {
-	t.Helper()
-	var n int
-	if err := s.db.QueryRow(`SELECT COUNT(DISTINCT task_id) FROM messages WHERE task_id<>'' AND status NOT IN ('complete','completed') AND sender NOT LIKE 'switchboard/%'`).Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	return n
-}
-
-// Every waiting task has an open directive with its task id in the same
-// service, and every open directive with a task id in the window waits there.
-func checkTasksMatchDirectives(t *testing.T, s *Server) {
-	t.Helper()
-	r := mustProgress(t, s)
-	directives := map[string]bool{}
-	for _, p := range r.Services {
 		for _, d := range p.OpenDirectives {
 			var task string
 			if err := s.db.QueryRow(`SELECT COALESCE(task_id,'') FROM messages WHERE id=?`, d.ID).Scan(&task); err != nil {
 				t.Fatal(err)
 			}
 			if task != "" {
-				directives[p.Service+":"+task] = true
+				got = append(got, p.Service+":"+task)
 			}
 		}
 	}
-	tasks := map[string]bool{}
-	for _, p := range r.Services {
-		for _, x := range p.OpenTasks {
-			k := p.Service + ":" + x.TaskID
-			tasks[k] = true
-			if !directives[k] {
-				t.Errorf("task %s waits without an open directive", k)
-			}
-		}
-	}
-	for k := range directives {
-		if !tasks[k] {
-			t.Errorf("open directive on %s but the task does not wait", k)
-		}
-	}
+	sort.Strings(got)
+	return got
 }
 
-func TestProgressTasksFollowFlow(t *testing.T) {
+func TestProgressDirectivesFollowFlow(t *testing.T) {
 	s, clock := slotServer(t)
 	s.bossRoles = map[string]bool{"hq/boss": true}
 	at := clock.now().Add(-3 * time.Hour)
@@ -109,35 +71,27 @@ func TestProgressTasksFollowFlow(t *testing.T) {
 	m(flowRow{sender: "hq/boss", recipient: "ops/lead", task: "T-H", subject: "also tests", thread: h, reply: h, directive: true})
 
 	want := []string{"ops:T-H", "team:T-B", "team:T-C"}
-	if got := waitingTasks(t, s); strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("waiting tasks %v, want %v", got, want)
+	if got := openDirectiveTasks(t, s); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("open directives %v, want %v", got, want)
 	}
-	if old := oldOpenTasks(t, s); old != 8 {
-		t.Fatalf("old rule open tasks %d, want 8", old)
-	}
-	checkTasksMatchDirectives(t, s)
 
 	// Answering the rest closes them.
 	m(flowRow{sender: "team/worker", recipient: "hq/boss", task: "T-B", subject: "B done"})
 	m(flowRow{sender: "team/worker", recipient: "hq/boss", task: "T-C", subject: "C done"})
 	m(flowRow{sender: "ops/lead", recipient: "hq/boss", task: "T-H", subject: "tests added"})
-	if got := waitingTasks(t, s); len(got) != 0 {
-		t.Fatalf("waiting tasks after answers %v", got)
+	if got := openDirectiveTasks(t, s); len(got) != 0 {
+		t.Fatalf("open directives after answers %v", got)
 	}
-	checkTasksMatchDirectives(t, s)
 }
 
-// The #139 mixed fixture: its one task (T-3) was answered by a task_id report.
-func TestProgressMixedFixtureTasks(t *testing.T) {
+// The #139 mixed fixture: its one directive (T-3) was answered by a task_id report.
+func TestProgressMixedFixtureDirectives(t *testing.T) {
 	s, clock := slotServer(t)
 	s.bossRoles = map[string]bool{"hq/boss": true}
 	at := clock.now().Add(-time.Hour)
 	mailAt(t, s, flowRow{sender: "hq/boss", recipient: "team/worker", subject: "task C", task: "T-3", at: at})
 	mailAt(t, s, flowRow{sender: "team/worker", recipient: "hq/boss", subject: "C done", task: "T-3", at: at.Add(time.Minute)})
-	if old := oldOpenTasks(t, s); old != 1 {
-		t.Fatalf("old rule %d", old)
-	}
-	if got := waitingTasks(t, s); len(got) != 0 {
+	if got := openDirectiveTasks(t, s); len(got) != 0 {
 		t.Fatalf("waiting %v", got)
 	}
 }

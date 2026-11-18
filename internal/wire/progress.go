@@ -15,7 +15,6 @@ type ServiceProgress struct {
 	LastReport     *ProgressMail       `json:"last_report"`
 	LastActivityAt *time.Time          `json:"last_activity_at"`
 	OpenDirectives []ProgressDirective `json:"open_directives"`
-	OpenTasks      []ProgressTask      `json:"open_tasks"`
 }
 
 type ProgressSession struct {
@@ -41,11 +40,4 @@ type ProgressDirective struct {
 	Status        string `json:"status"`
 	AgeS          int64  `json:"age_s"`
 	OverThreshold bool   `json:"over_threshold"`
-}
-
-type ProgressTask struct {
-	TaskID      string    `json:"task_id"`
-	LastSubject string    `json:"last_subject"`
-	LastAt      time.Time `json:"last_at"`
-	Messages    int       `json:"messages"`
 }
