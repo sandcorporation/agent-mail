@@ -84,6 +84,7 @@ type PresenceView struct {
 	ReportedAt     *time.Time `json:"reported_at,omitempty"` // absent for rows from before presence
 	LeaseExpiresAt time.Time  `json:"lease_expires_at"`
 	OfflineSince   *time.Time `json:"offline_since,omitempty"` // = lease_expires_at when offline
+	Since          *time.Time `json:"since,omitempty"`         // when status began: offline_since when offline, else the start of the current state
 }
 
 // PresenceList answers GET /api/presence and GET /api/admin/presence.

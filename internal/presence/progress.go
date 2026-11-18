@@ -150,7 +150,7 @@ func (s *Service) Progress(pending time.Duration, base func(string) string) (wir
 	}
 
 	// Live sessions, with the start of their current presence_log stretch.
-	rows, err := s.db.Query(`SELECT s.base,s.number,s.directory,s.state,s.registered_at,s.reported_at,COALESCE((SELECT MAX(p.started_at) FROM presence_log p WHERE p.base=s.base AND p.number=s.number AND p.ended_at IS NULL),0) FROM slots s WHERE s.lease_until>? ORDER BY s.base,s.number`, ms(now))
+	rows, err := s.db.Query(`SELECT s.base,s.number,s.directory,s.state,s.registered_at,s.reported_at,`+stretchStartSQL+` FROM slots s WHERE s.lease_until>? ORDER BY s.base,s.number`, ms(now))
 	if err != nil {
 		return out, err
 	}
@@ -167,10 +167,7 @@ func (s *Service) Progress(pending time.Duration, base func(string) string) (wir
 		if v.State == "" {
 			v.State = presenceUnknown
 		}
-		if since == 0 {
-			since = reg
-		}
-		v.Since, v.LastSeen = fromMS(since), fromMS(max(reported, reg))
+		v.Since, v.LastSeen = stretchStart(since, reg), fromMS(max(reported, reg))
 		p := get(base)
 		p.Sessions = append(p.Sessions, v)
 	}

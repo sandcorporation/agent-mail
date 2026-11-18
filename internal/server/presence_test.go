@@ -416,3 +416,32 @@ func TestStatusCommand(t *testing.T) {
 		t.Fatalf("status help: %q", out)
 	}
 }
+
+func TestPresenceSinceFollowsStateChanges(t *testing.T) {
+	s, clock := presenceServer(t)
+	start := clock.now()
+	slotDo(t, s, "register", report("m", "/a", "idle", nil, ""))
+	clock.add(5 * time.Second)
+	slotDo(t, s, "heartbeat", report("m", "/a", "idle", nil, ""))
+	if v := onlySession(t, s, ""); v.Since == nil || !v.Since.Equal(start) {
+		t.Fatalf("heartbeat with the same state moved since: %+v, want %v", v.Since, start)
+	}
+	clock.add(5 * time.Second)
+	busy := clock.now()
+	slotDo(t, s, "heartbeat", report("m", "/a", "busy", nil, ""))
+	clock.add(5 * time.Second)
+	slotDo(t, s, "heartbeat", ident("m", "/a"))
+	if v := onlySession(t, s, ""); v.Since == nil || !v.Since.Equal(busy) {
+		t.Fatalf("idle -> busy: since %v, want %v", v.Since, busy)
+	}
+	if _, body := presenceAs(t, s, ""); !strings.Contains(body, `"since":"`) {
+		t.Fatalf("since missing from JSON: %s", body)
+	}
+
+	// Offline: since is when the lease ended.
+	clock.add(30 * time.Second)
+	v := onlySession(t, s, "")
+	if v.Online || v.Since == nil || v.OfflineSince == nil || !v.Since.Equal(*v.OfflineSince) {
+		t.Fatalf("offline: %+v", v)
+	}
+}

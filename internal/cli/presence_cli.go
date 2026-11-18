@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"strconv"
@@ -35,13 +36,27 @@ func cliStatus(c Config, p parsedArgs) (int, error) {
 		fmt.Println("no sessions")
 		return ExitOK, nil
 	}
-	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "ROLE\tSTATUS\tCONTEXT\tLAST TURN\tMACHINE\tDIRECTORY\tLABEL\tPARENT\tREPORTED")
+	return ExitOK, writeStatusTable(os.Stdout, out)
+}
+
+// writeStatusTable prints the sessions as the status table. New columns go
+// at the end: scripts may read the table by position.
+func writeStatusTable(w io.Writer, out wire.PresenceList) error {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "ROLE\tSTATUS\tCONTEXT\tLAST TURN\tMACHINE\tDIRECTORY\tLABEL\tPARENT\tREPORTED\tSINCE")
 	for _, v := range out.Sessions {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", v.Role, v.Status, kTokens(v.ContextTokens),
-			clockTime(v.LastTurnAt), v.Machine, v.Directory, dash(v.Label), dash(v.Parent), ago(out.Now, v.ReportedAt))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", v.Role, v.Status, kTokens(v.ContextTokens),
+			clockTime(v.LastTurnAt), v.Machine, v.Directory, dash(v.Label), dash(v.Parent), ago(out.Now, v.ReportedAt), elapsed(out.Now, v.Since))
 	}
-	return ExitOK, tw.Flush()
+	return tw.Flush()
+}
+
+// elapsed is the time since t on the server's clock, such as 7h12m.
+func elapsed(now time.Time, t *time.Time) string {
+	if t == nil || t.IsZero() {
+		return "-"
+	}
+	return compactSeconds(max(0, int64(now.Sub(*t)/time.Second)))
 }
 
 // kTokens shows a token count in thousands: 950 -> 0.9k, 12345 -> 12k.
