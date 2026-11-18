@@ -12,7 +12,7 @@ The product was called Agent Mail. Until the aliases are removed, the old names 
 |---|---|
 | CLI `switchboard` | `agent-mail` (same binary; help shows the name it was run as) |
 | `SWITCHBOARD_*` environment (server and CLI) | `AGENT_MAIL_*`; the server logs the old names it read at startup |
-| profile directory `<config>/switchboard/` | `<config>/agent-mail/` (read; a profile found only there is updated in place) |
+| profile directory `<config>/switchboard/` | `<config>/agent-mail/` (a profile found only there is copied once to the new directory, owner-only; the old file stays, unused) |
 | headers `X-Switchboard-Role` / `-Admin` / `-Dashboard` | `X-Agent-Mail-*` |
 | system sender `switchboard/system` | `agent-mail/system` (reserved; counted as system mail) |
 | image `ghcr.io/<owner>/switchboard` | `ghcr.io/<owner>/agent-mail` (same tags) |
@@ -238,7 +238,7 @@ Orca integration belongs in a separate wake/session adapter. This service has no
 
 ## Install and uninstall CLI
 
-GitHub Actions builds versioned archives for Windows, Linux, and macOS (amd64 and arm64 where supported), plus SHA-256 checksums. Download the archive for your platform from Releases, verify `checksums.txt`, and place `switchboard`/`switchboard.exe` on PATH. Each release also ships `agent-mail_*` archives with the same binary under the old name. Configure the endpoint, role, and token as above. Config is stored at the OS user config directory under `switchboard/config.json` with user-only permissions (a profile that exists only under the old `agent-mail/` directory is read and updated there). To uninstall, remove the binary and that config directory; removing config deletes the local token copy. Server messages remain until the operator removes the service volume.
+GitHub Actions builds versioned archives for Windows, Linux, and macOS (amd64 and arm64 where supported), plus SHA-256 checksums. Download the archive for your platform from Releases, verify `checksums.txt`, and place `switchboard`/`switchboard.exe` on PATH. Each release also ships `agent-mail_*` archives with the same binary under the old name. Configure the endpoint, role, and token as above. Config is stored at the OS user config directory under `switchboard/config.json` with user-only permissions (a profile that exists only under the old `agent-mail/` directory is copied there once on first use; the old copy is left in place and no longer read). To uninstall, remove the binary and that config directory; removing config deletes the local token copy. Server messages remain until the operator removes the service volume.
 
 ## Tests and limitations
 

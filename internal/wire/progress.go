@@ -4,7 +4,7 @@ import "time"
 
 type ProgressReport struct {
 	GeneratedAt   time.Time         `json:"generated_at"`
-	PendingAlertS int64             `json:"pending_alert_s"` // AGENT_MAIL_ALERT_PENDING in seconds; 0: off
+	PendingAlertS int64             `json:"pending_alert_s"` // SWITCHBOARD_ALERT_PENDING in seconds; 0: off
 	Services      []ServiceProgress `json:"services"`
 }
 

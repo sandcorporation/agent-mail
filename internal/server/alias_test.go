@@ -115,7 +115,7 @@ func adminRequestWith(s *Server, method, path, body string, headers map[string]s
 
 // TestCLIProfileOldAndNewEnv runs the CLI with the profile picked by the old
 // and by the new variable, and with the profile saved only in the old
-// <config>/agent-mail/ directory.
+// <config>/agent-mail/ directory (copied once into <config>/switchboard/).
 func TestCLIProfileOldAndNewEnv(t *testing.T) {
 	h := newCLIHarness(t)
 	h.mustRun(nil, "--profile", "pa", "config", "set", "--endpoint", h.url, "--role", "a", "--token-file", h.tokens["a"])
@@ -148,14 +148,29 @@ func TestCLIProfileOldAndNewEnv(t *testing.T) {
 	if err = os.WriteFile(filepath.Join(oldDir, "legacy.json"), b, 0600); err != nil {
 		t.Fatal(err)
 	}
-	env := []string{"AGENT_MAIL_CONFIG_DIR=", "XDG_CONFIG_HOME=" + cfg, "HOME=" + cfg, "AppData=" + cfg, "AGENT_MAIL_PROFILE=legacy"}
+	env := []string{"AGENT_MAIL_CONFIG_DIR=", "XDG_CONFIG_HOME=" + cfg, "HOME=" + cfg, "AppData=" + cfg, "SWITCHBOARD_PROFILE=legacy"}
 	if out := h.mustRun(env, "outbox"); !strings.Contains(out, "alias-sent") {
 		t.Fatalf("old dir profile: %s", out)
 	}
-	// Updating it keeps it in the old directory.
+	// The first run copied it into the new directory; the old file stays.
+	newFile := filepath.Join(cfg, "switchboard", "legacy.json")
+	copied, err := os.ReadFile(newFile)
+	if err != nil || string(copied) != string(b) {
+		t.Fatalf("profile not copied to the new directory: %v", err)
+	}
+	if _, err = os.Stat(filepath.Join(oldDir, "legacy.json")); err != nil {
+		t.Fatalf("old profile removed: %v", err)
+	}
+	// From then on only the new file is read and written.
+	if err = os.WriteFile(filepath.Join(oldDir, "legacy.json"), []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if out := h.mustRun(env, "outbox"); !strings.Contains(out, "alias-sent") {
+		t.Fatalf("second run read the old directory: %s", out)
+	}
 	h.mustRun(env, "config", "set", "--endpoint", h.url)
-	if _, err := os.Stat(filepath.Join(cfg, "switchboard", "legacy.json")); err == nil {
-		t.Fatal("config set split the profile into the new directory")
+	if old, _ := os.ReadFile(filepath.Join(oldDir, "legacy.json")); string(old) != "{}" {
+		t.Fatal("config set wrote the old directory")
 	}
 	// A new profile goes to the new directory.
 	h.mustRun([]string{"AGENT_MAIL_CONFIG_DIR=", "XDG_CONFIG_HOME=" + cfg, "HOME=" + cfg, "AppData=" + cfg}, "--profile", "fresh", "config", "set", "--endpoint", h.url, "--role", "a", "--token-file", h.tokens["a"])

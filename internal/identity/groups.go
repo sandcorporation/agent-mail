@@ -25,7 +25,7 @@ import (
 //     targets, questions and permission requests.
 //   - BossesFor(asker): the roles that answer asker's questions and
 //     permission requests: the group's boss_role for a group role, the global
-//     bosses (AGENT_MAIL_BOSS_ROLES) otherwise.
+//     bosses (SWITCHBOARD_BOSS_ROLES) otherwise.
 //   - bossOf(p): the groups p is boss of; whoami reports it.
 //
 // With no groups every role is internal, BossesFor is the global list, and
@@ -86,7 +86,7 @@ func (s *Service) GroupOf(role string) (Group, bool) {
 	return best, found
 }
 
-// IsGlobalBoss: p's role or base is in AGENT_MAIL_BOSS_ROLES. Metrics,
+// IsGlobalBoss: p's role or base is in SWITCHBOARD_BOSS_ROLES. Metrics,
 // progress and alerts are for global bosses only.
 func (s *Service) IsGlobalBoss(p Principal) bool { return s.bossRoles[p.Base] || s.bossRoles[p.Role] }
 
@@ -197,7 +197,7 @@ type Whoami struct {
 	Role       string   `json:"role"`
 	Base       string   `json:"base"`
 	Group      string   `json:"group"`       // "" for an internal role
-	GlobalBoss bool     `json:"global_boss"` // in AGENT_MAIL_BOSS_ROLES
+	GlobalBoss bool     `json:"global_boss"` // in SWITCHBOARD_BOSS_ROLES
 	BossOf     []string `json:"boss_of"`     // group prefixes whose boss_role is this role
 	IsBoss     bool     `json:"is_boss"`     // global_boss or boss_of non-empty
 }

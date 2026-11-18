@@ -29,7 +29,7 @@ const (
 	maxSlotField     = 512 // bytes, for machine, directory, session_id, label, parent
 )
 
-// LeaseLength is AGENT_MAIL_SLOT_LEASE when set, otherwise the presence
+// LeaseLength is SWITCHBOARD_SLOT_LEASE when set, otherwise the presence
 // heartbeat interval times the number of heartbeats a session may miss
 // (60s × 3 = defaultSlotLease). Offline means the lease has ended.
 func (s *Service) LeaseLength() time.Duration {

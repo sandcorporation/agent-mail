@@ -29,7 +29,7 @@ import (
 //   - sessions: error:* and blocked:* time from presence_log, clipped to the
 //     window, and the sessions in such a state now.
 //
-// The alert thresholds (AGENT_MAIL_ALERT_PENDING / _ERROR / _BLOCKED, Go
+// The alert thresholds (SWITCHBOARD_ALERT_PENDING / _ERROR / _BLOCKED, Go
 // durations, 0 disables) are read by ParseThresholds and reported alongside.
 
 const (
@@ -46,8 +46,8 @@ type Thresholds struct {
 
 var DefaultThresholds = Thresholds{Pending: 2 * time.Hour, Error: 10 * time.Minute, Blocked: 30 * time.Minute}
 
-// ParseThresholds reads AGENT_MAIL_ALERT_PENDING, AGENT_MAIL_ALERT_ERROR
-// and AGENT_MAIL_ALERT_BLOCKED. Unset keeps the default; "0" disables.
+// ParseThresholds reads SWITCHBOARD_ALERT_PENDING, SWITCHBOARD_ALERT_ERROR
+// and SWITCHBOARD_ALERT_BLOCKED. Unset keeps the default; "0" disables.
 func ParseThresholds(getenv func(string) string) (Thresholds, error) {
 	t := DefaultThresholds
 	for _, d := range []struct {

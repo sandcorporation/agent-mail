@@ -541,19 +541,51 @@ func configPath() string {
 	return profilePath(d, filename)
 }
 
-// profilePath picks <config>/switchboard/<file>, unless only the old
-// <config>/agent-mail/ holds that profile: then the old file is read and
-// updated in place, so a profile is never split across the two directories.
+// profilePath returns <config>/switchboard/<file>. When only the old
+// <config>/agent-mail/ holds that profile, it is copied once into the new
+// directory (0700 directory, 0600 file) and the old file is left in place;
+// from then on only the new file is read and written. An existing new file
+// is never overwritten. If the copy fails, the old file is used as is.
 func profilePath(configDir, filename string) string {
 	p := filepath.Join(configDir, config.ConfigDirName, filename)
 	if _, err := os.Stat(p); err == nil {
 		return p
 	}
 	old := filepath.Join(configDir, config.LegacyConfigDir, filename)
-	if _, err := os.Stat(old); err == nil {
+	if _, err := os.Stat(old); err != nil {
+		return p
+	}
+	if copyProfile(old, p) != nil {
 		return old
 	}
 	return p
+}
+
+// copyProfile copies src to dst, owner-only, failing if dst exists.
+func copyProfile(src, dst string) error {
+	b, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	if err = os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return nil
+		}
+		return err
+	}
+	if _, err = f.Write(b); err != nil {
+		f.Close()
+		os.Remove(dst)
+		return err
+	}
+	if err = f.Close(); err != nil {
+		os.Remove(dst)
+	}
+	return err
 }
 
 // explicitProfile reports whether the user named a profile (flag or environment).

@@ -18,7 +18,7 @@ import (
 // when there is none): agent-mail/coordinator-1 belongs to agent-mail.
 //
 // Mail from the system sender is not activity of its service. A role is a
-// boss role when its name or its base is in AGENT_MAIL_BOSS_ROLES.
+// boss role when its name or its base is in SWITCHBOARD_BOSS_ROLES.
 
 // serviceOf is the part of name before the first "/".
 func serviceOf(name string) string {
@@ -62,7 +62,7 @@ func (s *Service) ProgressAPI(w http.ResponseWriter, r *http.Request, allowed bo
 		return
 	}
 	if !allowed {
-		http.Error(w, "progress is for boss roles (AGENT_MAIL_BOSS_ROLES)", http.StatusForbidden)
+		http.Error(w, "progress is for boss roles (SWITCHBOARD_BOSS_ROLES)", http.StatusForbidden)
 		return
 	}
 	out, err := s.Progress(pending, base)

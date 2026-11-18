@@ -39,11 +39,11 @@ type Server struct {
 	done        chan struct{}       // closed on shutdown; ends event streams
 	presenceCfg presence.Config     // slot lease and presence settings (internal/presence)
 	clock       func() time.Time    // nil means time.Now; tests move time forward
-	sweepEvery  time.Duration       // AGENT_MAIL_SWEEP_INTERVAL; 0 means defaultSweepInterval
-	labelStall  time.Duration       // AGENT_MAIL_LABEL_STALL; 0 means defaultLabelStall
+	sweepEvery  time.Duration       // SWITCHBOARD_SWEEP_INTERVAL; 0 means defaultSweepInterval
+	labelStall  time.Duration       // SWITCHBOARD_LABEL_STALL; 0 means defaultLabelStall
 	asksCfg     asks.Config         // permission TTL (internal/asks)
-	bossRoles   map[string]bool     // AGENT_MAIL_BOSS_ROLES; may answer any permission request
-	discord     *insight.Discord    // AGENT_MAIL_DISCORD_WEBHOOK; nil sends no question notices
+	bossRoles   map[string]bool     // SWITCHBOARD_BOSS_ROLES; may answer any permission request
+	discord     *insight.Discord    // SWITCHBOARD_DISCORD_WEBHOOK; nil sends no question notices
 	alerts      *insight.Thresholds // SWITCHBOARD_ALERT_*; nil means insight.DefaultThresholds
 	oldHeaders  config.AliasCounter // requests that used an X-Agent-Mail-* header
 	groups      identity.Groups     // collaborator groups (internal/identity)
@@ -122,7 +122,7 @@ func Run(v string) {
 	mux.HandleFunc("/", s.root)
 	addr := config.Env("LISTEN_ADDR", ":8080")
 	// No WriteTimeout: /api/events responses stay open indefinitely and
-	// /api/events/poll waits up to AGENT_MAIL_POLL_MAX.
+	// /api/events/poll waits up to SWITCHBOARD_POLL_MAX.
 	srv := &http.Server{Addr: addr, Handler: secureHeaders(mux), ReadHeaderTimeout: 10 * time.Second}
 	srv.RegisterOnShutdown(func() { close(s.done) })
 	stop := make(chan os.Signal, 1)
