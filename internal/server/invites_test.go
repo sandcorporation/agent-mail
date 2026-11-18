@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/sandcorporation/agent-mail/internal/cli"
-	"github.com/sandcorporation/agent-mail/internal/dashboard"
 	"github.com/sandcorporation/agent-mail/internal/identity"
 	"github.com/sandcorporation/agent-mail/internal/store"
 	"github.com/sandcorporation/agent-mail/internal/wire"
@@ -185,7 +184,7 @@ func TestJoinReuseExpiryAndCancel(t *testing.T) {
 	}
 }
 
-func TestAdminInvitesAndCollaborators(t *testing.T) {
+func TestAdminInvites(t *testing.T) {
 	s := groupServer(t)
 	w := adminWrite(s, "POST", "/api/admin/invites", `{"prefix":"partner-c","ttl":"24h"}`)
 	if w.Code != 201 {
@@ -202,22 +201,8 @@ func TestAdminInvitesAndCollaborators(t *testing.T) {
 	second := inviteAs(t, s, bossToken, internalBossRole, map[string]string{"prefix": "partner-c"}, 201)
 	mustJoin(t, s, second.Code, "partner-c/dev", joinSecret)
 
-	w = adminRequest(s, "GET", "/api/admin/collaborators", "", nil)
-	if w.Code != 200 {
-		t.Fatalf("collaborators: %d %s", w.Code, w.Body)
-	}
-	for _, banned := range []string{inv.Code, second.Code, "code_hash", "sha256:", joinSecret} {
-		if strings.Contains(w.Body.String(), banned) {
-			t.Fatalf("collaborators leaks %q: %s", banned, w.Body)
-		}
-	}
-	var groups []dashboard.CollaboratorGroup
-	if err := json.Unmarshal(w.Body.Bytes(), &groups); err != nil || len(groups) != 1 {
-		t.Fatalf("groups = %s %v", w.Body, err)
-	}
-	g := groups[0]
-	if g.Prefix != "partner-c" || len(g.Roles) != 1 || g.Roles[0].Role != "partner-c/dev" || len(g.Invites) != 1 || g.Invites[0].ID != inv.ID {
-		t.Fatalf("group = %+v", g)
+	if w := adminRequest(s, "GET", "/api/admin/collaborators", "", nil); w.Code != 404 {
+		t.Fatalf("collaborators view: %d", w.Code)
 	}
 	// Revoking the group cancels its open invites and stops the role at once.
 	if w := adminWrite(s, "DELETE", "/api/admin/groups/partner-c", ""); w.Code != 200 {

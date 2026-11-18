@@ -14,7 +14,7 @@ The Go HTTP server authenticates each request by hashing the bearer token (SHA-2
 | `internal/presence` | slot leases, presence and its log, offline notices, progress | `config`, `identity`, `mail`, `store`, `wire` |
 | `internal/asks` | questions, question settings, decisions, permission requests (everything a boss answers) | `identity`, `mail`, `store`, `wire` |
 | `internal/insight` | metrics, metrics alerts, the Discord question notice | `config`, `identity`, `mail`, `store`, `wire` |
-| `internal/dashboard` | the admin page (HTML, CSS and JS in one document) and the collaborators view | `config`, `identity`, `wire` |
+| `internal/dashboard` | the admin page (HTML, CSS and JS in one document) | `config` |
 | `internal/cli` | the client: every subcommand, profiles, the HTTP client | `config`, `wire` |
 | `internal/wire` | the HTTP API shapes and the checks client and server share | none |
 | `internal/store` | `Open`, the schema and its additive migrations, `InTx`, token hashing | none |

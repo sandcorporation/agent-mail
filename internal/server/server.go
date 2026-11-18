@@ -354,13 +354,6 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 	switch path {
 	case "me":
 		writeJSON(w, who)
-	case "collaborators":
-		out, err := s.collaborators()
-		if err != nil {
-			http.Error(w, "query failed", 500)
-			return
-		}
-		writeJSON(w, out)
 	case "slots":
 		out, err := s.presence().ActiveSlots("")
 		if err != nil {
