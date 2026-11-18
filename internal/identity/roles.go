@@ -130,6 +130,7 @@ func (s *Service) SetRevoked(ctx context.Context, role string, revoke bool) (Rol
 //	GET  /api/admin/roles
 //	POST /api/admin/roles/{role}/revoke
 //	POST /api/admin/roles/{role}/restore
+//	POST /api/admin/roles/{role}/rename   {"to": NEW}
 //
 // Role names keep their slashes as path separators.
 func (s *Service) AdminRolesAPI(w http.ResponseWriter, r *http.Request, rest string) {
@@ -144,6 +145,18 @@ func (s *Service) AdminRolesAPI(w http.ResponseWriter, r *http.Request, rest str
 			return
 		}
 		writeJSON(w, out)
+		return
+	}
+	if old, ok := strings.CutSuffix(rest, "/rename"); ok {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !wire.ValidRole(old) {
+			http.Error(w, "invalid role", 400)
+			return
+		}
+		s.adminRename(w, r, old)
 		return
 	}
 	role, revoke := strings.CutSuffix(rest, "/revoke")
@@ -189,6 +202,10 @@ func (s *Service) Register(w http.ResponseWriter, r *http.Request) {
 	}
 	if Reserved(req.Role) {
 		http.Error(w, "role name is reserved", 403)
+		return
+	}
+	if isAlias(s.db, req.Role) {
+		http.Error(w, "role name was renamed; use the new name", 409)
 		return
 	}
 	if g, ok := s.GroupOf(req.Role); ok && g.RevokedAt != nil {

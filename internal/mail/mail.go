@@ -157,6 +157,7 @@ func (s *Service) Send(w http.ResponseWriter, r *http.Request, p identity.Princi
 			http.Error(w, e.Error(), 400)
 			return
 		}
+		label.Base = identity.Resolve(s.db, label.Base)
 		if !identity.RoleExists(s.db, label.Base) {
 			http.Error(w, "unknown recipient role", 403)
 			return

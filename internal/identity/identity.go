@@ -82,6 +82,7 @@ func (s *Service) Authenticate(t, h string) (Principal, bool) {
 	if t == "" || h == "" || !wire.ValidRole(h) || Reserved(h) {
 		return Principal{}, false
 	}
+	h = Resolve(s.db, h) // a renamed role's old name acts as the new one
 	if hash, revoked, ok := roleRecord(s.db, h); ok {
 		if !tokenMatches(hash, t) || revoked {
 			return Principal{}, false
@@ -103,13 +104,15 @@ func (s *Service) Authenticate(t, h string) (Principal, bool) {
 	return p, true
 }
 
-// Mailbox returns the stored name for an address: an exact role row as is,
+// Mailbox returns the stored name for an address (an old name of a renamed
+// role is first mapped by Resolve): an exact role row as is,
 // "<base>-1" as <base>, "<base>-N" as itself. ok is false when no role row
 // backs the address.
 func Mailbox(q Queryer, name string) (string, bool) {
 	if Reserved(name) {
 		return "", false
 	}
+	name = Resolve(q, name)
 	if RoleExists(q, name) {
 		return name, true
 	}
@@ -133,6 +136,7 @@ func BaseOf(q Queryer, name string) string {
 	if name == "" || Reserved(name) {
 		return ""
 	}
+	name = Resolve(q, name)
 	if RoleExists(q, name) {
 		return name
 	}
