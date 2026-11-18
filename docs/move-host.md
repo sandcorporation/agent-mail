@@ -11,14 +11,14 @@ Placeholders:
 | `203.0.113.2` | public address of `new-host` (if it serves the proxy) |
 | `<sha>` | commit at the head of `production` |
 
-Deployment names, set in each shell below. They are bound to the running deployment and its data, so they stay until a separate migration:
+Deployment names, set in each shell below:
 
 ```sh
-PROJECT=agent-mail                        # 대장 결정 전 유지: Compose project (compose.yaml, Jenkinsfile)
-VOLUME=${PROJECT}_agent_mail_data         # data volume of that project
+PROJECT=switchboard                       # Compose project (compose.yaml, Jenkinsfile)
+VOLUME=${PROJECT}_switchboard_data        # data volume of that project
 IMAGE=ghcr.io/sandcorporation/switchboard # image Jenkins pulls
 LABEL=switchboard-deploy                  # Jenkins deploy node label
-BACKUP=/srv/backup/agent-mail             # 대장 결정 전 유지: backup directory on the host
+BACKUP=/srv/backup/switchboard            # backup directory on the host
 ```
 
 Addresses side by side:
@@ -137,8 +137,8 @@ Backup hook (online, container keeps running):
 ```sh
 #!/bin/sh
 set -eu
-out=/srv/backup/agent-mail  # 대장 결정 전 유지: backup directory (BACKUP above)
-VOLUME=agent-mail_agent_mail_data  # 대장 결정 전 유지: data volume (VOLUME above)
+out=/srv/backup/switchboard  # backup directory (BACKUP above)
+VOLUME=switchboard_switchboard_data  # data volume (VOLUME above)
 stamp=$(date +%Y%m%d-%H%M%S)
 mkdir -p "$out"
 docker run --rm -v "$VOLUME":/data -v "$out":/out alpine sh -c \

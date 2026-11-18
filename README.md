@@ -17,7 +17,7 @@ The product was called Agent Mail. Until the aliases are removed, the old names 
 | system sender `switchboard/system` | `agent-mail/system` (reserved; counted as system mail) | <!-- 3단계에 제거 -->
 | image `ghcr.io/<owner>/switchboard` | `ghcr.io/<owner>/agent-mail` (same tags) | <!-- 3단계에 제거 -->
 
-`compose.yaml` and the Jenkins deployment use the new image and `SWITCHBOARD_*` keys; the Compose project, service and volume are still named `agent-mail` until they are moved (#160). `GET /api/admin/metrics` reports old-name use since start as `aliases: {old_headers: {name: count}, old_env: [names]}`, also shown at the bottom of the dashboard's 지표 tab. <!-- 대장 결정 전 유지 -->
+`compose.yaml` and the Jenkins deployment use the new image and `SWITCHBOARD_*` keys; the Compose project and service are `switchboard` and the data volume is `switchboard_switchboard_data` (moved from `agent-mail_agent_mail_data` with `scripts/rename-compose-project.sh`, [docs/rename-compose-project.md](docs/rename-compose-project.md)). `GET /api/admin/metrics` reports old-name use since start as `aliases: {old_headers: {name: count}, old_env: [names]}`, also shown at the bottom of the dashboard's 지표 tab.
 
 ## Design decisions
 
@@ -92,9 +92,9 @@ The Compose file binds to loopback by default (`127.0.0.1:8097`). For private ne
 
 1. A pull request runs `CI` (tests, vet, build).
 2. A push to `main` runs `promote`: the same checks in parallel with `image`, which builds a multi-arch image (`linux/amd64`, `linux/arm64`; Docker pulls the host's architecture) and pushes `ghcr.io/sandcorporation/switchboard:<commit sha>`, which the deployment pulls, and the same tag under the old `ghcr.io/sandcorporation/agent-mail` (3단계에 제거). When both pass, `production` is fast-forwarded to that commit (`scripts/ci/promote.sh`). `production` only moves forward; roll back with a revert PR. <!-- 대장 결정 전 유지 -->
-3. A Jenkins job using the `Jenkinsfile` watches `production` only. Through the `sandcorp` shared library (`sandcorpDeploy`) it waits for the GHCR image of the `production` head, pulls it on the node labelled `switchboard-deploy`, recreates the `agent-mail` service with `SWITCHBOARD_IMAGE` set to that image (`--no-build`), waits for the container health check and runs `/health` inside the container. If the new container does not become healthy it switches back to the previous successfully deployed image. The `ROLLBACK_SHA` job parameter deploys an older published image (commits before #157 were published only under the old image name). <!-- 대장 결정 전 유지: service name -->
+3. A Jenkins job using the `Jenkinsfile` watches `production` only. Through the `sandcorp` shared library (`sandcorpDeploy`) it waits for the GHCR image of the `production` head, pulls it on the node labelled `switchboard-deploy`, recreates the `switchboard` service with `SWITCHBOARD_IMAGE` set to that image (`--no-build`), waits for the container health check and runs `/health` inside the container. If the new container does not become healthy it switches back to the previous successfully deployed image. The `ROLLBACK_SHA` job parameter deploys an older published image (commits before #157 were published only under the old image name).
 
-Nothing deploys until such a job exists. Host-specific values are not in this repository: the deploy node is chosen by its Jenkins label, and secrets plus `MAIL_BIND_ADDRESS` come from the `.env` file in the job workspace on that node (mode `0600`, same `SWITCHBOARD_*` keys as above), or, optionally, from an env file outside the workspace named by the node's `DEPLOY_ENV_FILE` environment variable. The workspace `.env` is the default; note that Jenkins can wipe the workspace when a checkout fails, so keep a copy of it. The deploy stops before replacing anything if `SWITCHBOARD_TOKENS` or `MAIL_BIND_ADDRESS` is empty. Keep the Compose project name `agent-mail` so the existing `agent-mail_agent_mail_data` volume is reused; moving from a manual deployment only recreates the container. The deploy node needs Docker with Compose and pull access to the GHCR package. <!-- 대장 결정 전 유지 -->
+Nothing deploys until such a job exists. Host-specific values are not in this repository: the deploy node is chosen by its Jenkins label, and secrets plus `MAIL_BIND_ADDRESS` come from the `.env` file in the job workspace on that node (mode `0600`, same `SWITCHBOARD_*` keys as above), or, optionally, from an env file outside the workspace named by the node's `DEPLOY_ENV_FILE` environment variable. The workspace `.env` is the default; note that Jenkins can wipe the workspace when a checkout fails, so keep a copy of it. The deploy stops before replacing anything if `SWITCHBOARD_TOKENS` or `MAIL_BIND_ADDRESS` is empty. Keep the Compose project name `switchboard` so the existing `switchboard_switchboard_data` volume is reused; moving from a manual deployment only recreates the container. The deploy node needs Docker with Compose and pull access to the GHCR package.
 
 ### Protected administrator dashboard
 
@@ -112,10 +112,10 @@ The dashboard shows all messages, sessions and registered role names, and lets t
 Built-in admins live in the server database. Run the CLI inside the container, where `DB_PATH` already points at it:
 
 ```sh
-docker compose exec agent-mail switchboard admin create alice   # prompts for the password twice (or reads the first line of stdin); prints the otpauth:// URI and secret once; service name: 대장 결정 전 유지
-docker compose exec agent-mail switchboard admin passwd alice  # service name: 대장 결정 전 유지
-docker compose exec agent-mail switchboard admin totp-reset alice  # new secret, printed once; service name: 대장 결정 전 유지
-docker compose exec agent-mail switchboard admin disable alice  # service name: 대장 결정 전 유지
+docker compose exec switchboard switchboard admin create alice   # prompts for the password twice (or reads the first line of stdin); prints the otpauth:// URI and secret once
+docker compose exec switchboard switchboard admin passwd alice
+docker compose exec switchboard switchboard admin totp-reset alice  # new secret, printed once
+docker compose exec switchboard switchboard admin disable alice
 ```
 
 Passwords need at least 12 characters and are stored as argon2id hashes. `passwd`, `totp-reset` and `disable` end that admin's sessions; `--json` prints `{"name","action"[,"secret","otpauth_uri"]}`. `POST /auth/login` (`{"name","password","code"}`) accepts the TOTP code (RFC 6238: SHA-1, 30 s, 6 digits) of the current step ±1, never the same step twice, and allows 5 failures per 15 minutes per name and per client IP; every failure, including the rate limit, is the same `401 login failed`. Success sets the `sb_session` cookie (`HttpOnly`, `SameSite=Strict`, `Secure` unless `SWITCHBOARD_INSECURE_COOKIE=1` for plain-http local use). Sessions (`admin_sessions`, only a SHA-256 of the cookie is stored) last 12 hours from the last request. `POST /auth/logout` ends the session; `GET /api/admin/me` returns `{"user","mode"}`. Login and logout need the same write guard as admin writes (below). Behind a reverse proxy every client has the proxy's address; set `SWITCHBOARD_TRUST_FORWARDED=1` when the proxy sets `X-Forwarded-For` (its last entry is then the client IP), and only then.
@@ -160,7 +160,7 @@ Backup and restore while stopped (SQLite WAL is checkpointed on clean shutdown):
 ```sh
 docker compose stop
 mkdir -p backup
-docker run --rm -v agent-mail_agent_mail_data:/data -v "$PWD/backup:/backup" alpine sh -c 'cp /data/mail.db /backup/mail.db'  # volume name: 대장 결정 전 유지
+docker run --rm -v switchboard_switchboard_data:/data -v "$PWD/backup:/backup" alpine sh -c 'cp /data/mail.db /backup/mail.db'
 docker compose start
 
 # Restore: stop service, copy a verified backup back to /data/mail.db, then start.

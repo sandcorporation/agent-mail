@@ -20,9 +20,9 @@ sandcorpDeploy(
   // the old name, so ROLLBACK_SHA to such a commit cannot pull.
   images: [[repo: 'ghcr.io/sandcorporation/switchboard', envVar: 'SWITCHBOARD_IMAGE']],
   imageWaitHint: 'https://github.com/sandcorporation/switchboard/actions/workflows/promote.yml',
-  composeProject: 'agent-mail', // 대장 결정 전 유지: the data volume belongs to this project
+  composeProject: 'switchboard', // owns the data volume switchboard_switchboard_data
   composeFiles: ['compose.yaml'],
-  service: 'agent-mail', // 대장 결정 전 유지: must match compose.yaml
+  service: 'switchboard', // must match compose.yaml
   healthCmd: 'wget -q -O - http://127.0.0.1:8080/health',
   // Stop before touching the running service if the deploy .env lacks these. Without MAIL_BIND_ADDRESS Compose
   // would silently bind to loopback and every remote client would lose the mailbox.
