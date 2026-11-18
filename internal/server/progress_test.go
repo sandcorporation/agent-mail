@@ -136,14 +136,16 @@ func TestProgressOpenDirectives(t *testing.T) {
 
 func TestProgressOpenTasksWindowAndCap(t *testing.T) {
 	s, clock := slotServer(t)
+	s.bossRoles = map[string]bool{"ops/lead": true}
 	now := clock.now()
-	// 12 open tasks within the window: only the newest 10 are listed.
+	// 12 waiting tasks within the window: only the newest 10 are listed.
 	for i := 0; i < 12; i++ {
 		mailAt(t, s, flowRow{sender: "ops/lead", recipient: "team/worker", subject: fmt.Sprintf("t%d", i), task: fmt.Sprintf("T%02d", i), at: now.Add(-time.Duration(12-i) * time.Hour), status: "pending"})
 	}
-	// T00 also has a later message: it becomes the newest, with that subject.
-	mailAt(t, s, flowRow{sender: "team/worker", recipient: "ops/lead", subject: "T00 update", task: "T00", at: now.Add(-time.Minute), status: "complete"})
-	// All messages completed: not open.
+	// T00 also has a later message that does not answer (to another base): it
+	// becomes the newest, with that subject.
+	mailAt(t, s, flowRow{sender: "team/worker", recipient: "web/dev", subject: "T00 update", task: "T00", at: now.Add(-time.Minute), status: "complete"})
+	// Directive completed by its recipient: not waiting.
 	mailAt(t, s, flowRow{sender: "ops/lead", recipient: "team/worker", task: "DONE", at: now.Add(-time.Minute), status: "complete"})
 	// Older than 14 days: outside the window.
 	mailAt(t, s, flowRow{sender: "ops/lead", recipient: "team/worker", task: "OLD", at: now.Add(-15 * 24 * time.Hour), status: "pending"})
@@ -160,9 +162,9 @@ func TestProgressOpenTasksWindowAndCap(t *testing.T) {
 	if tasks[0].LastSubject != "T00 update" || tasks[0].Messages != 2 || !tasks[0].LastAt.Equal(now.Add(-time.Minute)) {
 		t.Fatalf("T00 %+v", tasks[0])
 	}
-	// The other side of the mail is a service too.
-	if ops := serviceNamed(t, r, "ops").OpenTasks; len(ops) != 10 {
-		t.Fatalf("ops tasks %d", len(ops))
+	// The task waits on the recipient's service, where its directive is open.
+	if ops := serviceNamed(t, r, "ops").OpenTasks; len(ops) != 0 {
+		t.Fatalf("ops tasks %+v", ops)
 	}
 }
 
@@ -244,12 +246,14 @@ func TestProgressOpenTasksIgnoreSystemMail(t *testing.T) {
 	mailAt(t, s, flowRow{sender: identity.SystemSender + "-2", recipient: "sandcorp/boss", task: "q_abc", at: now.Add(-time.Hour), status: "pending"})
 	mailAt(t, s, flowRow{sender: identity.LegacySystemSender, recipient: "sandcorp/boss", task: "alert:pending:x", at: now.Add(-time.Hour), status: "pending"})
 	mailAt(t, s, flowRow{sender: identity.LegacySystemSender + "-3", recipient: "sandcorp/boss", task: "q_old", at: now.Add(-time.Hour), status: "pending"})
-	// A task id with a real message is listed; the system mail on it does not count.
-	mailAt(t, s, flowRow{sender: "team/worker", recipient: "sandcorp/boss", task: "REAL", at: now.Add(-2 * time.Hour), status: "pending"})
+	// A task id with a real directive is listed; the system mail on it neither
+	// counts nor answers it.
+	s.bossRoles = map[string]bool{"sandcorp/boss": true}
+	mailAt(t, s, flowRow{sender: "sandcorp/boss", recipient: "team/worker", task: "REAL", at: now.Add(-2 * time.Hour), status: "pending"})
 	mailAt(t, s, flowRow{sender: identity.SystemSender, recipient: "sandcorp/boss", task: "REAL", at: now.Add(-time.Minute), status: "pending"})
-	mailAt(t, s, flowRow{sender: identity.LegacySystemSender, recipient: "sandcorp/boss", task: "REAL", at: now.Add(-time.Minute), status: "pending"})
+	mailAt(t, s, flowRow{sender: identity.LegacySystemSender, recipient: "team/worker", task: "REAL", at: now.Add(-time.Minute), status: "pending"})
 
-	tasks := serviceNamed(t, mustProgress(t, s), "sandcorp").OpenTasks
+	tasks := serviceNamed(t, mustProgress(t, s), "team").OpenTasks
 	if len(tasks) != 1 || tasks[0].TaskID != "REAL" || tasks[0].Messages != 1 {
 		t.Fatalf("open tasks %+v", tasks)
 	}

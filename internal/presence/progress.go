@@ -57,8 +57,6 @@ func progressBadge(sessions []wire.ProgressSession) string {
 	return badge
 }
 
-func isOpenStatus(status string) bool { return status != "complete" && status != "completed" }
-
 func isErrorState(state string) bool   { return strings.HasPrefix(state, "error:") }
 func isBlockedState(state string) bool { return strings.HasPrefix(state, "blocked:") }
 
@@ -226,7 +224,11 @@ func (s *Service) Progress(pending time.Duration, base func(string) string) (wir
 
 	// Open directives: mail from a boss role that is a directive (a send, or
 	// a reply sent with --directive), neither completed by its recipient nor
-	// answered (mail.Answers), oldest first.
+	// answered (mail.Answers), oldest first. A task is waiting while one of
+	// these carries its task id: the same rule, so every waiting task has an
+	// open directive in the same service.
+	type taskKey struct{ svc, task string }
+	waiting := map[taskKey]bool{}
 	senders, err := s.distinctNames("sender")
 	if err != nil {
 		return out, err
@@ -275,14 +277,18 @@ func (s *Service) Progress(pending time.Duration, base func(string) string) (wir
 				}
 			}
 			age := max(0, int64(now.Sub(m.At)/time.Second))
+			if m.TaskID != "" {
+				waiting[taskKey{serviceOf(m.Recipient), m.TaskID}] = true
+			}
 			p := get(m.Recipient)
 			p.OpenDirectives = append(p.OpenDirectives, wire.ProgressDirective{ID: m.ID, To: m.Recipient, Subject: m.Subject, Status: m.Status, AgeS: age, OverThreshold: pending > 0 && age >= int64(pending/time.Second)})
 		}
 	}
 
-	// Open tasks: task ids on mail to or from the service in the window
-	// with at least one message not completed. System mail never counts: a
-	// task id carried only by it (alert:*, q_*) is not a task. The SQL bound
+	// Open (waiting) tasks: task ids on mail to or from the service in the
+	// window with an open directive to the service (above). Mail status does
+	// not count, and a task of reports only is not waiting. System mail never
+	// counts: a task id carried only by it (alert:*, q_*) is not a task. The SQL bound
 	// is a second early (created_at fractions vary); the exact cut is on the
 	// parsed time.
 	from := now.Add(-progressTaskWindow)
@@ -290,9 +296,7 @@ func (s *Service) Progress(pending time.Duration, base func(string) string) (wir
 	if err != nil {
 		return out, err
 	}
-	type taskKey struct{ svc, task string }
 	tasks := map[taskKey]*wire.ProgressTask{}
-	open := map[taskKey]bool{}
 	for _, m := range taskMail {
 		if m.At.Before(from) || identity.Reserved(m.Sender) {
 			continue
@@ -313,13 +317,10 @@ func (s *Service) Progress(pending time.Duration, base func(string) string) (wir
 			if !m.At.Before(t.LastAt) {
 				t.LastAt, t.LastSubject = m.At, m.Subject
 			}
-			if isOpenStatus(m.Status) {
-				open[k] = true
-			}
 		}
 	}
 	for k, t := range tasks {
-		if open[k] {
+		if waiting[k] {
 			p := get(k.svc)
 			p.OpenTasks = append(p.OpenTasks, *t)
 		}
