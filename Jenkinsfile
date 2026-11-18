@@ -13,10 +13,12 @@
 //     or from the node's DEPLOY_ENV_FILE, which the shared library links to ./.env before each deploy.
 // The Compose project name, service and volume names must stay as in compose.yaml so the existing data volume is reused.
 sandcorpDeploy(
-  name: 'Agent Mail',
+  name: 'Switchboard',
   deployFrom: 'production',
-  deployNode: 'agent-mail-deploy', // 대장 결정 전 유지: node label on the deploy host
-  images: [[repo: 'ghcr.io/sandcorporation/agent-mail', envVar: 'AGENT_MAIL_IMAGE']], // 대장 결정 전 유지: image.yml pushes both names
+  deployNode: 'switchboard-deploy', // node label on the deploy host
+  // image.yml pushes this name (and a copy under the old agent-mail name until phase 3). Images before #157 exist only under
+  // the old name, so ROLLBACK_SHA to such a commit cannot pull.
+  images: [[repo: 'ghcr.io/sandcorporation/switchboard', envVar: 'SWITCHBOARD_IMAGE']],
   imageWaitHint: 'https://github.com/sandcorporation/switchboard/actions/workflows/promote.yml',
   composeProject: 'agent-mail', // 대장 결정 전 유지: the data volume belongs to this project
   composeFiles: ['compose.yaml'],
@@ -25,5 +27,5 @@ sandcorpDeploy(
   // Stop before touching the running service if the deploy .env lacks these. Without MAIL_BIND_ADDRESS Compose
   // would silently bind to loopback and every remote client would lose the mailbox.
   // The .env may live outside the workspace: set DEPLOY_ENV_FILE on the deploy node (shared library README).
-  requiredEnv: ['AGENT_MAIL_TOKENS', 'MAIL_BIND_ADDRESS'],
+  requiredEnv: ['SWITCHBOARD_TOKENS', 'MAIL_BIND_ADDRESS'],
 )

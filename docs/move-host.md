@@ -16,8 +16,8 @@ Deployment names, set in each shell below. They are bound to the running deploym
 ```sh
 PROJECT=agent-mail                        # 대장 결정 전 유지: Compose project (compose.yaml, Jenkinsfile)
 VOLUME=${PROJECT}_agent_mail_data         # data volume of that project
-IMAGE=ghcr.io/sandcorporation/agent-mail  # 대장 결정 전 유지: image Jenkins pulls (also pushed as .../switchboard)
-LABEL=agent-mail-deploy                   # 대장 결정 전 유지: Jenkins deploy node label
+IMAGE=ghcr.io/sandcorporation/switchboard # image Jenkins pulls
+LABEL=switchboard-deploy                  # Jenkins deploy node label
 BACKUP=/srv/backup/agent-mail             # 대장 결정 전 유지: backup directory on the host
 ```
 
@@ -45,7 +45,7 @@ Expected downtime: from step 2 to the end of step 4, about 5 minutes for a datab
 
    ```sh
    docker volume create "$VOLUME"
-   AGENT_MAIL_IMAGE="$IMAGE:<sha>" docker compose -p "$PROJECT" up -d --no-build
+   SWITCHBOARD_IMAGE="$IMAGE:<sha>" docker compose -p "$PROJECT" up -d --no-build
    curl -fsS http://10.0.0.2:8097/health          # {"ok":true,"version":"<short sha>"}
    docker compose -p "$PROJECT" down               # keep the volume
    docker run --rm -v "$VOLUME":/data alpine rm -f /data/mail.db /data/mail.db-wal /data/mail.db-shm
@@ -83,7 +83,7 @@ docker run --rm -v "$VOLUME":/data -v ~/move:/in alpine sh -c \
 
 ## 4. Start on `new-host`
 
-1. Move the `$LABEL` label from the old node to the new node and run the Jenkins job (or `docker compose -p "$PROJECT" up -d --no-build` with `AGENT_MAIL_IMAGE=$IMAGE:<sha>`).
+1. Move the `$LABEL` label from the old node to the new node and run the Jenkins job (or `docker compose -p "$PROJECT" up -d --no-build` with `SWITCHBOARD_IMAGE=$IMAGE:<sha>`).
 2. Health and version:
 
    ```sh
