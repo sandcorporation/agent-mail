@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/sandcorporation/agent-mail/internal/asks"
-	"github.com/sandcorporation/agent-mail/internal/dashboard"
 	"github.com/sandcorporation/agent-mail/internal/identity"
 	"github.com/sandcorporation/agent-mail/internal/insight"
 	"github.com/sandcorporation/agent-mail/internal/mail"
@@ -88,9 +87,4 @@ func (s *Server) progressAPI(w http.ResponseWriter, r *http.Request, allowed boo
 // progress is the progress report as of now.
 func (s *Server) progress() (wire.ProgressReport, error) {
 	return s.presence().Progress(s.insight().Limits().Pending, insight.NewBaseResolver(s.db).Of)
-}
-
-// collaborators is the dashboard's groups view with presence last-seen.
-func (s *Server) collaborators() ([]dashboard.CollaboratorGroup, error) {
-	return dashboard.Collaborators(s.db, s.now, s.ids(), s.presence().LeaseLength())
 }
