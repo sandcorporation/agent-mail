@@ -1,5 +1,5 @@
 services:
-  agent-mail: # service name of the running deployment; keep until the host move (대장 결정 전 유지)
+  switchboard:
     # Deployments set SWITCHBOARD_IMAGE to the deployment image at <commit sha> (see Jenkinsfile) and run without building.
     # Without it, `docker compose up -d --build` builds a local image from this checkout (development).
     image: ${SWITCHBOARD_IMAGE:-switchboard:local}
@@ -31,7 +31,7 @@ services:
     ports:
       - "${MAIL_BIND_ADDRESS:-127.0.0.1}:8097:8080"
     volumes:
-      - agent_mail_data:/data
+      - switchboard_data:/data
     read_only: true
     tmpfs:
       - /tmp
@@ -45,4 +45,4 @@ services:
       retries: 3
       start_period: 10s
 volumes:
-  agent_mail_data:
+  switchboard_data:
