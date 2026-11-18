@@ -33,7 +33,7 @@ type QuestionView struct {
 	Status      string           `json:"status"` // pending | answered | withdrawn
 	Questions   []QuestionItem   `json:"questions"`
 	Answers     []QuestionAnswer `json:"answers"`
-	AnsweredBy  string           `json:"answered_by"` // a role, or "dashboard"
+	AnsweredBy  string           `json:"answered_by"` // a role, "dashboard" or "panel"
 	AnsweredAt  *time.Time       `json:"answered_at"`
 	WithdrawnAt *time.Time       `json:"withdrawn_at"`
 	Seq         int64            `json:"seq"`

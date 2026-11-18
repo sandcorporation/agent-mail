@@ -27,7 +27,9 @@ import (
 // requests, only a boss role (AGENT_MAIL_BOSS_ROLES) of a base other than the
 // asker's may answer, and the first answer wins. The asker's base may
 // withdraw a pending question. The dashboard answers through the same core
-// (AnswerQuestion with by="dashboard"), which skips the boss check.
+// (AnswerQuestion with by="dashboard"), which skips the boss check. An owner
+// question (no boss of another base) is also answered by its own asker,
+// stored as by="panel": a person picked the answer in that session's panel.
 //
 // Every create, answer and withdraw bumps a global change counter (seq);
 // boss sessions long-poll GET /api/questions/poll?after=<seq> to fill their
@@ -39,6 +41,7 @@ import (
 const (
 	questionIDPrefix    = "q_"
 	QuestionByDashboard = "dashboard" // answered_by for answers given in the dashboard
+	QuestionByPanel     = "panel"     // answered_by for an owner question answered by its asker's session panel
 	maxQuestionBody     = 32 << 10    // bytes, for the whole request body
 	maxQuestionItems    = 4
 	minQuestionOptions  = 2
@@ -114,9 +117,21 @@ func loadQuestion(q identity.Queryer, id string) (wire.QuestionView, error) {
 	return v, err
 }
 
-// mayAnswerQuestion: the asker's boss (identity BossesFor), never its own base.
+// mayAnswerQuestion: the asker's boss (identity BossesFor), never its own
+// base. The one exception is an owner question (nobody else can answer it):
+// its asker, by exact role name, answers what a person picked in its panel.
 func (s *Service) mayAnswerQuestion(p identity.Principal, v wire.QuestionView) bool {
+	if answeredFromPanel(p.Role, v) {
+		return true
+	}
 	return p.Base != v.AskerBase && s.ids.IsBossFor(p, v.AskerBase)
+}
+
+// answeredFromPanel: role is the asker of an owner question. A sibling slot
+// (<base>-N) does not count: it is another session, not the one whose panel
+// showed the question.
+func answeredFromPanel(role string, v wire.QuestionView) bool {
+	return v.Answerer == wire.AnswererOwner && role == v.Asker
 }
 
 // mayReadQuestion: the asker's base or the asker's boss.
@@ -381,7 +396,9 @@ func (s *Service) publishQuestion(boxes []string) {
 
 // AnswerQuestion is the answering core shared by the role endpoint and the
 // dashboard. by is the answering role, or QuestionByDashboard, which skips
-// the boss check. A role must be a boss of a base other than the asker's.
+// the boss check. A role must be a boss of a base other than the asker's,
+// or the asker of an owner question; the latter is stored as
+// QuestionByPanel.
 // The question must still be pending; the check and the update run in one
 // transaction, so the first answer wins. It mails the asker and the
 // watchers. Errors: ErrQuestionNotFound, ErrQuestionForbidden,
@@ -396,10 +413,14 @@ func (s *Service) AnswerQuestion(ctx context.Context, id, by string, answers []w
 		if v, e = loadQuestion(tx, id); e != nil {
 			return e
 		}
+		stored := by
 		if by != QuestionByDashboard {
 			base := identity.BaseOf(tx, by)
 			if base == "" || !s.mayAnswerQuestion(identity.Principal{Role: by, Base: base}, v) {
 				return ErrQuestionForbidden
+			}
+			if answeredFromPanel(by, v) {
+				stored = QuestionByPanel
 			}
 		}
 		if v.Status != "pending" {
@@ -415,7 +436,7 @@ func (s *Service) AnswerQuestion(ctx context.Context, id, by string, answers []w
 		}
 		encoded, _ := json.Marshal(clean)
 		res, e := tx.Exec(`UPDATE questions SET status='answered',answers=?,answered_by=?,answered_at=?,seq=? WHERE id=? AND status='pending'`,
-			string(encoded), by, ms(now), seq, id)
+			string(encoded), stored, ms(now), seq, id)
 		if e != nil {
 			return e
 		}
@@ -461,7 +482,7 @@ func (s *Service) answerQuestionAPI(w http.ResponseWriter, r *http.Request, p id
 		http.Error(w, "invalid JSON", 400)
 		return
 	}
-	if p.Role == QuestionByDashboard { // a role cannot pose as the dashboard
+	if p.Role == QuestionByDashboard || p.Role == QuestionByPanel { // a role cannot pose as either
 		questionError(w, ErrQuestionForbidden)
 		return
 	}
