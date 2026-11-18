@@ -133,3 +133,22 @@ func TestDashboardHasNoCollaboratorsView(t *testing.T) {
 		}
 	}
 }
+
+func TestDashboardPermissionsTab(t *testing.T) {
+	w := httptest.NewRecorder()
+	Page(w, httptest.NewRequest("GET", "/", nil))
+	body := w.Body.String()
+	for _, want := range []string{
+		"api('permissions?status=pending')", "api('permissions?status=closed&limit=200')",
+		"apiSend('POST','permissions/'+encodeURIComponent(v.id)+'/answer',{decision:decision,note:note.value})",
+		"tabLoaders.permissions=loadPermissions", "id=\"permPending\"", "id=\"permHistory\"",
+		"['요청한 역할',v.requester]", "['답한 쪽',v.answered_by]", "답은 바꿀 수 없습니다.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("permissions tab missing %q", want)
+		}
+	}
+	if strings.Contains(body, "준비 중") {
+		t.Fatal("permissions tab is still a placeholder")
+	}
+}

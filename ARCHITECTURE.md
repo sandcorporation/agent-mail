@@ -82,6 +82,8 @@ The parent is read once, in the request transaction, from the requester's active
 
 The answer is one conditional `UPDATE … WHERE decision='' AND expires_at>now` in a transaction with the requester's notice, so concurrent answers produce one 200 and 409s; a request that matched no row is 409 when answered, 410 when expired. Checks run in the order 404 (unknown ID) → 403 (caller may not answer) → 409 → 410. New requests send urgent mail with the answer command to every boss of another base, and an informational urgent mail without the command to the trusted parent (unless the parent is itself a boss, which gets the answer mail); answers send urgent mail to the requester. Both carry the request ID as `task_id`.
 
+Answering goes through one core, `asks.Service.AnswerPermission(ctx, id, by, decision, note, may)`, shared by the role endpoint (`may` = the boss check above) and the dashboard (`by="dashboard"`, `may` nil, still only while pending and unexpired).
+
 ## Question settings
 
 `question_settings` (created in place by `store.Init`, which also inserts the `default` row once with everything off) holds one row per target: `default`, an exact role, or `<prefix>/*`. `watchers` is a JSON array. `asks.Service.ResolveQuestionSettings(role)` tries the role itself, then its base when it is `<base>-N`, then each `<prefix>/*` from the longest prefix down, then `default`, and returns the matched target with the values. Only the admin API reads and writes the table.
