@@ -1,0 +1,4 @@
+# A line longer than the width wraps onto the next row.
+@size 10x4
+prompt> this line is longer than ten columns\r\n
+$ 

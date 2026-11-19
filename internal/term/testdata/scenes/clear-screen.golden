@@ -1,0 +1,11 @@
+size 16x4
+cursor 5,0 visible
+history 2
+|old a|
+|old b|
+screen
+|fresh           |
+|                |
+|                |
+|                |
+styles

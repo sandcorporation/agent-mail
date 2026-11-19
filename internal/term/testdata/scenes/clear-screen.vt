@@ -1,0 +1,6 @@
+# Clear screen and home after earlier output (ED 2 keeps the old rows in history).
+@size 16x4
+old a\r\n
+old b\r\n
+\e[2J\e[H
+fresh

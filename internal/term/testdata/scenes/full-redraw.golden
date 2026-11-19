@@ -1,0 +1,15 @@
+size 24x6
+cursor 19,2 hidden
+history 0
+screen
+| Claude Code            |
+|────────────────────────|
+|> list the files ok     |
+|● Reading 3 files       |
+|                        |
+| esc to interrupt       |
+styles
+s0 0-12 bold
+s1 0-23 faint
+s3 0-0 fg=2
+s5 0-17 reverse

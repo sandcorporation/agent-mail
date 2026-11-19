@@ -1,0 +1,7 @@
+# Basic, bright, 256 and truecolor foregrounds and backgrounds with bold and friends.
+@size 24x5
+\e[31mred\e[0m \e[1;32mbold green\e[0m\r\n
+\e[91mbright\e[0m \e[38;5;208m208\e[0m \e[38;2;255;128;0mtrue\e[0m\r\n
+\e[44;97mwhite on blue\e[49m plain-bg\e[0m\r\n
+\e[2mfaint\e[22m \e[3mit\e[23m \e[4mul\e[24m \e[7mrev\e[27m \e[9mst\e[0m\r\n
+\e[48;2;0;0;128m  \e[1m bold-bg \e[0m
