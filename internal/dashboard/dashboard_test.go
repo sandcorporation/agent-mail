@@ -224,7 +224,7 @@ func TestDashboardTerminalsTabOnlyWithHosting(t *testing.T) {
 
 // Hosted sessions: the Terminals tab shows the slot role and presence, and
 // the Sessions tab marks a session a hosted record holds with a link to its
-// terminal row (#terminal=<id>), rendered as text.
+// terminal detail (#terminals/<id>/screen), rendered as text.
 func TestDashboardSessionsMarkHostedSessions(t *testing.T) {
 	w := httptest.NewRecorder()
 	Page(w, httptest.NewRequest("GET", "/", nil))
@@ -233,13 +233,12 @@ func TestDashboardSessionsMarkHostedSessions(t *testing.T) {
 		`const hosted=hostingOn?await hostedBySlot():new Map();`,
 		`if(v.slot&&v.slot.role)m.set(v.slot.role,v)`,
 		`const h=hosted.get(v.role);`,
-		`node('a','터미널','hosted');a.href='#terminal='+encodeURIComponent(h.id)`,
+		`node('a','터미널','hosted');a.href=detailHash('terminals',h.id,'screen')`,
 		`if(h.startsWith('terminal=')){`,
+		`history.replaceState(null,'',detailHash('terminals',id,'screen'));route();`,
 		`v.slot&&v.slot.role?v.slot.role:v.base`,
 		`'offline (process alive)':'오프라인 (프로세스 살아 있음)'`,
-		`if(v.id===termFocus){tr.classList.add('focus')`,
-		`const termCols=['노드','역할','접속',`,
-		`<thead><tr><th>노드</th><th>역할</th><th>접속</th><th>라벨</th>`,
+		`const pr=v.presence||'',sub=[termPresence[pr]||pr,`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("dashboard missing %q", want)
@@ -387,6 +386,56 @@ func TestDashboardDetailPanel(t *testing.T) {
 	for _, id := range []string{"box", "role", "status", "search", "thread", "task"} {
 		if !strings.Contains(body, `id="`+id+`"`) {
 			t.Fatalf("mail filter %q gone", id)
+		}
+	}
+}
+
+// 터미널 (#231): list + detail like 세션 and 메일. The list has name,
+// profile, node, state, permissions, restarts and last start with state
+// chips; the add form is a drawer; the detail has 화면 (one live screen that
+// moves between redraws and the 세션 detail), 기록 and 설정, the actions
+// with their confirmations, and 넓히기 with an Esc order: a typing terminal
+// takes Esc, then 넓히기 returns, then the panel closes.
+func TestDashboardTerminalsDetail(t *testing.T) {
+	w := httptest.NewRecorder()
+	Page(w, httptest.NewRequest("GET", "/", nil))
+	body := w.Body.String()
+	for _, want := range []string{
+		`<table id="terminalsTbl" class="stack list"><thead><tr><th>이름</th><th>프로필</th><th>노드</th><th>상태</th><th>권한</th><th class="num">재시작</th><th>마지막 시작</th></tr></thead>`,
+		`<div class="chips" id="termChips" role="group"`,
+		`<dialog id="termAdd" class="sc-drawer" aria-labelledby="termAddTitle">`,
+		`<form id="termForm" class="settings-form termform">`,
+		"$('termAddOpen').onclick=()=>$('termAdd').showModal();",
+		"$('termAdd').addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();$('termAdd').close()}});",
+		"detailRow(tr,'terminals',v.id);",
+		"registerDetail('terminals',{",
+		"subs:()=>[['screen','화면'],['log','기록'],['settings','설정']],",
+		"add('지우기',()=>{if(confirm(",
+		"add('새 대화',()=>{if(confirm(",
+		"node('p','바꾼 설정은 다음 시작부터 적용','muted')",
+		"api('terminals/'+encodeURIComponent(v.id)+'/log')",
+		// One screen, kept across redraws, closed when the detail stops showing it.
+		`<div id="termHold" hidden><div id="termPane" class="termpane">`,
+		"function termGc(){if(!$('detailBody').contains(tp('termPane')))termClose()}",
+		"  termGc();\n}",
+		"$('detailBody').replaceChildren();termGc();",
+		"box.append(dl([['노드',it.h.node],['폴더',it.h.directory],['터미널',a]]),termPaneFor(it.h));",
+		// 넓히기 and the Esc order.
+		".sc-app-main.has-detail.detail-wide{grid-template-columns:minmax(0,1fr)}",
+		"if(termView&&termView.mode==='input'&&tp('termScreen').contains(e.target))return;\n  e.preventDefault();termWiden(false);\n},true);",
+		"tp('termScreen').addEventListener('keydown',e=>{if(e.key==='Escape'&&termView&&termView.mode==='input')e.preventDefault()});",
+		"t.term.attachCustomKeyEventHandler(e=>!(e.key==='Escape'&&t.mode!=='input'));",
+		// The input path and its ticket stay as they were.
+		"tk=await apiSend('POST','terminals/'+encodeURIComponent(t.id)+'/ticket',{mode:t.mode})",
+		"function termSend(t,m){if(t.mode==='input'&&t.ws&&t.ws.readyState===1)t.ws.send(JSON.stringify(m))}",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("terminals detail missing %q", want)
+		}
+	}
+	for _, gone := range []string{`id="termView"`, `id="termBack"`, "termFocus"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("old terminals view left: %q", gone)
 		}
 	}
 }
