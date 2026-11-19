@@ -22,6 +22,8 @@ set "SWITCHBOARD_HOSTING_AGENT=$agent"
 $con = Join-Path $root 'con.ps1'
 @'
 param([int]$target, [string]$what, [string]$out)
+[IO.File]::WriteAllText($out, "helper session $((Get-Process -Id $PID).SessionId)")
+trap { [IO.File]::AppendAllText($out, "`nerror $_"); exit 1 }
 Add-Type @"
 using System; using System.Runtime.InteropServices;
 public static class Con {
@@ -33,7 +35,7 @@ public static class Con {
   [DllImport("user32.dll", SetLastError=true)] public static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
 }
 "@
-$r = @()
+$r = @("helper session $((Get-Process -Id $PID).SessionId)")
 $r += 'free ' + [Con]::FreeConsole()
 $ok = [Con]::AttachConsole([uint32]$target); $r += "attach $target $ok err $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
 if ($what -eq 'break') {
@@ -78,18 +80,29 @@ function Report([string]$kind, [int]$mark) {
   "up.log lines added:"
   Get-Content "$data\up.log" | Select-Object -Skip $mark | ForEach-Object { "  | $_" }
 }
+function ConHelper([int]$p, [string]$what) {
+  # In the task's session: AttachConsole works only within one session.
+  $f = "$root\con-$what.txt"
+  $a = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$con`" $p $what `"$f`""
+  $t = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
+  Register-ScheduledTask -TaskName 'sb-exit-con' -Action $a -Trigger $t -Force | Out-Null
+  Start-ScheduledTask -TaskName 'sb-exit-con'
+  Start-Sleep 8
+  'helper: ' + ((Get-Content $f -ErrorAction SilentlyContinue) -join ' | ')
+  Unregister-ScheduledTask -TaskName 'sb-exit-con' -Confirm:$false -ErrorAction SilentlyContinue
+}
 function Down { $p = UpPid; if ($p) { Stop-Process -Id $p -Force }; Stop-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue; for ($i = 0; $i -lt 30; $i++) { if (-not (UpPid) -and (Get-ScheduledTask -TaskName $task).State -eq 'Ready') { break }; Start-Sleep 1 } }
 
 Register
-foreach ($kind in 'terminate-up', 'ctrl-break', 'ctrl-close', 'kill-cmd', 'kill-powershell', 'stop-task') {
+foreach ($kind in 'ctrl-break', 'ctrl-close') {
   ">>> $kind"
   $mark = LogLen
   $out = Start-Up; $out | Select-Object -SkipLast 1; $p = $out[-1]
   if (-not $p) { "RESULT $kind | up did not start"; Get-Content "$data\up.log" -Tail 20; continue }
   switch ($kind) {
     'terminate-up' { Stop-Process -Id $p -Force }
-    'ctrl-break' { $f = "$root\con-break.txt"; Start-Process powershell.exe -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $con, $p, 'break', $f -WindowStyle Hidden -Wait; Get-Content $f -ErrorAction SilentlyContinue }
-    'ctrl-close' { $f = "$root\con-close.txt"; Start-Process powershell.exe -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $con, $p, 'close', $f -WindowStyle Hidden -Wait; Get-Content $f -ErrorAction SilentlyContinue }
+    'ctrl-break' { ConHelper $p 'break' }
+    'ctrl-close' { ConHelper $p 'close' }
     'kill-cmd' { Get-CimInstance Win32_Process -Filter "Name = 'cmd.exe'" | Where-Object { $_.CommandLine -match 'up\.cmd' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force } }
     'kill-powershell' { Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" | Where-Object { $_.CommandLine -match 'up\.cmd' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force } }
     'stop-task' { Stop-ScheduledTask -TaskName $task }
@@ -99,45 +112,6 @@ foreach ($kind in 'terminate-up', 'ctrl-break', 'ctrl-close', 'kill-cmd', 'kill-
   "up still running after it: $([bool](UpPid))"
   Down
 }
-
-">>> start-up error (port held)"
-$mark = LogLen
-$hold = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $port); $hold.Start()
-Start-Up | Out-Null
-Start-Sleep 5
-Report 'start-up error' $mark
-$hold.Stop()
-Down
-
-">>> restart on failure: terminate up"
-Register -restart
-$mark = LogLen; $before = Starts
-$out = Start-Up; $p = $out[-1]
-Stop-Process -Id $p -Force
-for ($i = 0; $i -lt 150; $i++) { if ((Starts) -gt $before + 1) { break }; Start-Sleep 1 }
-Report 'restart after terminate' $mark
-"RESULT restart after terminate: started again $([bool]((Starts) -gt $before + 1)) after ${i}s"
-Down
-
-">>> restart on failure: sbstop as W3 writes it (listener killed, wait for Ready)"
-Register -restart
-$mark = LogLen
-$out = Start-Up; $before = Starts
-Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
-for ($i = 0; $i -lt 150; $i++) { if ((Starts) -gt $before) { break }; Start-Sleep 1 }
-Report 'restart after sbstop' $mark
-"RESULT restart after sbstop kill: started again $([bool]((Starts) -gt $before)) after ${i}s"
-Down
-
-">>> restart on failure: Stop-ScheduledTask"
-Register -restart
-$mark = LogLen
-$out = Start-Up; $before = Starts
-Stop-ScheduledTask -TaskName $task
-for ($i = 0; $i -lt 150; $i++) { if ((Starts) -gt $before) { break }; Start-Sleep 1 }
-Report 'restart after Stop-ScheduledTask' $mark
-"RESULT restart after Stop-ScheduledTask: started again $([bool]((Starts) -gt $before)) after ${i}s"
-Down
 
 Get-CimInstance Win32_Process -Filter "Name = 'switchboard.exe'" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Unregister-ScheduledTask -TaskName $task -Confirm:$false -ErrorAction SilentlyContinue
