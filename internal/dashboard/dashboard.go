@@ -108,6 +108,44 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13.5px/1.55 var(--font-mono
 .sc-app-page>[role=tabpanel]{margin:0}
 .sc-app-page>.card{border:0;padding:0;background:none}
 [role=tabpanel][hidden]{display:none}
+.sc-app-main{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr}
+.sc-app-main.has-detail{grid-template-columns:minmax(0,1fr) 440px}
+.sc-app-main>.sc-topbar,.sc-app-main>.sc-app-page{grid-column:1}
+.sc-topbar{position:sticky;top:0;z-index:5}
+.detail{grid-column:2;grid-row:1/span 2;align-self:start;position:sticky;top:0;height:100vh;height:100dvh;overflow-y:auto;min-width:0;background:var(--color-canvas);border-left:1px solid var(--color-line)}
+.detail[hidden]{display:none}
+.detail-head{display:flex;align-items:center;gap:var(--space-2);min-height:var(--topbar-height);padding:var(--space-2) var(--space-3) var(--space-2) var(--space-4);border-bottom:1px solid var(--color-line)}
+.detail-head h2{flex:1;min-width:0;overflow-wrap:anywhere;font-size:1rem}
+.detail-head h2:focus{outline:0}
+.detail-head .sc-badge{flex:none;white-space:normal;max-width:45%}
+.detail-close{flex:none;border:0;background:none;padding:.15rem .5rem;font-size:1.25rem;line-height:1;color:var(--color-muted)}
+.detail-back{display:none;flex:none;border:0;background:none;padding:.2rem .3rem;color:var(--color-accent)}
+.detail .sc-tabs{padding:0 var(--space-3)}
+.detail .sc-tabs:empty{display:none}
+.detail-body{padding:var(--space-4);min-width:0;overflow-wrap:anywhere}
+.detail-body .pdl{margin-top:0}
+.detail-body pre{padding:var(--space-3);background:var(--color-paper);border-radius:var(--radius)}
+.dlist{list-style:none;margin:0;padding:0}
+.dlist li{padding:var(--space-2) var(--space-3);border-left:2px solid var(--color-line);margin:0 0 var(--space-2);min-width:0}
+.dlist li.cur{border-left-color:var(--color-accent);background:var(--color-paper)}
+.dlist small{display:block;color:var(--color-muted)}
+.dlist p{margin:var(--space-1) 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.listbar{display:flex;flex-wrap:wrap;gap:var(--space-2) var(--space-3);align-items:center;margin-bottom:var(--space-3)}
+.chips{display:flex;flex-wrap:wrap;gap:var(--space-2)}
+.listbar input[type=search]{flex:1 1 14rem;max-width:22rem}
+table.list td{white-space:normal;overflow-wrap:break-word}
+table.list td small{overflow-wrap:anywhere}
+table.list td.nowrap{white-space:nowrap}
+table.list tr[data-detail-id]{cursor:pointer}
+table.list tr[aria-current=true] td{background:var(--color-accent-tint)}
+table.list tr[data-detail-id]:focus-visible{outline:2px solid var(--color-focus);outline-offset:-2px}
+table.list td small{display:block;color:var(--color-muted)}
+table.list tr.urgent td:first-child{box-shadow:inset 3px 0 var(--st-error)}
+@media (max-width:720px){
+.sc-app-main.has-detail{grid-template-columns:minmax(0,1fr)}
+.detail{position:fixed;inset:0;align-self:stretch;height:auto;z-index:20;border-left:0}
+.detail-back{display:inline-block}
+}
 @media (max-width:1180px){
 .sc-sidenav-item{width:44px}
 .sc-sidenav-item[data-wait][data-nonzero] .sc-sidenav-count{display:block;position:absolute;top:5px;right:5px;width:7px;height:7px;padding:0;margin:0;border-radius:50%;background:var(--st-error);font-size:0;overflow:hidden}
@@ -120,7 +158,6 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13.5px/1.55 var(--font-mono
 .topacts{gap:var(--space-2)}
 }
 table{border-collapse:collapse;width:100%;font-size:.88em;font-variant-numeric:tabular-nums}
-#sessionsTbl th:nth-child(3){text-align:right}
 th,td{text-align:left;padding:.4rem .6rem;border-bottom:1px solid var(--color-line);white-space:nowrap;vertical-align:top}
 th{font-size:.85em;font-weight:600;color:var(--color-muted);background:var(--color-paper)}
 tbody tr:hover td{background:var(--color-paper)}
@@ -248,7 +285,7 @@ table.stack tbody tr:hover td{background:none}
 <button type="button" class="sc-sidenav-item" title="설정" role="tab" id="tab-settings" data-tab="settings" aria-controls="panel-settings" aria-selected="false" tabindex="-1"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 10.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="tab-name sc-sidenav-label">설정</span><span class="tab-count sc-sidenav-count"></span></button>
 </div>
 </aside>
-<div class="sc-app-main">
+<div class="sc-app-main" id="appMain">
 <header class="sc-topbar"><nav aria-label="이동 경로"><ol class="sc-topbar-crumbs"><li>` + productName + `</li><li id="crumbTab" aria-current="page">진행</li></ol></nav>
 <div class="topacts"><span class="liveind"><span id="live" class="live" title="실시간 연결 끊김"></span><span id="liveText">끊김</span></span><span class="sc-topbar-account" id="who" hidden><span id="whoMark" class="sc-topbar-avatar" aria-hidden="true"></span><span class="sc-topbar-account-text"><span id="whoName"></span></span></span><button type="button" id="logout" hidden>로그아웃</button></div></header>
 <main class="sc-app-page">
@@ -258,7 +295,8 @@ table.stack tbody tr:hover td{background:none}
 </section>
 <section id="panel-sessions" role="tabpanel" aria-labelledby="tab-sessions" tabindex="0" class="card" hidden>
 <div class="toolbar"><h2>세션</h2><button id="reloadSessions">새로 고침</button><span id="sessionsNote" class="muted"></span></div>
-<div class="wide"><table id="sessionsTbl" class="stack"><thead><tr><th>역할</th><th>상태</th><th>컨텍스트</th><th>마지막 턴</th><th>기계</th><th>폴더</th><th>라벨</th><th>부모</th><th>마지막 보고</th></tr></thead><tbody id="sessions"></tbody></table></div>
+<div class="listbar"><div class="chips" id="sessionChips" role="group" aria-label="상태 고르기"></div><input id="sessionsSearch" type="search" aria-label="세션 검색" placeholder="역할·기계·폴더·라벨"></div>
+<table id="sessionsTbl" class="stack list"><thead><tr><th>역할</th><th>상태</th><th class="num">컨텍스트</th><th>마지막 턴</th><th>기계</th><th>라벨</th></tr></thead><tbody id="sessions"></tbody></table>
 </section>
 <section id="panel-metrics" role="tabpanel" aria-labelledby="tab-metrics" tabindex="0" class="card" hidden>
 <div class="toolbar"><h2>지표</h2>
@@ -303,7 +341,7 @@ table.stack tbody tr:hover td{background:none}
 </div>
 </div>
 <div id="notice" class="muted"></div>
-<div id="list"></div>
+<table id="mailTbl" class="stack list"><thead><tr><th class="num">#</th><th>제목</th><th>보낸 쪽 → 받는 쪽</th><th>상태</th><th>시각</th></tr></thead><tbody id="list"></tbody></table>
 </section>
 <section id="panel-permissions" role="tabpanel" aria-labelledby="tab-permissions" tabindex="0" class="card" hidden>
 <div class="toolbar"><h2>권한 요청</h2><button id="reloadPerms">새로 고침</button><span id="permsNote" class="muted" role="status" aria-live="polite"></span></div>
@@ -377,6 +415,11 @@ table.stack tbody tr:hover td{background:none}
 </form>
 </section>
 </main>
+<aside id="detail" class="detail" aria-labelledby="detailTitle" hidden>
+<div class="detail-head"><button type="button" id="detailBack" class="detail-back"></button><h2 id="detailTitle" tabindex="-1"></h2><span id="detailBadge" class="sc-badge" hidden></span><button type="button" id="detailClose" class="detail-close" aria-label="닫기" title="닫기 (Esc)">×</button></div>
+<nav id="detailTabs" class="sc-tabs" aria-label="상세 보기"></nav>
+<div id="detailBody" class="detail-body"></div>
+</aside>
 </div>
 </div>
 <script>
@@ -407,6 +450,7 @@ async function loadMe(){
     if(hostingOn&&location.hash==='#settings')loadNodes();
     if(hostingOn&&(location.hash==='#terminals'||location.hash.startsWith('#terminal=')))route();
     if(hostingOn&&curTab==='sessions')loadSessions();
+    if(hostingOn&&detailCur)drawDetail();
     $('whoName').textContent=m.mode==='legacy'?'프록시':m.user;
     $('whoName').title=$('whoName').textContent;
     $('whoMark').textContent=[...$('whoName').textContent][0]||'';$('who').title=$('whoName').textContent;$('who').hidden=false;
@@ -452,33 +496,213 @@ function kTokens(n){if(n===null||n===undefined)return '-';return n<10000?(n/1000
 function when(t){return t?new Date(t).toLocaleString('ko-KR'):'-'}
 function byLabel(by){return by==='panel'?'세션 패널':by}
 function ago(now,t){if(!t)return '-';const s=Math.max(0,Math.round((new Date(now)-new Date(t))/1000));return s<120?s+'초 전':s<7200?Math.round(s/60)+'분 전':Math.round(s/3600)+'시간 전'}
-const sessionCols=['역할','상태','컨텍스트','마지막 턴','기계','폴더','라벨','부모','마지막 보고'];
+// ---- 상세 패널 ----
+// A list row opens its item in the right panel (#detail, 440px; the whole
+// screen below 720px). The hash is #<tab>/<id>/<sub> (id URI-encoded), so
+// reload and back/forward restore the item and its sub-tab. A tab plugs in
+// with registerDetail(tab,spec):
+//   list   the list's name on the mobile back button (← 세션)
+//   kinds  live change kinds that redraw the open item (default [tab])
+//   load   async id => item, or null when it is gone
+//   head   item => {title, badge:[text,tone]} (tone: success|info|warning|danger|neutral)
+//   subs   item => [[key,label],...]; the first is the default sub-tab
+//   draw   async (item,sub,box) => fills box with text nodes only
+// List renderers call detailRow(tr,tab,id) on each row (Tab-reachable, Enter
+// or click opens, the open row is aria-current). openDetail(tab,id,sub) and
+// closeDetail() move the hash; drawDetail() redraws the open item. Esc
+// closes; focus moves to the title on open and back to the row on close.
+const details={};
+let detailCur=null,detailSeq=0;
+function registerDetail(tab,spec){details[tab]=spec}
+function detailHash(tab,id,sub){return '#'+tab+'/'+encodeURIComponent(id)+(sub?'/'+sub:'')}
+function openDetail(tab,id,sub){
+  if(sub===undefined)sub=detailCur&&detailCur.tab===tab?detailCur.sub:'';
+  const h=detailHash(tab,id,sub);
+  if(location.hash===h)route();else location.hash=h;
+}
+function closeDetail(){if(detailCur)location.hash=detailCur.tab}
+function detailRow(tr,tab,id){
+  id=String(id);tr.dataset.detailId=id;tr.tabIndex=0;
+  if(detailCur&&detailCur.tab===tab&&detailCur.id===id)tr.setAttribute('aria-current','true');
+  tr.addEventListener('click',e=>{if(!e.target.closest('a,button,input'))openDetail(tab,id)});
+  tr.addEventListener('keydown',e=>{if(e.target===tr&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openDetail(tab,id)}});
+}
+function detailRowFor(tab,id){
+  for(const tr of $('panel-'+tab).querySelectorAll('tr[data-detail-id]'))if(tr.dataset.detailId===id)return tr;
+  return null;
+}
+function markDetailRows(){
+  for(const tr of document.querySelectorAll('tr[data-detail-id]')){
+    const tab=tr.closest('[role=tabpanel]').id.slice(6);
+    if(detailCur&&detailCur.tab===tab&&detailCur.id===tr.dataset.detailId)tr.setAttribute('aria-current','true');else tr.removeAttribute('aria-current');
+  }
+}
+// keepRowFocus(tbody,fill) rebuilds a list with fill() and puts focus back on
+// the row it was on, so a live reload does not drop the keyboard user.
+function keepRowFocus(body,fill){
+  const a=document.activeElement,id=a&&a.dataset&&body.contains(a)?a.dataset.detailId:undefined;
+  fill();
+  if(id!==undefined)for(const tr of body.querySelectorAll('tr[data-detail-id]'))if(tr.dataset.detailId===id){tr.focus();break}
+}
+function showDetail(tab,id,sub){
+  const fresh=!detailCur||detailCur.tab!==tab||detailCur.id!==id;
+  detailCur={tab:tab,id:id,sub:sub||''};
+  $('appMain').classList.add('has-detail');$('detail').hidden=false;
+  $('detailBack').textContent='← '+details[tab].list;
+  markDetailRows();
+  if(fresh){
+    $('detailTitle').textContent=id;$('detailBadge').hidden=true;$('detailTabs').replaceChildren();
+    $('detailBody').replaceChildren(node('p','불러오는 중…','muted'));$('detail').scrollTop=0;
+    $('detailTitle').focus({preventScroll:true});
+  }
+  drawDetail();
+}
+function hideDetail(){
+  const c=detailCur;if(!c)return;
+  const a=document.activeElement,back=$('detail').contains(a)||a===document.body||!a;
+  detailCur=null;detailSeq++;
+  $('detail').hidden=true;$('appMain').classList.remove('has-detail');
+  markDetailRows();
+  const tr=detailRowFor(c.tab,c.id);
+  if(back&&tr&&curTab===c.tab)tr.focus();
+}
+const toneClass={success:'sc-badge--success',info:'sc-badge--info',warning:'sc-badge--warning',danger:'sc-badge--danger',neutral:'sc-badge--neutral'};
+async function drawDetail(){
+  const c=detailCur;if(!c)return;
+  const seq=++detailSeq,spec=details[c.tab],box=document.createElement('div');
+  let head={title:c.id,badge:null},subs=[],sub=c.sub;
+  try{
+    const item=await spec.load(c.id);
+    if(seq!==detailSeq)return;
+    if(!item)box.append(node('p','없음 · 지워졌거나 바뀜','empty'));
+    else{
+      head=spec.head(item);subs=spec.subs(item);
+      if(!subs.some(s=>s[0]===sub))sub=subs[0][0];
+      await spec.draw(item,sub,box);
+    }
+  }catch(e){box.replaceChildren(node('p',e.message,'msg err'))}
+  if(seq!==detailSeq)return;
+  $('detailTitle').textContent=head.title;
+  const b=$('detailBadge');b.hidden=!head.badge;
+  if(head.badge){b.textContent=head.badge[0];b.className='sc-badge '+(toneClass[head.badge[1]]||toneClass.neutral)}
+  // Redrawing replaces the sub-tab links and the body: keep focus where it was.
+  const nav=$('detailTabs'),act=document.activeElement,onTab=nav.contains(act)?act.getAttribute('href'):null,inBody=$('detailBody').contains(act);
+  nav.replaceChildren();
+  for(const [k,label] of subs){
+    const a=node('a',label);a.href=detailHash(c.tab,c.id,k);
+    if(k===sub)a.setAttribute('aria-current','page');
+    nav.append(a);
+    if(onTab===a.getAttribute('href'))a.focus();
+  }
+  const top=$('detail').scrollTop;
+  $('detailBody').replaceChildren(...box.childNodes);
+  $('detail').scrollTop=top;
+  if(inBody||(onTab&&!nav.contains(document.activeElement)))$('detailTitle').focus({preventScroll:true});
+}
+$('detailClose').onclick=closeDetail;
+$('detailBack').onclick=closeDetail;
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&detailCur&&!e.defaultPrevented){e.preventDefault();closeDetail()}});
+function dl(pairs){
+  const d=node('dl','','pdl');
+  for(const [k,v] of pairs){const dd=document.createElement('dd');if(v instanceof Node)dd.append(v);else dd.textContent=v;d.append(node('dt',k),dd)}
+  return d;
+}
+// ---- 세션 ----
+const stTone={'st-idle':'success','st-busy':'info','st-compacting':'info','st-error':'danger','st-blocked':'warning'};
+const sessionCols=['역할','상태','컨텍스트','마지막 턴','기계','라벨'];
+const sessionChips=[['all','전체',()=>true],['busy','바쁨',v=>v.online&&/^(busy|compacting)$/.test(v.status)],['problem','오류·막힘',v=>/^(error|blocked):/.test(v.status||'')],['offline','오프라인',v=>!v.online]];
+// sessionsSeq drops an answer that a later load (live update, hosting flag
+// arriving from /api/admin/me) has overtaken.
+let sessionsData=null,sessionsFilter='all',sessionsSeq=0;
 async function loadSessions(){
+  const seq=++sessionsSeq;
   $('sessionsNote').textContent='불러오는 중…';
   try{
     const p=await api('presence');
     const hosted=hostingOn?await hostedBySlot():new Map();
-    const body=$('sessions');body.replaceChildren();
-    for(const v of p.sessions){
+    if(seq!==sessionsSeq)return;
+    sessionsData={p:p,hosted:hosted};
+    drawSessions();
+    $('sessionsNote').title='심장박동 '+p.interval_seconds+'초, '+p.missed+'번 놓치면 오프라인';
+  }catch(e){if(seq===sessionsSeq)$('sessionsNote').textContent=e.message}
+}
+function drawSessions(){
+  if(!sessionsData)return;
+  const {p,hosted}=sessionsData,q=$('sessionsSearch').value.trim().toLowerCase();
+  const chips=$('sessionChips');chips.replaceChildren();
+  for(const [k,label,f] of sessionChips){
+    const b=node('button',label+' ','sc-chip');b.type='button';b.setAttribute('aria-pressed',k===sessionsFilter?'true':'false');
+    b.append(node('span',String(p.sessions.filter(f).length),'sc-chip-count'));
+    b.onclick=()=>{sessionsFilter=k;drawSessions()};
+    chips.append(b);
+  }
+  const keep=sessionChips.find(c=>c[0]===sessionsFilter)[2];
+  const shown=p.sessions.filter(v=>keep(v)&&(!q||[v.role,v.machine,v.directory,v.label||''].some(s=>(s||'').toLowerCase().includes(q))));
+  const body=$('sessions');
+  keepRowFocus(body,()=>{
+    body.replaceChildren();
+    for(const v of shown){
       const [stText,stClass]=sessionStatus(v.status);
       const tr=node('tr','',!v.online?'offline':/^st-(error|blocked)$/.test(stClass)?'row'+stClass.slice(2):'');
-      const cells=[v.role,stText,kTokens(v.context_tokens),when(v.last_turn_at),v.machine,v.directory,v.label||'-',v.parent||'-',ago(p.now,v.reported_at)];
-      cells.forEach((text,i)=>{const td=node('td',text,i===1?stClass:i===5?'dir':i===2?'num':'');if(i>0)td.dataset.label=sessionCols[i];tr.append(td)});
-      // 긴 폴더는 앞쪽을 줄임표로 줄이고(끝 폴더 이름이 보이게) 전체 경로는 툴팁으로. LRM은 rtl 칸에서 / 순서를 지킨다.
-      const dir=tr.children[5];if(v.directory){dir.title=v.directory;dir.textContent='\u200e'+v.directory+'\u200e'}
-      if(subagentNote(v.subagents))tr.children[1].append(' · ',node('span',subagentNote(v.subagents),'subs'));
+      const cells=[v.role,stText,kTokens(v.context_tokens),ago(p.now,v.last_turn_at),v.machine,v.label||'-'];
+      cells.forEach((text,i)=>{const td=node('td',text,i===1?stClass:i===2?'num nowrap':i===3?'nowrap':'');if(i>0)td.dataset.label=sessionCols[i];tr.append(td)});
+      tr.children[3].title=when(v.last_turn_at);
+      if(v.subagents>0){const s=node('span','서브 '+v.subagents,'subs');s.title=subagentNote(v.subagents);tr.children[1].append(' · ',s)}
       const h=hosted.get(v.role);
       if(h){const a=node('a','터미널','hosted');a.href='#terminal='+encodeURIComponent(h.id);a.title=h.node+' · '+h.directory;tr.children[0].append(' ',a)}
+      detailRow(tr,'sessions',v.role);
       body.append(tr);
     }
-    if(!p.sessions.length)emptyRow(body,9,'세션 없음');
-    $('sessionsNote').textContent=p.sessions.length+'개';
-    $('sessionsNote').title='심장박동 '+p.interval_seconds+'초, '+p.missed+'번 놓치면 오프라인';
-  }catch(e){$('sessionsNote').textContent=e.message}
+    if(!shown.length)emptyRow(body,sessionCols.length,'세션 없음');
+  });
+  $('sessionsNote').textContent=(shown.length===p.sessions.length?'':shown.length+' / ')+p.sessions.length+'개';
 }
+$('sessionsSearch').addEventListener('input',drawSessions);
+registerDetail('sessions',{
+  list:'세션',kinds:['sessions','mail','terminals'],
+  load:async id=>{
+    const p=await api('presence');const v=p.sessions.find(s=>s.role===id);
+    if(!v)return null;
+    return {v:v,now:p.now,roles:new Set(p.sessions.map(s=>s.role)),h:hostingOn?(await hostedBySlot()).get(id):null};
+  },
+  head:it=>{const [t,c]=sessionStatus(it.v.status);return {title:it.v.role,badge:[it.v.online?t:'오프라인',it.v.online?stTone[c]||'neutral':'neutral']}},
+  subs:it=>[['status','상태'],['mail','메일']].concat(it.h?[['terminal','터미널']]:[]),
+  draw:async(it,sub,box)=>{
+    const v=it.v;
+    if(sub==='mail'){
+      const rows=(await api('messages?'+new URLSearchParams({role:v.role}))).slice(0,20);
+      const ul=node('ul','','dlist');
+      for(const m of rows){
+        const li=node('li','');const a=node('a','#'+m.id+' '+m.subject);a.href=detailHash('mail',m.id,'body');
+        li.append(a,node('small',m.sender+' → '+m.recipient+' · '+(statusLabel[m.status]||m.status)+' · '+when(m.created_at)));
+        ul.append(li);
+      }
+      box.append(rows.length?ul:node('p','메일 없음','empty'));
+      return;
+    }
+    if(sub==='terminal'){
+      const a=node('a','터미널','hosted');a.href='#terminal='+encodeURIComponent(it.h.id);a.title=it.h.node+' · '+it.h.directory;
+      box.append(dl([['노드',it.h.node],['폴더',it.h.directory],['열기',a]]));
+      return;
+    }
+    const [stText,stClass]=sessionStatus(v.status);
+    const st=node('span',stText,stClass);
+    let parent=v.parent||'-';
+    if(v.parent&&it.roles.has(v.parent)){parent=node('a',v.parent);parent.href=detailHash('sessions',v.parent,'status')}
+    const last=node('span',ago(it.now,v.last_turn_at));last.title=when(v.last_turn_at);
+    box.append(dl([['상태',st],['접속',v.online?'온라인':'오프라인'],['서브 에이전트',v.subagents>0?subagentNote(v.subagents):'-'],['컨텍스트',kTokens(v.context_tokens)],['마지막 턴',last],['기계',v.machine||'-'],['폴더',v.directory||'-'],['라벨',v.label||'-'],['부모',parent],['마지막 보고',ago(it.now,v.reported_at)]]));
+  }
+});
+// ---- 메일 ----
 // mailID is set by openMessage (진행 tab) to show one message; 「초기화」 or a
 // new search clears it.
 let mailID='';
+function shortWhen(t){
+  const d=new Date(t),n=new Date();
+  return d.toDateString()===n.toDateString()?d.toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'}):d.toLocaleDateString('ko-KR',{month:'numeric',day:'numeric'});
+}
+const mailTone={pending:'warning',read:'neutral',acknowledged:'info',complete:'success',completed:'success',held:'neutral'};
+const mailCols=['#','제목','보낸 쪽 → 받는 쪽','상태','시각'];
 async function load(){
   $('conn').textContent='불러오는 중…';
   const thread=$('thread').value,task=$('task').value.trim(),id=mailID;
@@ -486,41 +710,64 @@ async function load(){
   try{
     const q=new URLSearchParams({box:$('box').value,role:$('role').value,status:$('status').value,q:$('search').value,thread:thread,task:task,id:id});
     const rows=await api('messages?'+q);
-    const list=$('list');list.replaceChildren();
-    for(const m of rows)list.append(card(m));
-    if(!rows.length)list.append(node('p','메일 없음','empty'));
-    if(id&&rows.length===1)list.querySelector('article button').click();
+    const list=$('list');
+    keepRowFocus(list,()=>{
+      list.replaceChildren();
+      for(const m of rows)list.append(mailRow(m));
+      if(!rows.length)emptyRow(list,mailCols.length,'메일 없음');
+    });
     $('conn').textContent=rows.length+'통 (최대 500통)';
   }catch(e){$('conn').textContent=e.message}
 }
-function card(m){
-  const urgent=m.priority==='urgent';
-  const c=node('article','',urgent?'card urgent':'card');
-  const meta=m.sender+' → '+m.recipient+' · '+new Date(m.created_at).toLocaleString('ko-KR')+' · '+(statusLabel[m.status]||m.status)+(m.task_id?' · task '+m.task_id:'')+(m.addressed_to&&m.addressed_to!==m.recipient?' · '+m.addressed_to+' 앞':'');
-  const toggle=node('button','열기');
-  toggle.setAttribute('aria-expanded','false');
-  let body=null;
-  toggle.onclick=()=>{
-    if(body){body.remove();body=null;toggle.textContent='열기';toggle.setAttribute('aria-expanded','false');return}
-    body=node('div','','body');
-    body.append(node('pre',m.body));
+function mailRow(m){
+  const tr=node('tr','',m.priority==='urgent'?'urgent':'');
+  const subj=node('td','');
+  if(m.priority==='urgent')subj.append(node('span','긴급','badge'));
+  subj.append(node('strong',m.subject));
+  if(m.task_id)subj.append(node('small','task '+m.task_id));
+  const who=node('td',m.sender+' → '+m.recipient);
+  if(m.addressed_to&&m.addressed_to!==m.recipient)who.append(node('small',m.addressed_to+' 앞'));
+  const t=node('td',shortWhen(m.created_at),'nowrap');t.title=when(m.created_at);
+  const cells=[node('td',String(m.id),'num nowrap'),subj,who,node('td',statusLabel[m.status]||m.status,'nowrap'),t];
+  cells.forEach((td,i)=>{if(i>0)td.dataset.label=mailCols[i];tr.append(td)});
+  detailRow(tr,'mail',m.id);
+  return tr;
+}
+registerDetail('mail',{
+  list:'메일',
+  load:async id=>(await api('messages?'+new URLSearchParams({id:id})))[0]||null,
+  head:m=>({title:'#'+m.id+' '+m.subject,badge:[statusLabel[m.status]||m.status,mailTone[m.status]||'neutral']}),
+  subs:()=>[['body','본문'],['thread','스레드']],
+  draw:async(m,sub,box)=>{
     const root=m.thread_id||m.id;
+    if(sub==='thread'){
+      const rows=(await api('messages?'+new URLSearchParams({thread:root}))).slice().reverse();
+      const ul=node('ul','','dlist');
+      for(const x of rows){
+        const li=node('li','',x.id===m.id?'cur':'');
+        const a=node('a','#'+x.id+' '+x.subject);a.href=detailHash('mail',x.id,'body');
+        if(x.id===m.id)a.setAttribute('aria-current','true');
+        const text=x.body.length>400?x.body.slice(0,400)+'…':x.body;
+        li.append(a,node('small',x.sender+' → '+x.recipient+' · '+(statusLabel[x.status]||x.status)+' · '+when(x.created_at)),node('p',text));
+        ul.append(li);
+      }
+      box.append(rows.length?ul:node('p','메일 없음','empty'));
+      return;
+    }
+    const pairs=[['보낸 쪽',m.sender],['받는 쪽',m.recipient]];
+    if(m.addressed_to&&m.addressed_to!==m.recipient)pairs.push(['주소',m.addressed_to+' 앞']);
+    pairs.push(['시각',when(m.created_at)],['상태',statusLabel[m.status]||m.status]);
+    if(m.priority==='urgent')pairs.push(['우선','긴급']);
+    if(m.task_id)pairs.push(['task',m.task_id]);
+    box.append(dl(pairs),node('pre',m.body));
     const foot=node('p','','row muted');
     foot.append(node('span',m.thread_id?'스레드 #'+m.thread_id+(m.reply_to?' · #'+m.reply_to+'에 대한 답장':''):'스레드 시작 메일'));
     const th=node('button','스레드 보기');
-    th.onclick=()=>{$('thread').value=root;load();window.scrollTo({top:0})};
+    th.onclick=()=>{$('thread').value=root;mailID='';load()};
     foot.append(th);
-    body.append(foot);
-    c.append(body);
-    toggle.textContent='닫기';toggle.setAttribute('aria-expanded','true');
-    body.scrollIntoView({block:'nearest'});
-  };
-  const h=node('h3','');
-  if(urgent)h.append(node('span','긴급','badge'));
-  h.append(document.createTextNode('#'+m.id+' '+m.subject));
-  c.append(h,node('p',meta,'muted'),toggle);
-  return c;
-}
+    box.append(foot);
+  }
+});
 // ---- Tabs ----
 // Each tab's loader runs once, the first time the tab is shown; after that the
 // tab's own 「새로 고침」 button reloads it. #33 sets tabLoaders.permissions and
@@ -667,7 +914,7 @@ function openMail(f){
   $('thread').value=f.thread||'';$('task').value=f.task||'';mailID=f.id?String(f.id):'';
   $('search').value='';$('status').value='';$('role').value='';$('box').value='all';
   const fresh=!tabLoaded.has('mail');
-  selectTab('mail');
+  if(f.id)openDetail('mail',String(f.id),'body');else selectTab('mail');
   if(!fresh)load();
   window.scrollTo({top:0});
 }
@@ -1308,21 +1555,23 @@ tabLoaders.permissions=loadPermissions;
 // Reconnects back off exponentially (1s to 30s) and resume with boot+after.
 const liveReload={progress:loadProgress,sessions:loadSessions,metrics:loadMetrics,mail:load,permissions:loadPermissions,questions:loadQuestions,settings:()=>{loadSettings();loadRoles()},terminals:loadTerminals};
 const liveCounts={questions:refreshQuestionCount,permissions:refreshPermissionCount,metrics:refreshMetricsCount};
-let liveBoot='',liveSeq=0,liveDelay=1000,liveDirty=new Set(),liveStale=new Set(),liveTimer=0;
+let liveBoot='',liveSeq=0,liveDelay=1000,liveDirty=new Set(),liveStale=new Set(),liveTimer=0,liveDetail=false;
 function liveMark(kinds){
   for(const k of kinds){
+    if(detailCur&&(details[detailCur.tab].kinds||[detailCur.tab]).includes(k))liveDetail=true;
     if(!liveReload[k])continue;
     if(k===curTab)liveDirty.add(k);
     else{if(tabLoaded.has(k))liveStale.add(k);if(liveCounts[k])liveCounts[k]()}
   }
-  if(liveDirty.size&&!liveTimer)liveTimer=setTimeout(liveFlush,300);
+  if((liveDirty.size||liveDetail)&&!liveTimer)liveTimer=setTimeout(liveFlush,300);
 }
 function liveFlush(){
   liveTimer=0;
-  const a=document.activeElement,busy=a&&a.matches&&a.matches('input,textarea,select')&&$('panel-'+curTab).contains(a);
+  const a=document.activeElement,busy=a&&a.matches&&a.matches('input,textarea,select')&&($('panel-'+curTab).contains(a)||$('detail').contains(a));
   if(busy){liveTimer=setTimeout(liveFlush,2000);return}
   for(const k of liveDirty){if(k===curTab)liveReload[k]();else if(tabLoaded.has(k))liveStale.add(k)}
   liveDirty.clear();
+  if(liveDetail){liveDetail=false;drawDetail()}
 }
 function liveConnect(){
   const u=new URL('/api/admin/live',location.href);
@@ -1361,9 +1610,17 @@ function showTab(name){
 }
 // Routes: #progress #sessions #metrics #mail #permissions #questions #settings, #decisions (질문 tab,
 // 결정 view), #q=<id> (질문 + focusQuestion) and #terminal=<id> (터미널 with that row
-// marked; the Sessions tab links hosted sessions there). No hash or an unknown one shows 진행.
+// marked; the Sessions tab links hosted sessions there), and #<tab>/<id>/<sub> for a tab
+// with a detail panel (registerDetail). No hash or an unknown one shows 진행.
 function route(){
   const h=location.hash.slice(1);
+  const parts=h.split('/');
+  if(parts.length>1&&details[parts[0]]&&visibleTabs().includes(parts[0])&&parts[1]){
+    let id=parts[1];try{id=decodeURIComponent(id)}catch(e){}
+    showTab(parts[0]);showDetail(parts[0],id,parts[2]||'');
+    return;
+  }
+  hideDetail();
   if(h.startsWith('terminal=')){
     let id=h.slice(9);try{id=decodeURIComponent(id)}catch(e){}
     termFocus=id;

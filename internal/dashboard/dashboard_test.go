@@ -248,14 +248,15 @@ func TestDashboardSessionsMarkHostedSessions(t *testing.T) {
 }
 
 // Running background sub-agents (#215) show next to the state, as text, in
-// the 진행 cards and the 세션 table.
+// the 진행 cards, the 세션 list and the session's detail.
 func TestDashboardShowsSubagents(t *testing.T) {
 	w := httptest.NewRecorder()
 	Page(w, httptest.NewRequest("GET", "/", nil))
 	body := w.Body.String()
 	for _, want := range []string{
 		"function subagentNote(n){return n>0?'서브 에이전트 '+n+'개 작업 중':''}",
-		"tr.children[1].append(' · ',node('span',subagentNote(v.subagents),'subs'))",
+		"const s=node('span','서브 '+v.subagents,'subs');s.title=subagentNote(v.subagents);tr.children[1].append(' · ',s)",
+		"['서브 에이전트',v.subagents>0?subagentNote(v.subagents):'-']",
 		"node('span',subagentNote(v.subagents),'subs')]:[]",
 	} {
 		if !strings.Contains(body, want) {
@@ -288,7 +289,7 @@ func TestDashboardDesignFrame(t *testing.T) {
 		`>운영</div>`, `id="tab-progress"`, `id="tab-sessions"`, `id="tab-mail"`,
 		`>응답</div>`, `id="tab-questions"`, `id="tab-permissions"`,
 		`>관리</div>`, `id="tab-metrics"`, `id="tab-terminals"`, `id="tab-settings"`,
-		`<div class="sc-app-main">`, `<header class="sc-topbar">`, `<li id="crumbTab" aria-current="page">진행</li>`,
+		`<div class="sc-app-main" id="appMain">`, `<header class="sc-topbar">`, `<li id="crumbTab" aria-current="page">진행</li>`,
 		`id="live"`, `id="whoName"`, `id="logout"`, `<main class="sc-app-page">`, `id="panel-progress"`, `</main>`, `<script>`,
 	}
 	last := -1
@@ -321,5 +322,71 @@ func TestDashboardDesignFrame(t *testing.T) {
 	own := dashboardHTML[strings.Index(dashboardHTML, "<style>"):strings.Index(dashboardHTML, "</style>")]
 	if m := regexp.MustCompile(`:#[0-9a-fA-F]{3,6}\b|--(bg|surface|surface-2|border|border-strong|text|muted|accent|accent-soft|idle|busy|compacting|error|blocked|offline|s[1-6]|r|r-sm|mono)[:)]`).FindString(own); m != "" {
 		t.Errorf("page styles define their own colour or spacing %q", m)
+	}
+}
+
+// List + right detail panel (#229): one panel after the page area, the hash
+// #<tab>/<id>/<sub> opens it (reload and back/forward restore it), Esc closes
+// it, focus goes to its title on open and back to the row on close, and below
+// 720px it covers the screen with a back button. 세션 and 메일 use it.
+func TestDashboardDetailPanel(t *testing.T) {
+	w := httptest.NewRecorder()
+	Page(w, httptest.NewRequest("GET", "/", nil))
+	body := w.Body.String()
+	order := []string{
+		`<main class="sc-app-page">`, `</main>`,
+		`<aside id="detail" class="detail" aria-labelledby="detailTitle" hidden>`,
+		`<button type="button" id="detailBack" class="detail-back">`, `<h2 id="detailTitle" tabindex="-1">`,
+		`id="detailBadge" class="sc-badge"`, `id="detailClose"`, `<nav id="detailTabs" class="sc-tabs"`, `id="detailBody"`, `<script>`,
+	}
+	last := -1
+	for _, want := range order {
+		i := strings.Index(body, want)
+		if i < last {
+			t.Fatalf("detail panel missing or out of order: %q", want)
+		}
+		last = i
+	}
+	for _, want := range []string{
+		// Layout: 440px right column, sticky top bar, full screen below 720px.
+		".sc-app-main.has-detail{grid-template-columns:minmax(0,1fr) 440px}",
+		".sc-topbar{position:sticky;top:0;",
+		"@media (max-width:720px){\n.sc-app-main.has-detail{grid-template-columns:minmax(0,1fr)}\n.detail{position:fixed;inset:0;",
+		".detail-back{display:inline-block}",
+		// Hash restore: #<tab>/<id>/<sub>.
+		"function detailHash(tab,id,sub){return '#'+tab+'/'+encodeURIComponent(id)+(sub?'/'+sub:'')}",
+		"if(parts.length>1&&details[parts[0]]&&visibleTabs().includes(parts[0])&&parts[1]){",
+		"showTab(parts[0]);showDetail(parts[0],id,parts[2]||'');",
+		"  hideDetail();\n",
+		// Esc closes; focus to the title on open, back to the row on close.
+		"if(e.key==='Escape'&&detailCur&&!e.defaultPrevented){e.preventDefault();closeDetail()}",
+		"$('detailTitle').focus({preventScroll:true});",
+		"if(back&&tr&&curTab===c.tab)tr.focus();",
+		// Rows: Tab-reachable, Enter opens, the open row is marked.
+		"tr.dataset.detailId=id;tr.tabIndex=0;",
+		"if(e.target===tr&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openDetail(tab,id)}",
+		"table.list tr[aria-current=true] td{",
+		"$('detailBack').textContent='← '+details[tab].list;",
+		// Live updates redraw the open item and keep the selection and sub-tab.
+		"if(detailCur&&(details[detailCur.tab].kinds||[detailCur.tab]).includes(k))liveDetail=true;",
+		"if(liveDetail){liveDetail=false;drawDetail()}",
+		"if(seq!==detailSeq)return;",
+		// 세션 and 메일 register.
+		"registerDetail('sessions',{", "subs:it=>[['status','상태'],['mail','메일']].concat(it.h?[['terminal','터미널']]:[]),",
+		"registerDetail('mail',{", "subs:()=>[['body','본문'],['thread','스레드']],",
+		"box.append(dl(pairs),node('pre',m.body));",
+		"if(f.id)openDetail('mail',String(f.id),'body');else selectTab('mail');",
+		`<thead><tr><th>역할</th><th>상태</th><th class="num">컨텍스트</th><th>마지막 턴</th><th>기계</th><th>라벨</th></tr></thead>`,
+		`<thead><tr><th class="num">#</th><th>제목</th><th>보낸 쪽 → 받는 쪽</th><th>상태</th><th>시각</th></tr></thead>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("detail panel missing %q", want)
+		}
+	}
+	// The six mail filters stay.
+	for _, id := range []string{"box", "role", "status", "search", "thread", "task"} {
+		if !strings.Contains(body, `id="`+id+`"`) {
+			t.Fatalf("mail filter %q gone", id)
+		}
 	}
 }
