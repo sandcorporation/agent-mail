@@ -58,6 +58,8 @@ type Hub struct {
 	nodeLimit  map[string]wire.NodeLimit
 	limited    bool
 	limitKnown bool
+	slotOf     SlotOf
+	runSeen    map[string]int64 // host time the current run was first reported, by record id
 
 	tickets tickets
 }
@@ -75,7 +77,8 @@ func NewHub(svc *Service, publish func(kinds ...string)) *Hub {
 		publish = func(...string) {}
 	}
 	return &Hub{svc: svc, publish: publish, conns: map[string]*nodeConn{}, runtime: map[string]wire.HostedRuntime{},
-		away: map[string]int64{}, owner: map[string]string{}, viewers: map[string]map[*viewer]struct{}{}, sizeBy: map[string]*viewer{}, nodeLimit: map[string]wire.NodeLimit{}}
+		away: map[string]int64{}, owner: map[string]string{}, viewers: map[string]map[*viewer]struct{}{}, sizeBy: map[string]*viewer{}, nodeLimit: map[string]wire.NodeLimit{},
+		runSeen: map[string]int64{}}
 }
 
 // Run re-reads the records every interval until ctx is done.
@@ -101,6 +104,11 @@ func (h *Hub) Sync() error {
 	if err != nil {
 		return err
 	}
+	if h.follow(recs) {
+		if recs, err = h.svc.List(); err != nil {
+			return err
+		}
+	}
 	b, _ := json.Marshal(recs)
 	byNode := map[string][]wire.HostedSession{}
 	owner := map[string]string{}
@@ -124,6 +132,7 @@ func (h *Hub) Sync() error {
 	for id := range h.runtime {
 		if _, ok := owner[id]; !ok {
 			delete(h.runtime, id)
+			delete(h.runSeen, id)
 		}
 	}
 	for name, c := range h.conns {
@@ -204,6 +213,13 @@ func (h *Hub) List() ([]wire.HostedSession, error) {
 	if err != nil {
 		return nil, err
 	}
+	h.withRuntime(recs)
+	h.withSlots(recs)
+	return recs, nil
+}
+
+// withRuntime fills each record's Runtime (Hub.List).
+func (h *Hub) withRuntime(recs []wire.HostedSession) {
 	known := map[string]bool{}
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -232,7 +248,6 @@ func (h *Hub) List() ([]wire.HostedSession, error) {
 			recs[i].Runtime = rt
 		}
 	}
-	return recs, nil
 }
 
 // Restart restarts a running record with resume through its node (the
@@ -433,6 +448,9 @@ func (h *Hub) receive(c *nodeConn, f wire.NodeFrame) {
 			} else {
 				rt.Since = &now
 			}
+			if !ok || prev.Run != rt.Run || !sameTime(prev.StartedAt, rt.StartedAt) {
+				h.runSeen[st.ID] = now
+			}
 			if !ok || !sameRuntime(prev, rt) {
 				changed = true
 			}
@@ -479,6 +497,8 @@ func (h *Hub) receive(c *nodeConn, f wire.NodeFrame) {
 func sameLimit(a, b wire.NodeLimit) bool {
 	return a.Limited == b.Limited && a.Since == b.Since && (a.ResetAt == nil) == (b.ResetAt == nil) && (a.ResetAt == nil || *a.ResetAt == *b.ResetAt)
 }
+
+func sameTime(a, b *int64) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }
 
 func sameRuntime(a, b wire.HostedRuntime) bool {
 	x, _ := json.Marshal(a)

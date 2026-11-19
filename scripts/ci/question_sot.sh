@@ -5,7 +5,7 @@
 #   bash scripts/ci/question_sot.sh
 set -euo pipefail
 pattern='^TestQuestionSingleSourceOfTruth_'
-want=16
+want=18
 out="$(go test -count=1 -v -run "$pattern" ./internal/server/ 2>&1)" || { echo "$out"; exit 1; }
 echo "$out" | grep -E '^(=== RUN|--- |    --- |ok|FAIL|PASS)' || true
 ran=$(grep -c '^--- PASS: TestQuestionSingleSourceOfTruth_' <<<"$out" || true)

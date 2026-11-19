@@ -144,6 +144,33 @@ func (s *Service) ActiveSlots(base string) ([]wire.SlotView, error) {
 	return out, rows.Err()
 }
 
+// FolderSlot is the slot of base held at machine in folder: the identity
+// (machine, folder) itself or a session-marked form "<folder> #<8 hex>" of
+// it (mail.Folder). Of several, a leased one wins over an ended one, then
+// the one heard from last. It only reads; ok is false when there is none.
+func (s *Service) FolderSlot(base, machine, folder string) (v wire.SlotView, ok bool, err error) {
+	rows, err := s.db.Query(`SELECT `+slotCols()+` FROM slots WHERE base=? AND machine=? AND substr(directory,1,length(?))=?`, base, machine, folder, folder)
+	if err != nil {
+		return v, false, err
+	}
+	defer rows.Close()
+	now := s.now()
+	for rows.Next() {
+		c, err := scanSlot(rows)
+		if err != nil {
+			return v, false, err
+		}
+		if mail.Folder(c.Directory) != folder {
+			continue
+		}
+		cLive, vLive := c.LeaseExpiresAt.After(now), v.LeaseExpiresAt.After(now)
+		if !ok || cLive && !vLive || cLive == vLive && c.LeaseExpiresAt.After(v.LeaseExpiresAt) {
+			v, ok = c, true
+		}
+	}
+	return v, ok, rows.Err()
+}
+
 // inTx runs f in one transaction. The pool has a single connection, so slot
 // changes are serialised; the (base, number) primary key and the
 // (base, machine, directory) unique key back that up.

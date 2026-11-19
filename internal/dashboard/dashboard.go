@@ -126,6 +126,7 @@ tr.row-blocked td:first-child{box-shadow:inset 3px 0 var(--blocked)}
 .panswer input{width:100%;min-width:0}
 .qcard{scroll-margin-top:3.5rem}
 .qcard.focus{outline:2px solid var(--accent);outline-offset:2px}
+tr.focus td{background:var(--accent-soft,rgba(80,120,255,.12))}
 .qcard.answered,.qcard.withdrawn{background:var(--surface-2)}
 .pill{display:inline-block;border-radius:var(--r-sm);padding:0 .4rem;margin-right:var(--s2);font-size:.75em;font-weight:600;vertical-align:middle;color:var(--accent);background:var(--accent-soft)}
 .pill.pending{color:var(--blocked);background:var(--blocked-bg)}.pill.answered{color:var(--idle);background:var(--idle-bg)}.pill.withdrawn{color:var(--offline);background:var(--offline-bg)}.pill.waiting{color:var(--blocked);background:var(--blocked-bg)}
@@ -337,7 +338,7 @@ table.stack tbody tr:hover td{background:none}
 <div id="terminalsMsg" class="msg" role="status" aria-live="polite"></div>
 <div id="termLimit" class="toolbar"><span>구독 한도</span><strong id="termLimitText">-</strong><button type="button" id="termLimitBtn" aria-pressed="false">한도 걸기</button></div>
 <div id="termView" hidden><div class="toolbar"><button type="button" id="termBack">목록</button><h3 id="termTitle"></h3><span id="termStateText" class="muted"></span><span id="termConn" class="muted" role="status" aria-live="polite"></span><button type="button" id="termMode" aria-pressed="false">입력</button></div><div id="termScreen"></div><h3>기록</h3><div class="wide"><table class="stack"><thead><tr><th>시각</th><th>관리자</th><th>종류</th><th>바이트</th></tr></thead><tbody id="termLog"></tbody></table></div></div>
-<div class="wide" id="termListWrap"><table id="terminalsTbl" class="stack"><thead><tr><th>노드</th><th>역할</th><th>라벨</th><th>분류</th><th>상태</th><th>일감</th><th>이후</th><th>폴더</th><th>재시작</th><th>마지막 종료</th><th></th></tr></thead><tbody id="terminals"></tbody></table></div>
+<div class="wide" id="termListWrap"><table id="terminalsTbl" class="stack"><thead><tr><th>노드</th><th>역할</th><th>접속</th><th>라벨</th><th>분류</th><th>상태</th><th>일감</th><th>이후</th><th>폴더</th><th>재시작</th><th>마지막 종료</th><th></th></tr></thead><tbody id="terminals"></tbody></table></div>
 <form id="termForm" class="settings-form">
 <label>노드 <input id="termNode" required autocomplete="off" autocapitalize="off" spellcheck="false" value="local"></label>
 <label>역할 <input id="termBase" required autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="team/worker"></label>
@@ -375,7 +376,8 @@ async function loadMe(){
     const m=await r.json();adminMode=m.mode||'';hostingOn=m.hosting===true;termAssets=Array.isArray(m.terminal_assets)?m.terminal_assets:[];
     $('tab-terminals').hidden=!hostingOn;$('nodesBox').hidden=!hostingOn;
     if(hostingOn&&location.hash==='#settings')loadNodes();
-    if(hostingOn&&location.hash==='#terminals')route();
+    if(hostingOn&&(location.hash==='#terminals'||location.hash.startsWith('#terminal=')))route();
+    if(hostingOn&&curTab==='sessions')loadSessions();
     $('whoName').textContent=m.mode==='legacy'?'프록시':m.user;
     $('whoName').title=$('whoName').textContent;
     $('logout').hidden=m.mode==='legacy';
@@ -425,6 +427,7 @@ async function loadSessions(){
   $('sessionsNote').textContent='불러오는 중…';
   try{
     const p=await api('presence');
+    const hosted=hostingOn?await hostedBySlot():new Map();
     const body=$('sessions');body.replaceChildren();
     for(const v of p.sessions){
       const [stText,stClass]=sessionStatus(v.status);
@@ -433,6 +436,8 @@ async function loadSessions(){
       cells.forEach((text,i)=>{const td=node('td',text,i===1?stClass:i===5?'dir':i===2?'num':'');if(i>0)td.dataset.label=sessionCols[i];tr.append(td)});
       // 긴 폴더는 앞쪽을 줄임표로 줄이고(끝 폴더 이름이 보이게) 전체 경로는 툴팁으로. LRM은 rtl 칸에서 / 순서를 지킨다.
       const dir=tr.children[5];if(v.directory){dir.title=v.directory;dir.textContent='\u200e'+v.directory+'\u200e'}
+      const h=hosted.get(v.role);
+      if(h){const a=node('a','터미널','hosted');a.href='#terminal='+encodeURIComponent(h.id);a.title=h.node+' · '+h.directory;tr.children[0].append(' ',a)}
       body.append(tr);
     }
     if(!p.sessions.length)emptyRow(body,9,'세션 없음');
@@ -899,7 +904,7 @@ async function loadSettings(){
   }catch(e){$('settingsNote').textContent=e.message}
 }
 // ---- 터미널 (hosting) ----
-const termCols=['노드','역할','라벨','분류','상태','일감','이후','폴더','재시작','마지막 종료'];
+const termCols=['노드','역할','접속','라벨','분류','상태','일감','이후','폴더','재시작','마지막 종료'];
 const termClass={lead:'총괄',coordinator:'조율',execute:'실행',review:'검토'};
 let termLimited=false;
 async function loadTermLimit(){
@@ -917,6 +922,15 @@ $('termLimitBtn').onclick=async()=>{
   try{await apiSend('PUT','terminals/limit',{limited:!termLimited});setMsg($('terminalsMsg'),termLimited?'구독 한도 풀림':'구독 한도 걸림','ok');loadTerminals()}
   catch(e){setMsg($('terminalsMsg'),e.message,'err')}
 };
+const termPresence={online:'온라인',offline:'오프라인','offline (process alive)':'오프라인 (프로세스 살아 있음)'};
+// hostedBySlot maps a slot role (team/worker-1) to the hosted session holding it.
+async function hostedBySlot(){
+  const m=new Map();
+  try{for(const v of await api('terminals'))if(v.slot&&v.slot.role)m.set(v.slot.role,v)}catch(e){}
+  return m;
+}
+// termFocus is the record a #terminal=<id> link asked for; loadTerminals marks its row.
+let termFocus='';
 const termState={running:'실행 중',starting:'시작 중',stopped:'멈춤',waiting:'대기',crashloop:'반복 실패','backing off':'재시도 대기','resume failed':'재개 실패',relaunching:'다시 띄우는 중',unknown:'모름','node offline':'노드 오프라인',gone:'삭제됨'};
 function termStateText(st,rt){
   let t=termState[st]||st;
@@ -940,10 +954,13 @@ async function loadTerminals(){
     for(const v of rows){
       const rt=v.runtime||{},st=rt.state||'unknown';
       const want=v.desired==='stopped'&&st!=='stopped'&&st!=='node offline'?' → 멈춤':'';
-      const tr=node('tr','',st==='node offline'?'offline':'');
-      cells(tr,termCols,[v.node,v.base,v.label||'-',termClass[v.class]||v.class||'-',termStateText(st,rt)+want,v.accepting_work===false?'받지 않음':'받음',when(rt.since),v.directory,String(rt.restarts||0),rt.last_exit===null||rt.last_exit===undefined?'-':String(rt.last_exit)],
-        ['','','','',st==='running'?'st-idle':st==='node offline'||st==='unknown'?'st-offline':st==='crashloop'||st==='resume failed'?'st-error':'',v.accepting_work===false?'st-blocked':'','','dir','num','num']);
-      const dir=tr.children[7];dir.title=v.directory;dir.textContent='\u200e'+v.directory+'\u200e';
+      const tr=node('tr','',st==='node offline'?'offline':'');tr.dataset.id=v.id;
+      const pr=v.presence||'';
+      cells(tr,termCols,[v.node,v.slot&&v.slot.role?v.slot.role:v.base,termPresence[pr]||pr||'-',v.label||'-',termClass[v.class]||v.class||'-',termStateText(st,rt)+want,v.accepting_work===false?'받지 않음':'받음',when(rt.since),v.directory,String(rt.restarts||0),rt.last_exit===null||rt.last_exit===undefined?'-':String(rt.last_exit)],
+        ['','',pr==='online'?'st-idle':pr?'st-offline':'','','',st==='running'?'st-idle':st==='node offline'||st==='unknown'?'st-offline':st==='crashloop'||st==='resume failed'?'st-error':'',v.accepting_work===false?'st-blocked':'','','dir','num','num']);
+      if(v.slot&&v.slot.role)tr.children[1].title=v.base;
+      if(v.id===termFocus){tr.classList.add('focus');setTimeout(()=>tr.scrollIntoView({block:'center'}),0)}
+      const dir=tr.children[8];dir.title=v.directory;dir.textContent='\u200e'+v.directory+'\u200e';
       const act=node('td','');
       const view=node('button','보기');view.type='button';view.onclick=()=>termOpen(v);act.append(view);
       if(v.desired==='stopped'){const b=node('button','시작');b.type='button';b.onclick=()=>termAct(v,'PUT','',{desired:'running'},v.base+' 시작');act.append(b)}
@@ -958,7 +975,8 @@ async function loadTerminals(){
       del.onclick=()=>{if(confirm(v.node+' '+v.base+' '+v.directory+' 세션을 지울까요?'))termAct(v,'DELETE','',undefined,v.base+' 삭제')};
       act.append(del);tr.append(act);body.append(tr);
     }
-    if(!rows.length)emptyRow(body,11,'터미널 없음');
+    if(!rows.length)emptyRow(body,12,'터미널 없음');
+    if(termFocus&&!rows.some(v=>v.id===termFocus))setMsg($('terminalsMsg'),'터미널 '+termFocus+' 없음','err');
     $('terminalsNote').textContent=rows.length+'개';
   }catch(e){$('terminalsNote').textContent=e.message}
 }
@@ -1309,9 +1327,20 @@ function showTab(name){
   liveStale.delete(name);
 }
 // Routes: #progress #sessions #metrics #mail #permissions #questions #settings, #decisions (질문 tab,
-// 결정 view) and #q=<id> (질문 + focusQuestion). No hash or an unknown one shows 진행.
+// 결정 view), #q=<id> (질문 + focusQuestion) and #terminal=<id> (터미널 with that row
+// marked; the Sessions tab links hosted sessions there). No hash or an unknown one shows 진행.
 function route(){
   const h=location.hash.slice(1);
+  if(h.startsWith('terminal=')){
+    let id=h.slice(9);try{id=decodeURIComponent(id)}catch(e){}
+    termFocus=id;
+    if(!hostingOn)return;
+    termClose();
+    if(tabLoaded.has('terminals'))loadTerminals();
+    showTab('terminals');
+    return;
+  }
+  termFocus='';
   if(h==='decisions'){showTab('questions');showQuestionView('decisions');return}
   if(h==='questions'||h.startsWith('q='))showQuestionView('questions');
   if(h.startsWith('q=')){

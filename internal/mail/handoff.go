@@ -49,6 +49,10 @@ func (w Handoff) takes(machine, directory, label string) bool {
 	return folder(w.Directory) == folder(directory) && (w.Label == "" || label == "")
 }
 
+// Folder is dir without a trailing session mark " #<8 hex digits>": the
+// folder a plugin directory names.
+func Folder(dir string) string { return folder(dir) }
+
 // folder is dir without a trailing session mark " #<8 hex digits>".
 func folder(dir string) string {
 	const mark = len(" #") + 8

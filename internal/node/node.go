@@ -276,7 +276,12 @@ func (n *Node) stateOf(r Record) *state {
 			sessionID: r.AgentSessionID, restartGen: r.RestartGen, startGen: r.StartGen}
 		n.states[r.ID] = s
 	}
-	if r.AgentSessionID != s.sessionID {
+	if r.AgentSessionID != s.sessionID && r.Launched && s.Launched {
+		// The host followed the conversation the running session moved to
+		// inside its terminal (for example /clear): the process already
+		// holds it, so it keeps running and the next launch resumes it.
+		s.sessionID = r.AgentSessionID
+	} else if r.AgentSessionID != s.sessionID {
 		// A new conversation: from the host after a resume failure, or
 		// asked for (New conversation). The running session, if any, holds
 		// the old one.

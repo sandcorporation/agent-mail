@@ -400,3 +400,35 @@ func TestRestartSessionsRelaunchesEveryRecordWithResume(t *testing.T) {
 		t.Fatalf("stopped record %+v", st)
 	}
 }
+
+// The host followed a conversation the running session moved to inside its
+// terminal (the record keeps launched, the id changes): the process keeps
+// running and the next launch resumes the followed id.
+func TestFollowedConversationKeepsProcessAndResumesIt(t *testing.T) {
+	r := newRig(t)
+	a := rec("a")
+	n := r.node(a)
+	r.reconcile(n)
+	r.reconcile(n)
+	if st := r.state(n, "a"); !st.Launched || st.Observed != node.ObservedRunning {
+		t.Fatalf("before: %+v", st)
+	}
+	a.AgentSessionID, a.Launched = "conv-cleared", true
+	n.Assign([]node.Record{a})
+	r.reconcile(n)
+	if stops := r.fake.Stops(); len(stops) != 0 {
+		t.Fatalf("a followed conversation stopped the session: %+v", stops)
+	}
+	if got := r.launches(); len(got) != 1 {
+		t.Fatalf("launches %q", got)
+	}
+	if st := r.state(n, "a"); st.AgentSessionID != "conv-cleared" || !st.Launched || st.ResumeFailed {
+		t.Fatalf("after follow: %+v", st)
+	}
+	r.exitAfter(n, time.Minute, 1)
+	r.waitOut(n)
+	if got := r.launches(); len(got) != 2 || got[1][1] != "--resume" || got[1][2] != "conv-cleared" {
+		t.Fatalf("launches %q", got)
+	}
+	noContinue(t, r.launches())
+}

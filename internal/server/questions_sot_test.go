@@ -637,3 +637,83 @@ func TestQuestionSingleSourceOfTruth_OtherLabelInSameFolderNeverGetsAnswer(t *te
 	h.noAnswerMail(other.Role, v.ID)
 	h.wantAnswerMail(sotAskerToken, same.Role, v.ID, 1)
 }
+
+// hostedAsker is the asker partner-a/coordinator as a hosted session on a
+// node (machine pc-1) in /work/q, its plugin registered with the record's
+// conversation.
+func (h *sotHarness) hostedAsker() (*hostedRig, wire.SlotGrant) {
+	h.t.Helper()
+	r := newHostedRig(h.t, h.s, h.url, h.clock, sotAsker, sotAskerToken, "/work/q")
+	return r, r.plugin("register", sotAsker, "/work/q", r.record().AgentSessionID)
+}
+
+// heartbeatsPastLease keeps the hosted asker's slot g live for three half
+// leases, so every lease it no longer renews ends.
+func (h *sotHarness) heartbeatsPastLease(r *hostedRig, g wire.SlotGrant, sid string) {
+	h.t.Helper()
+	half := h.s.presenceCfg.SlotLease/2 + time.Minute
+	for i := 0; i < 3; i++ {
+		h.clock.add(half)
+		r.plugin("heartbeat", g.Role, g.Directory, sid)
+	}
+	r.sync()
+}
+
+// 17. A hosted session asks, then its process is relaunched (resume): the
+// answer, given before the relaunched session registers, reaches the
+// relaunched session once under its old number and stays once.
+func TestQuestionSingleSourceOfTruth_HostedRelaunchGetsAnswerOnce(t *testing.T) {
+	h := newSOT(t)
+	r, asked := h.hostedAsker()
+	sid := r.record().AgentSessionID
+	v := h.ask(sotAskerToken, asked.Role)
+	h.clock.add(time.Second)
+	r.restart()
+	if l := r.launchArgs(); l[len(l)-1] != "sb-"+r.id+" --resume "+sid {
+		h.fail("relaunch %q", l)
+	}
+	h.panelAnswer(sotBossToken, sotBoss, v.ID, 200)
+	again := r.plugin("register", sotAsker, "/work/q", sid)
+	if again.Role != asked.Role {
+		h.fail("relaunched session registered as %s, asked as %s", again.Role, asked.Role)
+	}
+	h.wantAnswerMail(sotAskerToken, again.Role, v.ID, 1)
+	h.heartbeatsPastLease(r, again, sid)
+	h.wantAnswerMail(sotAskerToken, again.Role, v.ID, 1)
+	if got := r.record().AgentSessionID; got != sid {
+		h.fail("conversation changed to %s", got)
+	}
+}
+
+// 18. A hosted session asks, then moves to a new conversation inside its
+// terminal (/clear): the host follows it, the answer reaches the session
+// once, and after a relaunch into the followed conversation it is still
+// once under the same number.
+func TestQuestionSingleSourceOfTruth_HostedConversationFollowedGetsAnswerOnce(t *testing.T) {
+	h := newSOT(t)
+	r, asked := h.hostedAsker()
+	v := h.ask(sotAskerToken, asked.Role)
+	next := "52abcdef-0000-4000-8000-000000000000"
+	cleared := r.clear(asked, "/work/q", next)
+	if cleared.Role != asked.Role {
+		h.fail("cleared session registered as %s, asked as %s", cleared.Role, asked.Role)
+	}
+	r.sync()
+	if got := r.record().AgentSessionID; got != next {
+		h.fail("host did not follow the conversation: %s", got)
+	}
+	h.panelAnswer(sotBossToken, sotBoss, v.ID, 200)
+	h.wantAnswerMail(sotAskerToken, cleared.Role, v.ID, 1)
+	h.clock.add(time.Second)
+	r.restart()
+	if l := r.launchArgs(); l[len(l)-1] != "sb-"+r.id+" --resume "+next {
+		h.fail("relaunch %q", l)
+	}
+	again := r.plugin("register", sotAsker, "/work/q", next)
+	if again.Role != asked.Role {
+		h.fail("relaunched session registered as %s", again.Role)
+	}
+	h.wantAnswerMail(sotAskerToken, again.Role, v.ID, 1)
+	h.heartbeatsPastLease(r, again, next)
+	h.wantAnswerMail(sotAskerToken, again.Role, v.ID, 1)
+}

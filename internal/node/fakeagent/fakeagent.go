@@ -14,8 +14,15 @@
 // --session-id under SWITCHBOARD_FAKE_AGENT_DIR so --resume of an unknown id
 // fails like the real CLI, then reads input lines: "exit N" exits with N,
 // "limit [RESET]" prints the usage-limit message (LimitMessage),
-// "draw <scene>" paints SWITCHBOARD_FAKE_AGENT_SCENES/<scene>.vt, anything
-// else is echoed as "echo <line>".
+// "draw <scene>" paints SWITCHBOARD_FAKE_AGENT_SCENES/<scene>.vt, "clear"
+// moves to a new conversation id ("session <id>"), "mute" stops slot
+// heartbeats, anything else is echoed as "echo <line>".
+//
+// With SWITCHBOARD_PROFILE naming a profile file in SWITCHBOARD_CONFIG_DIR
+// it also plays the switchboard plugin (slot.go): it registers its slot
+// ("slot <role>") with SWITCHBOARD_MACHINE and its working directory,
+// heartbeats it every SWITCHBOARD_FAKE_AGENT_HEARTBEAT, and on "clear"
+// releases it and registers the new conversation.
 package fakeagent
 
 import (
@@ -130,8 +137,22 @@ func Run(args, environ []string, in io.Reader, out io.Writer) int {
 		fmt.Fprintf(out, "error: %v\r\n", err)
 		return ExitUsage
 	}
-	defer tr.Close()
+	defer func() { tr.Close() }()
 	fmt.Fprintf(out, "ready %s\r\n", id)
+
+	pl, err := newPlugin(getenv)
+	if err != nil {
+		fmt.Fprintf(out, "error: %v\r\n", err)
+	}
+	if pl != nil {
+		if role, err := pl.register(id); err != nil {
+			fmt.Fprintf(out, "error: slot: %v\r\n", err)
+		} else {
+			fmt.Fprintf(out, "slot %s\r\n", role)
+		}
+		go pl.heartbeat(heartbeatEvery(getenv))
+		defer pl.close()
+	}
 
 	scenes, _ := config.EnvFrom(getenv, config.FakeAgentScenesName)
 	sc := bufio.NewScanner(in)
@@ -149,6 +170,34 @@ func Run(args, environ []string, in io.Reader, out io.Writer) int {
 			return n
 		case "limit":
 			fmt.Fprintf(out, "%s\r\n", LimitMessage(strings.TrimSpace(arg)))
+		case "clear":
+			// A new conversation in the same process, as /clear: the plugin
+			// ends the old slot lease and registers the new id.
+			next := newSessionID()
+			nt, err := os.OpenFile(filepath.Join(dir, next+".transcript"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+			if err != nil {
+				fmt.Fprintf(out, "error: %v\r\n", err)
+				continue
+			}
+			tr.Close()
+			tr, id = nt, next
+			fmt.Fprintf(out, "session %s\r\n", id)
+			if pl != nil {
+				if err := pl.release(); err != nil {
+					fmt.Fprintf(out, "error: slot: %v\r\n", err)
+				}
+				if role, err := pl.register(id); err != nil {
+					fmt.Fprintf(out, "error: slot: %v\r\n", err)
+				} else {
+					fmt.Fprintf(out, "slot %s\r\n", role)
+				}
+			}
+		case "mute":
+			// The plugin stops heartbeating; the process lives on.
+			if pl != nil {
+				pl.mute()
+			}
+			fmt.Fprintf(out, "muted\r\n")
 		case "draw":
 			if err := draw(out, scenes, strings.TrimSpace(arg)); err != nil {
 				fmt.Fprintf(out, "error: %v\r\n", err)
