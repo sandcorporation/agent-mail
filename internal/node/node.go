@@ -5,6 +5,7 @@
 // is already there.
 //
 // The package imports config, wire and term only; it never imports hosting.
+// Records arrive as wire.HostedSession (#184).
 package node
 
 import (
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/sandcorporation/switchboard/internal/term"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 // Restart policies.
@@ -44,27 +46,10 @@ const NamePrefix = "sb-"
 // StopGrace is how long a stopped session gets before it is killed.
 const StopGrace = 10 * time.Second
 
-// Record is one hosted session the host assigned to this node: the fields
-// of the host's hosted_sessions row (#184) the node needs. The host channel
-// (#186) fills it from the wire shape.
-type Record struct {
-	ID        string
-	Profile   string
-	Label     string
-	Parent    string
-	Directory string
-	// AgentSessionID is the agent conversation id passed as --session-id on
-	// the first launch and --resume after it.
-	AgentSessionID string
-	// Launched is true once a launch of this record succeeded anywhere.
-	Launched bool
-	Args     []string
-	// Env is extra non-secret environment; secret-like names are dropped.
-	Env        map[string]string
-	Restart    string
-	Desired    string
-	Cols, Rows int
-}
+// Record is one hosted session the host assigned to this node, the wire
+// shape of the host's hosted_sessions row; the node reads its launch fields
+// and ignores Runtime.
+type Record = wire.HostedSession
 
 // TerminalName is the backend session name for a record id.
 func TerminalName(id string) string { return NamePrefix + id }
@@ -83,6 +68,16 @@ type State struct {
 	// Launched is true once this node has launched or adopted the record,
 	// so the host can persist it.
 	Launched bool
+}
+
+// Wire is the state as the host shows it.
+func (s State) Wire() wire.HostedRuntime {
+	rt := wire.HostedRuntime{State: s.Observed, PID: s.PID, Run: s.Run, LastExit: s.LastExit}
+	if !s.StartedAt.IsZero() {
+		ms := s.StartedAt.UnixMilli()
+		rt.StartedAt = &ms
+	}
+	return rt
 }
 
 // Node reconciles a backend against the assigned records.

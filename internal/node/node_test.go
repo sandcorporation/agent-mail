@@ -89,6 +89,17 @@ func rec(id string) node.Record {
 	}
 }
 
+func TestStateWire(t *testing.T) {
+	code := 2
+	rt := node.State{Observed: node.ObservedRunning, PID: 7, Run: 3, StartedAt: t0, LastExit: &code}.Wire()
+	if rt.State != "running" || rt.PID != 7 || rt.Run != 3 || rt.StartedAt == nil || *rt.StartedAt != t0.UnixMilli() || *rt.LastExit != 2 {
+		t.Fatalf("%+v", rt)
+	}
+	if (node.State{}).Wire().StartedAt != nil {
+		t.Fatal("zero start time reported")
+	}
+}
+
 func TestFirstLaunchUsesSessionIDThenResume(t *testing.T) {
 	r := newRig(t)
 	n := r.node(rec("a"))
