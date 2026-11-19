@@ -1,30 +1,17 @@
 package term
 
 import (
-	"bytes"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 )
 
 var update = flag.Bool("update", false, "rewrite testdata/scenes/*.golden from the emulator")
 
-// scene is one testdata/scenes/*.vt file. Format: "#" lines are comments,
-// "@size CxR" (first) and "@resize CxR" are directives, every other line is
-// VT input with its line break ignored and the escapes \e \r \n \t \\ \xNN.
-type scene struct {
-	cols, rows int
-	steps      []step
-}
-
-type step struct {
-	data       []byte
-	cols, rows int // resize when data is nil
-}
+type scene struct{ Scene }
 
 func parseScene(t *testing.T, path string) scene {
 	t.Helper()
@@ -32,81 +19,24 @@ func parseScene(t *testing.T, path string) scene {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var sc scene
-	for i, line := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n") {
-		switch {
-		case strings.HasPrefix(line, "#"):
-		case strings.HasPrefix(line, "@size "):
-			sc.cols, sc.rows = parseSize(t, path, i, line[len("@size "):])
-		case strings.HasPrefix(line, "@resize "):
-			c, r := parseSize(t, path, i, line[len("@resize "):])
-			sc.steps = append(sc.steps, step{cols: c, rows: r})
-		default:
-			sc.steps = append(sc.steps, step{data: unescape(t, line)})
-		}
+	sc, err := ParseScene(raw)
+	if err != nil {
+		t.Fatalf("%s: %v", path, err)
 	}
-	if sc.cols == 0 {
-		t.Fatalf("%s: no @size", path)
-	}
-	return sc
-}
-
-func parseSize(t *testing.T, path string, i int, s string) (int, int) {
-	t.Helper()
-	c, r, ok := strings.Cut(strings.TrimSpace(s), "x")
-	cols, err1 := strconv.Atoi(c)
-	rows, err2 := strconv.Atoi(r)
-	if !ok || err1 != nil || err2 != nil {
-		t.Fatalf("%s:%d: bad size %q", path, i+1, s)
-	}
-	return cols, rows
-}
-
-func unescape(t *testing.T, s string) []byte {
-	t.Helper()
-	var b bytes.Buffer
-	for i := 0; i < len(s); i++ {
-		if s[i] != '\\' || i+1 == len(s) {
-			b.WriteByte(s[i])
-			continue
-		}
-		i++
-		switch s[i] {
-		case 'e':
-			b.WriteByte(0x1b)
-		case 'r':
-			b.WriteByte('\r')
-		case 'n':
-			b.WriteByte('\n')
-		case 't':
-			b.WriteByte('\t')
-		case '\\':
-			b.WriteByte('\\')
-		case 'x':
-			n, err := strconv.ParseUint(s[i+1:i+3], 16, 8)
-			if err != nil {
-				t.Fatalf("bad \\x escape in %q", s)
-			}
-			b.WriteByte(byte(n))
-			i += 2
-		default:
-			t.Fatalf("unknown escape \\%c in %q", s[i], s)
-		}
-	}
-	return b.Bytes()
+	return scene{sc}
 }
 
 // play feeds a scene through a fresh emulator.
 func (sc scene) play(t *testing.T) Grid {
 	t.Helper()
-	e := NewEmulator(sc.cols, sc.rows, 0)
+	e := NewEmulator(sc.Cols, sc.Rows, 0)
 	defer e.Close()
-	for _, s := range sc.steps {
-		if s.data == nil {
-			e.Resize(s.cols, s.rows)
+	for _, s := range sc.Steps {
+		if s.Data == nil {
+			e.Resize(s.Cols, s.Rows)
 			continue
 		}
-		if _, err := e.Write(s.data); err != nil {
+		if _, err := e.Write(s.Data); err != nil {
 			t.Fatal(err)
 		}
 	}

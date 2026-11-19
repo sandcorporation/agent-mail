@@ -112,3 +112,44 @@ func HostingFrom(getenv func(string) string) (on bool, from string) {
 	v, from := EnvAliasFrom(getenv, HostingName)
 	return strings.TrimSpace(v) == "on", from
 }
+
+// EnvFrom reads SWITCHBOARD_<name> through getenv, with no old-name alias:
+// variables added after the rename (hosting, #173) answer only to the new
+// name. from is the full variable name, for messages.
+func EnvFrom(getenv func(string) string, name string) (value, from string) {
+	return getenv(EnvPrefix + name), EnvPrefix + name
+}
+
+// Node-side hosting variables (#173), read with EnvFrom.
+const (
+	// HostingAgentName names the agent CLI the node launches (default
+	// "claude"), resolved through PATH at node start.
+	HostingAgentName = "HOSTING_AGENT"
+	// HostingMachineName is the machine name given to hosted sessions
+	// (default os.Hostname()).
+	HostingMachineName = "HOSTING_MACHINE"
+	// HostingHistoryName is the scrollback lines kept per session.
+	HostingHistoryName = "HOSTING_HISTORY"
+	// FakeAgentName set to "1" turns a test binary into the fake agent.
+	FakeAgentName = "FAKE_AGENT"
+	// FakeAgentDirName is where the fake agent keeps its transcripts.
+	FakeAgentDirName = "FAKE_AGENT_DIR"
+	// FakeAgentScenesName is the directory of *.vt scenes "draw" paints.
+	FakeAgentScenesName = "FAKE_AGENT_SCENES"
+)
+
+// Variables a hosted session's child gets from the node (#173). Each is
+// EnvPrefix + the name.
+const (
+	ChildProfileName  = "PROFILE"
+	ChildEndpointName = "ENDPOINT"
+	ChildMachineName  = "MACHINE"
+	ChildLabelName    = "LABEL"
+	ChildParentName   = "PARENT"
+	TokenName         = "TOKEN"
+)
+
+// LegacyEnv returns the old-prefix spelling of name, so callers that must
+// strip a variable under both names (a credential kept out of a child) can
+// do so without hard-coding the prefix.
+func LegacyEnv(name string) string { return legacyEnvPrefix + name }

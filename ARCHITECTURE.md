@@ -19,6 +19,8 @@ The Go HTTP server authenticates each request by hashing the bearer token (SHA-2
 | `internal/cli` | the client: every subcommand, profiles, the HTTP client | `config`, `wire` |
 | `internal/term` | the terminal backend seam for hosted sessions: `Backend`, `Spec`, `Info`, `Grid`, `Emulator` (VT bytes in, `Grid` out) and `Grid.Snapshot`; `term/internal/vt` is a patched copy of `charmbracelet/x/vt` vt/v0.1.0 (see its README); no runtime path uses it yet | none |
 | `internal/term/termtest` | the in-memory `Backend` for tests above the backend | `term` |
+| `internal/node` | node mode for hosted sessions: `Record` (the host's assignment), `Node` (reconcile loop: launch with `--session-id` then `--resume`, adopt live `sb-<id>` sessions, stop orphans, restart policy, `desired=stopped`), `Resolve` (agent CLI, machine, history from `SWITCHBOARD_HOSTING_*`), the child environment; no runtime path starts a node yet | `config`, `term` |
+| `internal/node/fakeagent` | the fake agent CLI for tests and demos: a test binary re-executed with `SWITCHBOARD_FAKE_AGENT=1` | `config`, `node`, `term` |
 | `internal/live` | the dashboard change bus: numbered change kinds, a ring for resume, bounded per-client queues that drop slow clients | none |
 | `internal/wire` | the HTTP API shapes and the checks client and server share | none |
 | `internal/store` | `Open`, the schema and its additive migrations, `InTx`, token hashing | none |
