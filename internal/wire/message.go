@@ -29,6 +29,23 @@ type Message struct {
 	Done           bool       `json:"done,omitempty"`            // reply --done: the reply is the final report and marks the replied-to mail done (#269)
 	DirectiveState string     `json:"directive_state,omitempty"` // reply response: the replied-to directive's state, open or done (#269)
 	IdempotencyKey string     `json:"-"`
+	// AnswersDirective: this mail answers a directive the reader sent, and
+	// the directive's state (#275). Only the directive's sender sees it.
+	AnswersDirective *DirectiveRef `json:"answers_directive,omitempty"`
+}
+
+// Directive states on the wire: open while the answered rule's Open holds
+// (mail.AnsweredRule), else done.
+const (
+	DirectiveOpen = "open"
+	DirectiveDone = "done"
+)
+
+// DirectiveRef names a directive and its state: answers_directive on a
+// message, a mail event or a watch entry (#275).
+type DirectiveRef struct {
+	ID    int64  `json:"id"`
+	State string `json:"state"` // DirectiveOpen or DirectiveDone
 }
 
 func ValidRole(role string) bool {

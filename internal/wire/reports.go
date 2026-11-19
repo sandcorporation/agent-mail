@@ -65,6 +65,11 @@ type Report struct {
 	Mail        []int64    `json:"mail"`
 	Status      string     `json:"status"`
 	LastReplyAt *time.Time `json:"last_reply_at"`
+	// Directives is the number of linked threads whose directive still
+	// exists; OpenDirectives how many of them are open under the answered
+	// rule's Open. Status is open exactly when OpenDirectives > 0 (#275).
+	Directives     int `json:"directives"`
+	OpenDirectives int `json:"open_directives"`
 }
 
 // ReportList is GET /api/admin/reports, newest first.

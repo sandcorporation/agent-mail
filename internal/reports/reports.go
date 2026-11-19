@@ -275,16 +275,21 @@ func nonNil(ids []int64) []int64 {
 	return ids
 }
 
-// summarize sets the report's status and latest reply time from its threads.
-// A report with no (remaining) linked thread is done.
+// summarize sets the report's status, its directive counts and latest reply
+// time from its threads. The report is open while at least one linked
+// directive is open under the answered rule's Open, and done otherwise or
+// when no linked thread remains (#275).
 func summarize(rp *wire.Report, threads map[int64]wire.ReportThread) {
 	rp.Status = wire.ReportDone
+	rp.Directives, rp.OpenDirectives = 0, 0
 	for _, m := range rp.Mail {
 		t, ok := threads[m]
 		if !ok {
 			continue
 		}
+		rp.Directives++
 		if t.Open {
+			rp.OpenDirectives++
 			rp.Status = wire.ReportOpen
 		}
 		if n := len(t.Replies); n > 0 {

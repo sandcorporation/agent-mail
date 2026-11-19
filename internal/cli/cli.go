@@ -883,6 +883,12 @@ func cliReply(c Config, req *http.Request, id string, jsonMode bool) (int, error
 	return printResponse(b, jsonMode), nil
 }
 
+// DirectiveOpenNote is the line read prints under the header of an answer
+// to a directive the reader sent that is still open (#275).
+func DirectiveOpenNote(id int64) string {
+	return fmt.Sprintf("directive #%d is still open: close %d when it is done, or reply to ask for more", id, id)
+}
+
 // ReplyOpenNote is the stderr line of a reply that leaves its directive open.
 func ReplyOpenNote(id string) string {
 	return "directive #" + id + " stays open; reply " + id + " --done (or complete " + id + ") closes it"
@@ -1007,7 +1013,13 @@ func prettyTo(w io.Writer, v any) {
 			mark = "[urgent] "
 		}
 		body, _ := x["body"].(string)
-		fmt.Fprintf(w, "#%v %s%v\n%v → %v · %s\n%s\n", x["id"], mark, x["subject"], x["sender"], x["recipient"], x["status"], indentBody(body))
+		fmt.Fprintf(w, "#%v %s%v\n%v → %v · %s\n", x["id"], mark, x["subject"], x["sender"], x["recipient"], x["status"])
+		if ref, ok := x["answers_directive"].(map[string]any); ok && ref["state"] == wire.DirectiveOpen {
+			if id, ok := ref["id"].(float64); ok {
+				fmt.Fprintln(w, DirectiveOpenNote(int64(id)))
+			}
+		}
+		fmt.Fprintf(w, "%s\n", indentBody(body))
 	default:
 		fmt.Fprintln(w, v)
 	}
@@ -1204,8 +1216,9 @@ func cliWatch(c Config, p parsedArgs) (int, error) {
 			continue
 		}
 		var v struct {
-			Messages []int64 `json:"messages"`
-			Cursor   int64   `json:"cursor"`
+			Messages []int64                      `json:"messages"`
+			Cursor   int64                        `json:"cursor"`
+			Answers  map[string]wire.DirectiveRef `json:"answers_directive"`
 		}
 		e = json.NewDecoder(resp.Body).Decode(&v)
 		resp.Body.Close()
@@ -1217,8 +1230,20 @@ func cliWatch(c Config, p parsedArgs) (int, error) {
 			after = v.Cursor
 		}
 		for _, id := range v.Messages {
+			ref, answers := v.Answers[strconv.FormatInt(id, 10)]
 			if jsonMode {
-				fmt.Printf("{\"message_id\":%d,\"cursor\":%d}\n", id, after)
+				line := struct {
+					MessageID int64              `json:"message_id"`
+					Cursor    int64              `json:"cursor"`
+					Answers   *wire.DirectiveRef `json:"answers_directive,omitempty"`
+				}{MessageID: id, Cursor: after}
+				if answers {
+					line.Answers = &ref
+				}
+				b, _ := json.Marshal(line)
+				fmt.Println(string(b))
+			} else if answers && ref.State == wire.DirectiveOpen {
+				fmt.Printf("New message #%d (cursor %d): answers directive #%d, still open\n", id, after, ref.ID)
 			} else {
 				fmt.Printf("New message #%d (cursor %d)\n", id, after)
 			}

@@ -1334,9 +1334,14 @@ tabLoaders.questions=loadQuestions;
 // ---- 보고 ----
 // GET /api/admin/reports lists the boss roles' reports, newest first. The
 // status is the server's: 진행 중 while a linked directive is open under the
-// answered rule, else 완료. The count on the menu is the 진행 중 reports.
+// answered rule, else 완료. 진행 중 carries the count behind it, 열린 지시
+// open/linked (#275). The count on the menu is the 진행 중 reports.
 const reportCols=['상태','제목','보낸 쪽','시각'];
 const reportStatus={open:['진행 중','info'],done:['완료','success']};
+function reportBadge(r){
+  const [label,tone]=reportStatus[r.status]||[r.status,'neutral'];
+  return [r.status==='open'?label+' · 열린 지시 '+(r.open_directives||0)+'/'+(r.directives||0):label,tone];
+}
 const reportChips=[['all','전체',()=>true],['open','진행 중',r=>r.status==='open'],['done','완료',r=>r.status==='done']];
 let reportsData=null,reportsFilter='all',reportsSeq=0;
 async function refreshReportCount(){
@@ -1371,7 +1376,7 @@ function drawReports(){
   $('reportsNote').textContent=(shown.length===list.length?'':shown.length+' / ')+list.length+'개';
 }
 function reportRow(r){
-  const [label,tone]=reportStatus[r.status]||[r.status,'neutral'];
+  const [label,tone]=reportBadge(r);
   const tr=node('tr','',r.status==='open'?'':'done');
   const st=cell('');st.append(badge(label,tone));
   const t=cell('',reportCols[1],'wrap');t.append(node('strong',r.title));
@@ -1381,12 +1386,16 @@ function reportRow(r){
   detailRow(tr,'reports',r.id);
   return tr;
 }
-// A linked thread: the directive with its state, then the replies in order
-// (답 marks one the answered rule counts). Each opens the mail detail.
+// A linked thread: the directive with its state (열림 / 끝남, the answered
+// rule's Open), then the replies in order (답 marks one the answered rule
+// counts). An open directive names its sender, who closes it. Each opens the
+// mail detail.
 function reportThread(t){
   const wrap=node('div','','rthread');
-  const st=t.open?['진행 중','info']:t.completed?['완료','success']:t.closed?['닫음','neutral']:['답함','success'];
-  wrap.append(reportMail(t.directive,badge(st[0],st[1]),'div'));
+  const b=t.open?badge('열림','info'):badge('끝남','success');
+  if(!t.open)b.title=t.completed?'받은 쪽이 끝냄':'보낸 쪽이 닫음';
+  const extra=t.open?[b,' ',node('span','닫을 쪽 '+t.directive.sender,'muted')]:[b];
+  wrap.append(reportMail(t.directive,extra,'div'));
   if(t.replies.length){
     const ol=node('ol','');
     for(const m of t.replies)ol.append(reportMail(m,m.answers?badge('답','success'):null,'li'));
@@ -1398,7 +1407,7 @@ function reportMail(m,b,tag){
   const box=node(tag,''),line=node('div','','rline');
   const a=node('a','#'+m.id+' '+(m.subject||'(제목 없음)'));a.href=detailHash('mail',String(m.id),'body');
   a.onclick=e=>{e.preventDefault();openMessage(m.id)};
-  line.append(a);if(b)line.append(' ',b);
+  line.append(a);if(b)line.append(' ',...[].concat(b));
   box.append(line,node('div',m.sender+' → '+m.recipient+' · '+shortWhen(m.created_at),'muted'));
   if(m.body)box.append(node('p',m.body.length>300?m.body.slice(0,300)+'…':m.body,'rbody'));
   return box;
@@ -1409,7 +1418,7 @@ registerDetail('reports',{
     try{return await api('reports/'+encodeURIComponent(id))}
     catch(e){if(e.status===404)return null;throw e}
   },
-  head:r=>({title:r.title,badge:reportStatus[r.status]||[r.status,'neutral']}),
+  head:r=>({title:r.title,badge:reportBadge(r)}),
   subs:()=>[['body','보고']],
   draw:async(r,sub,box)=>{
     if(r.request){const q=node('p','','reqline');q.append(node('span','요청 ','muted'),document.createTextNode(r.request));box.append(q)}

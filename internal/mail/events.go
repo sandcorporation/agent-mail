@@ -193,7 +193,14 @@ func (s *Service) pendingAfter(role string, cursor int64) ([]wire.MailEvent, err
 		}
 		out = append(out, ev)
 	}
-	return out, rows.Err()
+	if e = rows.Err(); e != nil {
+		return nil, e
+	}
+	rows.Close() // the store has one connection: free it before the lookups
+	for i := range out {
+		out[i].AnswersDirective = s.AnswersDirective(role, out[i].ID)
+	}
+	return out, nil
 }
 
 const defaultPollWait = 25 * time.Second
