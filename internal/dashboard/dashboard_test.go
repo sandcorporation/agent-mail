@@ -14,9 +14,10 @@ func TestDashboardTabsSkeleton(t *testing.T) {
 	if !strings.Contains(body, `role="tablist"`) {
 		t.Fatal("dashboard has no tablist")
 	}
-	// Tab order matters: 진행, 세션, 지표, 메일, 권한 요청, 질문, 설정.
+	// Tab order matters: 운영 (진행, 세션, 메일), 응답 (질문, 권한 요청),
+	// 관리 (지표, 터미널, 설정).
 	last := -1
-	for _, name := range []string{"progress", "sessions", "metrics", "mail", "permissions", "questions", "settings"} {
+	for _, name := range []string{"progress", "sessions", "mail", "questions", "permissions", "metrics", "terminals", "settings"} {
 		tab := `id="tab-` + name + `" data-tab="` + name + `" aria-controls="panel-` + name + `"`
 		i := strings.Index(body, tab)
 		if i < 0 {
@@ -32,7 +33,7 @@ func TestDashboardTabsSkeleton(t *testing.T) {
 	}
 	for _, want := range []string{
 		`role="tab"`, "aria-selected", "function setTabCount(name,n)", "function focusQuestion(id)",
-		"'hashchange'", "h.startsWith('q=')", "ArrowRight", "ArrowLeft", "tabLoaders", "id=\"reloadMail\"", "id=\"reloadSessions\"",
+		"'hashchange'", "h.startsWith('q=')", "ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp", "tabLoaders", "id=\"reloadMail\"", "id=\"reloadSessions\"",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("dashboard missing %q", want)
@@ -50,7 +51,7 @@ func TestDashboardMetricsTab(t *testing.T) {
 	Page(w, httptest.NewRequest("GET", "/", nil))
 	body := w.Body.String()
 	for _, want := range []string{
-		`<span class="tab-name">지표</span>`,
+		`<span class="tab-name sc-sidenav-label">지표</span>`,
 		"tabLoaders.metrics=loadMetrics",
 		"api('metrics?days='+metricsDays)",
 		`id="metDays7" data-days="7"`, `id="metDays30" data-days="30"`, `id="reloadMetrics"`,
@@ -70,7 +71,7 @@ func TestDashboardProgressTab(t *testing.T) {
 	Page(w, httptest.NewRequest("GET", "/", nil))
 	body := w.Body.String()
 	for _, want := range []string{
-		`<span class="tab-name">진행</span>`,
+		`<span class="tab-name sc-sidenav-label">진행</span>`,
 		`id="tab-progress" data-tab="progress" aria-controls="panel-progress" aria-selected="true"`,
 		`id="panel-progress" role="tabpanel" aria-labelledby="tab-progress" tabindex="0" class="card">`,
 		`id="panel-sessions" role="tabpanel" aria-labelledby="tab-sessions" tabindex="0" class="card" hidden>`,
@@ -260,5 +261,65 @@ func TestDashboardShowsSubagents(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("dashboard missing %q", want)
 		}
+	}
+}
+
+// The frame is the design system's app shell: side menu in three groups,
+// top bar with breadcrumb, live indicator and the signed-in admin, and the
+// tab panels in the page area. The stylesheet is inlined, never linked, so
+// the page references no /assets/ path while hosting is off.
+func TestDashboardDesignFrame(t *testing.T) {
+	w := httptest.NewRecorder()
+	Page(w, httptest.NewRequest("GET", "/", nil))
+	body := w.Body.String()
+	css := DesignCSS()
+	if !strings.HasPrefix(css, "/* Copied from github.com/sandcorporation/sandcorp-design, tag v") || !strings.Contains(css, ".sc-sidenav-item{") {
+		t.Fatalf("sandcorp.css header or content missing: %.120q", css)
+	}
+	if !strings.Contains(body, "<style>\n"+css+"</style>") || strings.Contains(body, "/assets/") || strings.Contains(body, "<link") {
+		t.Fatal("design stylesheet not inlined once ahead of the page styles")
+	}
+	if !strings.HasPrefix(productName, productMark) {
+		t.Fatalf("mark %q is not the first letter of %q", productMark, productName)
+	}
+	order := []string{
+		`<div class="sc-app">`, `<aside class="sc-sidenav" aria-label="주 메뉴">`, `<h1>` + headerText + `</h1>`,
+		`<div id="tabs" class="tabs" role="tablist" aria-label="탭">`,
+		`>운영</div>`, `id="tab-progress"`, `id="tab-sessions"`, `id="tab-mail"`,
+		`>응답</div>`, `id="tab-questions"`, `id="tab-permissions"`,
+		`>관리</div>`, `id="tab-metrics"`, `id="tab-terminals"`, `id="tab-settings"`,
+		`<div class="sc-app-main">`, `<header class="sc-topbar">`, `<li id="crumbTab" aria-current="page">진행</li>`,
+		`id="live"`, `id="whoName"`, `id="logout"`, `<main class="sc-app-page">`, `id="panel-progress"`, `</main>`, `<script>`,
+	}
+	last := -1
+	for _, want := range order {
+		i := strings.Index(body, want)
+		if i < last {
+			t.Fatalf("frame missing or out of order: %q", want)
+		}
+		last = i
+	}
+	// 응답 items keep a waiting dot when the menu collapses to icons.
+	for _, name := range []string{"questions", "permissions"} {
+		tab := regexp.MustCompile(`<button[^>]*id="tab-` + name + `"[^>]*>`).FindString(body)
+		if !strings.Contains(tab, " data-wait ") {
+			t.Fatalf("%s tab has no data-wait: %q", name, tab)
+		}
+	}
+	for _, want := range []string{
+		".sc-sidenav-item[data-wait][data-nonzero] .sc-sidenav-count{display:block",
+		"t.toggleAttribute('data-nonzero',!!n);",
+		"$('crumbTab').textContent=t.querySelector('.tab-name').textContent;",
+		"--st-idle:var(--color-success);", "--st-error:var(--color-danger);", "--st-blocked:var(--color-warning);",
+		"--st-busy:var(--color-accent);", "--st-offline:var(--color-muted);",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("frame missing %q", want)
+		}
+	}
+	// The page's own colours all come from the design tokens.
+	own := dashboardHTML[strings.Index(dashboardHTML, "<style>"):strings.Index(dashboardHTML, "</style>")]
+	if m := regexp.MustCompile(`:#[0-9a-fA-F]{3,6}\b|--(bg|surface|surface-2|border|border-strong|text|muted|accent|accent-soft|idle|busy|compacting|error|blocked|offline|s[1-6]|r|r-sm|mono)[:)]`).FindString(own); m != "" {
+		t.Errorf("page styles define their own colour or spacing %q", m)
 	}
 }

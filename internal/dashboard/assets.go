@@ -10,7 +10,8 @@ import (
 
 // vendored holds third-party files served by the binary, never from a CDN:
 // xterm.js and its fit addon for the terminal view (assets/xterm/VERSIONS
-// pins them; the licences sit beside them).
+// pins them; the licences sit beside them) and the design system stylesheet
+// (assets/sandcorp.css, inlined into the page by DesignCSS).
 //
 //go:embed assets
 var vendored embed.FS
@@ -57,4 +58,15 @@ func Assets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = w.Write(b)
+}
+
+// DesignCSS is the design system stylesheet (assets/sandcorp.css, copied from
+// sandcorporation/sandcorp-design by scripts/sync-design-css.sh). The page
+// inlines it, so it reaches the browser with hosting off as well.
+func DesignCSS() string {
+	b, err := fs.ReadFile(vendored, "assets/sandcorp.css")
+	if err != nil {
+		panic("dashboard: embedded sandcorp.css missing: " + err.Error())
+	}
+	return string(b)
 }
