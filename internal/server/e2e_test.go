@@ -182,7 +182,7 @@ func newE2EUp(t *testing.T) *e2eUp {
 	}
 	r.port = strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
 	ln.Close()
-	r.env = append(append(os.Environ(), clearNewEnv...),
+	r.env = append(cliEnv(),
 		"SWITCHBOARD_ADMIN_AUTH=builtin",
 		"SWITCHBOARD_HOSTING_AGENT="+exe,
 		"SWITCHBOARD_HOSTING_MACHINE=pc-1",

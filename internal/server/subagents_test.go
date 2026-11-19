@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/sandcorporation/switchboard/internal/cli"
+	"github.com/sandcorporation/switchboard/internal/config"
 	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
@@ -79,6 +80,21 @@ func TestPresenceSubagents(t *testing.T) {
 	var n int
 	if err := s.db.QueryRow(`SELECT subagents FROM slots WHERE base='team/worker' AND number=1`).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("release left subagents %d %v", n, err)
+	}
+}
+
+// TestCLIHarnessIgnoresMachineEnv: the machine's own client variables, under
+// either prefix, never reach the CLI child; it uses the test's profile (#246).
+func TestCLIHarnessIgnoresMachineEnv(t *testing.T) {
+	for _, name := range []string{"ROLE", "TOKEN", "ENDPOINT", "PROFILE", "CONFIG_DIR", "MACHINE", "LABEL", "PARENT"} {
+		t.Setenv(config.EnvPrefix+name, "bogus-new")
+		t.Setenv(config.LegacyEnv(name), "bogus-old")
+	}
+	h := newCLIHarness(t)
+	h.configure(nil, "b")
+	h.mustRun(nil, "slot", "register", "--machine", "m", "--directory", "/a", "--state", "idle")
+	if out := h.mustRun(nil, "status", "b-1", "--json"); !strings.Contains(out, `"role":"b-1","base":"b"`) {
+		t.Fatalf("status --json: %q", out)
 	}
 }
 

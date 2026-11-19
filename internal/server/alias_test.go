@@ -13,9 +13,11 @@ import (
 	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
-// clearNewEnv blanks the SWITCHBOARD_* client variables for CLI helper
-// processes, so a developer's own setup never overrides a test's AGENT_MAIL_*.
-var clearNewEnv = []string{"SWITCHBOARD_CONFIG_DIR=", "SWITCHBOARD_PROFILE=", "SWITCHBOARD_ROLE=", "SWITCHBOARD_TOKEN=", "SWITCHBOARD_ENDPOINT="}
+// cliEnv is os.Environ() without any variable internal/config reads (both
+// prefixes), for CLI helper processes: a machine's own setup, such as an
+// exported AGENT_MAIL_ROLE, never reaches a test's child (#246). Callers
+// append the variables the test means.
+func cliEnv() []string { return config.WithoutOwnEnv(os.Environ()) }
 
 func fakeEnv(m map[string]string) func(string) string {
 	return func(k string) string { return m[k] }

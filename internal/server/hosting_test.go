@@ -237,7 +237,7 @@ func TestHostingStartRefusals(t *testing.T) {
 func serverProcess(t *testing.T, env ...string) *exec.Cmd {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run=^TestCLIHelperProcess$")
-	cmd.Env = append(append(os.Environ(), clearNewEnv...), "SWITCHBOARD_HOSTING=", "AGENT_MAIL_HOSTING=", "SWITCHBOARD_ADMIN_AUTH=", "SWITCHBOARD_TEST_CLI=1", "SWITCHBOARD_TEST_ARGS=[]")
+	cmd.Env = append(cliEnv(), "SWITCHBOARD_HOSTING=", "AGENT_MAIL_HOSTING=", "SWITCHBOARD_ADMIN_AUTH=", "SWITCHBOARD_TEST_CLI=1", "SWITCHBOARD_TEST_ARGS=[]")
 	cmd.Env = append(cmd.Env, env...)
 	return cmd
 }

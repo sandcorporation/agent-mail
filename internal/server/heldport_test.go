@@ -105,7 +105,7 @@ func TestE2E_UpOnABoundPortExitsAtOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := append(append(os.Environ(), clearNewEnv...),
+	env := append(cliEnv(),
 		"SWITCHBOARD_ADMIN_AUTH=builtin",
 		"SWITCHBOARD_HOSTING_AGENT="+exe,
 		"SWITCHBOARD_HOSTING_MACHINE=pc-1")

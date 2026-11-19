@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sandcorporation/switchboard/internal/config"
 	"github.com/sandcorporation/switchboard/internal/node/fakeagent"
 	"github.com/sandcorporation/switchboard/internal/term"
 	"github.com/sandcorporation/switchboard/internal/wire"
@@ -29,7 +30,7 @@ func TestMain(m *testing.M) {
 func agent(t *testing.T, dir, input string, extraEnv []string, args ...string) (string, int) {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], args...)
-	cmd.Env = append(append(os.Environ(), fakeagent.Env(dir)...), extraEnv...)
+	cmd.Env = append(append(config.WithoutOwnEnv(os.Environ()), fakeagent.Env(dir)...), extraEnv...)
 	cmd.Stdin = strings.NewReader(input)
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -160,7 +161,7 @@ func TestFakeAgentRegistersItsSlotAndFollowsClear(t *testing.T) {
 	}
 	cmd := exec.Command(os.Args[0], "--session-id", "11111111-1111-4111-8111-111111111111")
 	cmd.Dir = work
-	cmd.Env = append(append(os.Environ(), fakeagent.Env(dir)...), "SWITCHBOARD_PROFILE=team-worker", "SWITCHBOARD_CONFIG_DIR="+conf,
+	cmd.Env = append(append(config.WithoutOwnEnv(os.Environ()), fakeagent.Env(dir)...), "SWITCHBOARD_PROFILE=team-worker", "SWITCHBOARD_CONFIG_DIR="+conf,
 		"SWITCHBOARD_ENDPOINT="+srv.URL, "SWITCHBOARD_MACHINE=pc-1", "SWITCHBOARD_LABEL=42", "SWITCHBOARD_FAKE_AGENT_HEARTBEAT=20ms")
 	pr, pw := io.Pipe()
 	cmd.Stdin = pr

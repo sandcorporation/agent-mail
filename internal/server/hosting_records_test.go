@@ -150,7 +150,7 @@ func binaryCLI(t *testing.T, dbPath string, args ...string) (int, string, string
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run=^TestCLIHelperProcess$")
 	argJSON, _ := json.Marshal(args)
-	cmd.Env = append(append(os.Environ(), clearNewEnv...), "SWITCHBOARD_TEST_CLI=1", "SWITCHBOARD_TEST_ARGS="+string(argJSON), "DB_PATH="+dbPath)
+	cmd.Env = append(cliEnv(), "SWITCHBOARD_TEST_CLI=1", "SWITCHBOARD_TEST_ARGS="+string(argJSON), "DB_PATH="+dbPath)
 	var out, errOut strings.Builder
 	cmd.Stdout, cmd.Stderr = &out, &errOut
 	err := cmd.Run()
