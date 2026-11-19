@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -55,6 +56,13 @@ func runKeeper(args []string) int {
 		return 2
 	}
 	v, _ := os.ReadFile(o.LogFile + ".version")
+	// <log file>.hold makes the keeper exit that long after its pipe is
+	// gone, keeper.log still open.
+	if h, err := os.ReadFile(o.LogFile + ".hold"); err == nil {
+		if d, err := time.ParseDuration(strings.TrimSpace(string(h))); err == nil {
+			conpty.SetExitDelay(d)
+		}
+	}
 	if err := conpty.Run(o, strings.TrimSpace(string(v))); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -189,7 +197,28 @@ func echoSpec(name string) term.Spec {
 
 var instanceSeq int
 
-// keeperOpts names a keeper of its own for a test, reporting version.
+// keeperPIDs are the keeper processes each instance has run, so a test's
+// cleanup can wait for them to exit.
+var keeperPIDs = map[string][]int{}
+
+// trackKeeper records the PID of the keeper c reaches.
+func trackKeeper(ctx context.Context, instance string, c *conpty.Client) {
+	ki, err := c.Version(ctx)
+	if err != nil || slices.Contains(keeperPIDs[instance], ki.PID) {
+		return
+	}
+	keeperPIDs[instance] = append(keeperPIDs[instance], ki.PID)
+}
+
+// keeperExitWait bounds the cleanup's wait for a keeper process to exit.
+const keeperExitWait = 20 * time.Second
+
+// keeperOpts names a keeper of its own for a test, reporting version. Its
+// cleanup shuts the running keeper down and waits until every keeper process
+// of the instance has exited: a keeper holds keeper.log open, and Windows
+// cannot remove an open file, so the temp dir's cleanup (registered first,
+// run last) fails while one still runs. Waiting for the pipe to stop
+// answering is not enough; the process exits after that (#261).
 func keeperOpts(t *testing.T, version string) conpty.RunOptions {
 	t.Helper()
 	instanceSeq++
@@ -200,7 +229,14 @@ func keeperOpts(t *testing.T, version string) conpty.RunOptions {
 		c := conpty.NewClient(conpty.DialFor(o.Instance))
 		cctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
+		trackKeeper(cctx, o.Instance, c)
 		_ = c.Shutdown(cctx, time.Second)
+		for _, pid := range keeperPIDs[o.Instance] {
+			if !processGone(t, pid, keeperExitWait) {
+				t.Errorf("keeper %d still runs %s after shutdown", pid, keeperExitWait)
+			}
+		}
+		delete(keeperPIDs, o.Instance)
 		if log, err := os.ReadFile(o.LogFile); err == nil {
 			t.Logf("keeper log:\n%s", log)
 		}
@@ -225,6 +261,7 @@ func connect(t *testing.T, o conpty.RunOptions, version string) (*conpty.Client,
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
+	trackKeeper(ctx(t), o.Instance, c)
 	return c, how
 }
 
@@ -469,6 +506,33 @@ func TestKeeperOfAnotherVersionIsReplaced(t *testing.T) {
 	}
 	if ki, err := c2.Version(ctx(t)); err != nil || ki.Version != "v2" {
 		t.Fatalf("version %+v %v", ki, err)
+	}
+}
+
+// TestCleanupWaitsForTheReplacedKeeper: a replaced keeper still holds
+// keeper.log after its pipe is gone until its process exits; keeperOpts'
+// cleanup waits for that, so the temp dir is removed (#261). The v1 keeper
+// here exits 3 s late, past the 2 s TempDir cleanup retries.
+func TestCleanupWaitsForTheReplacedKeeper(t *testing.T) {
+	var dir string
+	t.Run("replace", func(t *testing.T) {
+		o := keeperOpts(t, "v1")
+		dir = filepath.Dir(o.LogFile)
+		hold := o.LogFile + ".hold"
+		if err := os.WriteFile(hold, []byte("3s"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		connect(t, o, "v1")
+		if err := os.Remove(hold); err != nil {
+			t.Fatal(err)
+		}
+		setVersion(t, o, "v2")
+		if _, how := connect(t, o, "v2"); how != conpty.Replaced {
+			t.Fatalf("keeper %s", how)
+		}
+	})
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("temp dir after the keepers' cleanup: %v", err)
 	}
 }
 

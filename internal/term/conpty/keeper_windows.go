@@ -45,7 +45,8 @@ func Run(o RunOptions, version string) error {
 	if err != nil {
 		return fmt.Errorf("keeper: job: %w", err)
 	}
-	defer windows.CloseHandle(job)
+	defer windows.CloseHandle(job) // the keeper ends here: its job kills it
+	defer runExit()
 	if err := windows.AssignProcessToJobObject(job, windows.CurrentProcess()); err != nil {
 		return fmt.Errorf("keeper: join job: %w", err)
 	}
@@ -66,6 +67,10 @@ func Run(o RunOptions, version string) error {
 		return err
 	}
 }
+
+// runExit runs as Run returns, before the job ends the process. Tests
+// replace it to make a keeper slow to exit.
+var runExit = func() {}
 
 // Start starts a keeper process (exe with o.Args()) that outlives the
 // caller: detached from its console, in a process group of its own, and out
