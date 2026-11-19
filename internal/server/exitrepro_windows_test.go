@@ -47,13 +47,14 @@ func TestExitReproConsole(t *testing.T) {
 		}
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
-		for i := 0; i < 100; i++ {
-			if c, err := net.Dial("tcp", "127.0.0.1:"+port); err == nil {
-				c.Close()
+		// up binds its port before the keeper; wait until it serves.
+		for i := 0; i < 150; i++ {
+			if b, _ := os.ReadFile(filepath.Join(root, what+".log")); strings.Contains(string(b), "node: attached") {
 				break
 			}
 			time.Sleep(200 * time.Millisecond)
 		}
+		time.Sleep(time.Second)
 		h := exec.Command(os.Args[0], "-test.run=^TestExitReproConsole$")
 		h.Env = append(os.Environ(), "SB_CON_HELPER="+strconv.Itoa(cmd.Process.Pid)+" "+what)
 		hout, herr := h.CombinedOutput()
