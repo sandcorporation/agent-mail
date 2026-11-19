@@ -993,27 +993,29 @@ function openMessage(id){openMail({id:id})}
 // One load reads GET /api/admin/progress with the pending questions and
 // permission requests. The list is 대기 (questions, permission requests,
 // sessions in error or blocked, directives over the pending alert threshold,
-// in that order of kind, oldest first within a kind) and then a row per
+// directives answered but not completed whose sessions sit idle (멈춤), in
+// that order of kind, oldest first within a kind) and then a row per
 // service. Rows open in the detail panel under #progress/<kind>:<id>:
-// q: 질문, p: 권한, s: 세션, d: 지시, svc: 서비스. The tab number is the
+// q: 질문, p: 권한, s: 세션, d: 지시, m: 멈춤 (the directive), svc: 서비스. The tab number is the
 // open directives older than the pending alert threshold (0 hides it).
 const badgeLabel={error:'오류',blocked:'막힘',busy:'바쁨',compacting:'compact 중',idle:'유휴',none:'세션 없음'};
 const badgeTone={error:'danger',blocked:'warning',busy:'info',compacting:'info',idle:'success',none:'neutral'};
 function rel(now,t){if(!t)return '-';const s=Math.max(0,Math.round((new Date(now)-new Date(t))/1000));return s<60?'방금':dur(s)+' 전'}
 function secsSince(now,t){return Math.max(0,Math.round((new Date(now)-new Date(t))/1000))}
-const waitKinds=[['q','질문','warning'],['p','권한','info'],['s','오류','danger'],['d','지시','neutral']];
+const waitKinds=[['q','질문','warning'],['p','권한','info'],['s','오류','danger'],['d','지시','neutral'],['m','멈춤','warning']];
 const waitCols=['종류','항목','역할','지난 시간'];
 const svcCols=['서비스','상태','세션','답 없는 지시','마지막 소식'];
 const svcChips=[['all','전체',()=>true],['problem','문제 있음',p=>/^(error|blocked)$/.test(p.badge)],['stale','오래된 지시',p=>p.open_directives.some(d=>d.over_threshold)]];
 let progressSeq=0,progressData=null,svcFilter='all';
 // waitItems builds the 대기 rows: {kind,id,item,role,age} with age in seconds.
 function waitItems(d){
-  const now=d.r.generated_at,by={q:[],p:[],s:[],d:[]};
+  const now=d.r.generated_at,by={q:[],p:[],s:[],d:[],m:[]};
   for(const q of d.questions)by.q.push({id:q.id,item:q.questions.map(x=>x.header).join(' · '),role:q.asker,age:secsSince(now,q.created_at)});
   for(const v of d.perms)by.p.push({id:v.id,item:v.tool+(v.summary?' · '+v.summary:''),role:v.requester,age:secsSince(now,v.created_at)});
   for(const p of d.r.services){
     for(const v of p.sessions){const m=/^(error|blocked):(.*)$/.exec(v.state||'');if(m)by.s.push({id:v.role,item:m[2]||badgeLabel[m[1]],role:v.role,age:secsSince(now,v.since),tone:m[1]==='blocked'?'warning':'danger',label:badgeLabel[m[1]]})}
     for(const x of p.open_directives)if(x.over_threshold)by.d.push({id:String(x.id),item:'#'+x.id+' '+(x.subject||'(제목 없음)'),role:x.to,age:x.age_s});
+    for(const x of p.stalled||[])by.m.push({id:String(x.id),item:'#'+x.id+' '+(x.subject||'(제목 없음)'),role:x.to,age:x.idle_s});
   }
   const out=[];
   for(const [k,label,tone] of waitKinds)for(const x of by[k].sort((a,b)=>b.age-a.age))out.push(Object.assign({kind:k,label:label,tone:tone},x));
@@ -1088,11 +1090,11 @@ const progressDirective={
   load:async id=>{
     const [m,r]=await Promise.all([details.mail.load(id),api('progress')]);
     if(!m)return null;
-    let open=null;
-    for(const p of r.services)for(const d of p.open_directives)if(String(d.id)===id)open=d;
-    return {m:m,open:open,limit:r.pending_alert_s};
+    let open=null,stall=null;
+    for(const p of r.services){for(const d of p.open_directives)if(String(d.id)===id)open=d;for(const d of p.stalled||[])if(String(d.id)===id)stall=d}
+    return {m:m,open:open,stall:stall,limit:r.pending_alert_s,now:r.generated_at};
   },
-  head:x=>x.open?{title:'#'+x.m.id+' '+x.m.subject,badge:[x.open.over_threshold?'오래된 지시':'답 없음',x.open.over_threshold?'danger':'warning']}:details.mail.head(x.m),
+  head:x=>x.open?{title:'#'+x.m.id+' '+x.m.subject,badge:[x.open.over_threshold?'오래된 지시':'답 없음',x.open.over_threshold?'danger':'warning']}:x.stall?{title:'#'+x.m.id+' '+x.m.subject,badge:['멈춤','warning']}:details.mail.head(x.m),
   subs:()=>[['thread','스레드'],['body','본문']],
   draw:async(x,sub,box)=>{
     if(x.open){
@@ -1107,6 +1109,7 @@ const progressDirective={
       row.append(close,msg);
       box.append(dl([['받는 쪽',x.open.to],['상태',statusLabel[x.open.status]||x.open.status],['지난 시간',dur(x.open.age_s)+(x.open.over_threshold?' · 문턱('+dur(x.limit)+') 넘음':'')]]),row);
     }
+    if(x.stall)box.append(dl([['받는 쪽',x.stall.to],['답한 때',rel(x.now,x.stall.answered_at)],['idle 세션',x.stall.sessions.join(', ')],['idle',dur(x.stall.idle_s)]]));
     await details.mail.draw(x.m,sub,box);
   }
 };
@@ -1148,7 +1151,7 @@ const progressService={
     box.append(p.sessions.length?ul:node('p','세션 없음','empty'));
   }
 };
-const progressKinds={q:'questions',p:'permissions',s:'sessions',d:progressDirective,svc:progressService};
+const progressKinds={q:'questions',p:'permissions',s:'sessions',d:progressDirective,m:progressDirective,svc:progressService};
 function progressSpec(k){const v=progressKinds[k];return typeof v==='string'?details[v]:v}
 registerDetail('progress',{
   list:'진행',kinds:['progress','questions','permissions','sessions','mail'],

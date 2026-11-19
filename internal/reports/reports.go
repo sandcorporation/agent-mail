@@ -407,9 +407,9 @@ func (s *Service) threads(roots []int64, withBody bool) (map[int64]wire.ReportTh
 				}
 				t.Replies = append(t.Replies, rm)
 			}
-			t.Completed = d.Status == "complete" || d.Status == "completed"
+			t.Completed = mail.IsCompleteStatus(d.Status)
 			t.Closed = d.NoReply
-			t.Open = !t.Answered && !t.Completed && !t.Closed
+			t.Open = mail.DirectiveState{Answered: t.Answered, Completed: t.Completed, Closed: t.Closed}.Open()
 			out[id] = t
 		}
 	}
