@@ -186,10 +186,17 @@ tr.row-blocked td:first-child{box-shadow:inset 3px 0 var(--st-blocked)}
 .panswer{display:flex;gap:var(--space-2);align-items:end;flex-wrap:wrap}
 .panswer label{display:flex;flex-direction:column;gap:var(--space-1);flex:1 1 14rem;min-width:0;font-size:.9em}
 .panswer input{width:100%;min-width:0}
-.qcard{scroll-margin-top:3.5rem}
-.qcard.focus{outline:2px solid var(--color-accent);outline-offset:2px}
 tr.focus td{background:var(--color-accent-tint)}
-.qcard.answered,.qcard.withdrawn{background:var(--color-paper)}
+.panswer button.ok{background:var(--color-accent);border-color:var(--color-accent);color:var(--color-on-accent)}
+.panswer button.danger{background:var(--st-error);border-color:var(--st-error);color:var(--color-on-accent)}
+.sechead{margin:var(--space-4) 0 var(--space-2)}
+.sechead .muted{font-weight:400;font-size:.85em}
+table.list td.strong,table.list td.witem{font-weight:650}
+table.list td.mono{font-family:var(--font-mono);font-size:.92em}
+table.list td.over{color:var(--st-error);font-weight:650}
+table.list tr.done td{color:var(--color-muted)}
+td.cardbr{display:none}
+.dlist li.over{border-left-color:var(--st-error)}
 .pill{display:inline-block;border-radius:var(--radius);padding:0 .4rem;margin-right:var(--space-2);font-size:.75em;font-weight:600;vertical-align:middle;color:var(--color-accent);background:var(--color-accent-tint)}
 .pill.pending{color:var(--st-blocked);background:var(--st-blocked-bg)}.pill.answered{color:var(--st-idle);background:var(--st-idle-bg)}.pill.withdrawn{color:var(--st-offline);background:var(--st-offline-bg)}.pill.waiting{color:var(--st-blocked);background:var(--st-blocked-bg)}
 .qitem{border:1px solid var(--color-line);border-radius:var(--radius);padding:var(--space-3);margin:var(--space-3) 0;min-width:0}
@@ -241,7 +248,6 @@ table.stack td.wrap{white-space:normal;overflow-wrap:anywhere}
 .mthreads li.empty{list-style:none;margin-left:-1.4rem}
 .mthreads button,.plinks button{margin:0;padding:.3rem .5rem;border:1px solid var(--color-line);border-radius:var(--radius);background:var(--color-canvas);color:var(--color-accent);text-align:left;width:100%;overflow-wrap:anywhere}
 .mthreads small,.plinks small{display:block;color:var(--color-muted)}
-.progrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,22rem),1fr));gap:var(--space-3);align-items:start}
 .pcard h3{display:flex;gap:var(--space-2);align-items:center;justify-content:space-between;margin:0 0 var(--space-2);min-width:0}
 .pcard h3 .pname{min-width:0;overflow-wrap:anywhere}
 .pcard h4{margin:var(--space-3) 0 var(--space-1)}
@@ -271,6 +277,14 @@ table.stack td{display:block;border:0;padding:.1rem .2rem;white-space:normal;ove
 table.stack td[data-label]::before{content:attr(data-label) " ";color:var(--color-muted);font-size:.85em;margin-right:var(--space-1)}
 table.stack td:first-child{font-weight:650}
 table.stack tbody tr:hover td{background:none}
+table.cards tr{display:flex;flex-wrap:wrap;align-items:baseline;gap:var(--space-1) var(--space-2);padding:var(--space-2) var(--space-1)}
+table.cards td{padding:0;min-width:0}
+table.cards td.cardbr{display:block;flex-basis:100%;height:0}
+table.cards td.cardbr~td{font-size:.88em;color:var(--color-muted);font-weight:400}
+table.cards td[data-label]::before{content:none}
+table.cards tr.row-error td:first-child,table.cards tr.row-blocked td:first-child{padding-left:var(--space-2)}
+#progressTbl td[data-label]+td[data-label]::before{content:"· "}
+#progressTbl td.num[data-label]::after{content:" " attr(data-label)}
 #settingsTbl td:last-child{text-align:left;padding-top:var(--space-1)}
 #settingsTbl td:last-child button{margin:0 var(--space-1) 0 0}
 }
@@ -300,7 +314,11 @@ table.stack tbody tr:hover td{background:none}
 <main class="sc-app-page">
 <section id="panel-progress" role="tabpanel" aria-labelledby="tab-progress" tabindex="0" class="card">
 <div class="toolbar"><h2>진행</h2><button id="reloadProgress">새로 고침</button><span id="progressNote" class="muted" role="status" aria-live="polite"></span></div>
-<div id="progress" class="progrid"></div>
+<h3 class="sechead">대기 <span id="waitCount" class="muted"></span></h3>
+<table id="waitTbl" class="stack list cards"><thead><tr><th>종류</th><th>항목</th><th>역할</th><th class="num">지난 시간</th></tr></thead><tbody id="wait"></tbody></table>
+<h3 class="sechead">서비스</h3>
+<div class="listbar"><div class="chips" id="svcChips" role="group" aria-label="서비스 고르기"></div></div>
+<table id="progressTbl" class="stack list cards"><thead><tr><th>서비스</th><th>상태</th><th class="num">세션</th><th class="num">답 없는 지시</th><th>마지막 소식</th></tr></thead><tbody id="progress"></tbody></table>
 </section>
 <section id="panel-sessions" role="tabpanel" aria-labelledby="tab-sessions" tabindex="0" class="card" hidden>
 <div class="toolbar"><h2>세션</h2><button id="reloadSessions">새로 고침</button><span id="sessionsNote" class="muted"></span></div>
@@ -355,10 +373,10 @@ table.stack tbody tr:hover td{background:none}
 <section id="panel-permissions" role="tabpanel" aria-labelledby="tab-permissions" tabindex="0" class="card" hidden>
 <div class="toolbar"><h2>권한 요청</h2><button id="reloadPerms">새로 고침</button><span id="permsNote" class="muted" role="status" aria-live="polite"></span></div>
 <div id="permsMsg" class="msg" role="status" aria-live="polite"></div>
-<h3>대기</h3>
-<div id="permPending"></div>
-<h3>지난 기록</h3>
-<div id="permHistory"></div>
+<h3 class="sechead">대기</h3>
+<table id="permPendingTbl" class="stack list"><thead><tr><th>상태</th><th>도구 · 요약</th><th>요청한 쪽</th><th>요청</th><th>만료</th></tr></thead><tbody id="permPending"></tbody></table>
+<h3 class="sechead">지난 기록</h3>
+<table id="permHistoryTbl" class="stack list"><thead><tr><th>결과</th><th>도구 · 요약</th><th>요청한 쪽</th><th>요청</th><th>답한 쪽</th></tr></thead><tbody id="permHistory"></tbody></table>
 </section>
 <section id="panel-questions" role="tabpanel" aria-labelledby="tab-questions" tabindex="0" class="card" hidden>
 <div class="toolbar"><h2>질문</h2>
@@ -366,7 +384,7 @@ table.stack tbody tr:hover td{background:none}
 <button id="reloadQuestions">새로 고침</button><span id="questionsNote" class="muted"></span></div>
 <div id="questionsView">
 <div id="questionsMsg" class="msg" role="status" aria-live="polite"></div>
-<div id="questions"></div>
+<table id="questionsTbl" class="stack list"><thead><tr><th>상태</th><th>질문</th><th>묻는 쪽</th><th>시각</th></tr></thead><tbody id="questions"></tbody></table>
 </div>
 <div id="decisionsView" hidden>
 <form id="decForm" class="row decfilters">
@@ -779,7 +797,7 @@ registerDetail('mail',{
     const foot=node('p','','row muted');
     foot.append(node('span',m.thread_id?'스레드 #'+m.thread_id+(m.reply_to?' · #'+m.reply_to+'에 대한 답장':''):'스레드 시작 메일'));
     const th=node('button','스레드 보기');
-    th.onclick=()=>{$('thread').value=root;mailID='';load()};
+    th.onclick=()=>{if(curTab!=='mail'){openThread(root);return}$('thread').value=root;mailID='';load()};
     foot.append(th);
     box.append(foot);
   }
@@ -936,91 +954,268 @@ function openMail(f){
 }
 function openMessage(id){openMail({id:id})}
 // ---- 진행 ----
-// One GET /api/admin/progress fills a card per service. The tab number is the
+// One load reads GET /api/admin/progress with the pending questions and
+// permission requests. The list is 대기 (questions, permission requests,
+// sessions in error or blocked, directives over the pending alert threshold,
+// in that order of kind, oldest first within a kind) and then a row per
+// service. Rows open in the detail panel under #progress/<kind>:<id>:
+// q: 질문, p: 권한, s: 세션, d: 지시, svc: 서비스. The tab number is the
 // open directives older than the pending alert threshold (0 hides it).
 const badgeLabel={error:'오류',blocked:'막힘',busy:'바쁨',compacting:'compact 중',idle:'유휴',none:'세션 없음'};
+const badgeTone={error:'danger',blocked:'warning',busy:'info',compacting:'info',idle:'success',none:'neutral'};
 function rel(now,t){if(!t)return '-';const s=Math.max(0,Math.round((new Date(now)-new Date(t))/1000));return s<60?'방금':dur(s)+' 전'}
-function linkItem(label,sub,over,onclick){
-  const li=node('li','',over?'over':''),b=node('button','');
-  b.type='button';b.append(document.createTextNode(label),node('small',sub));b.onclick=onclick;
-  li.append(b);return li;
-}
-function progressCard(p,now,limit){
-  const c=node('article','','pcard b-'+p.badge);
-  const h=node('h3','');h.append(node('span',p.service,'pname'),node('span',badgeLabel[p.badge]||p.badge,'pbadge b-'+p.badge));
-  const news=node('p','');news.append(node('b','마지막 소식 '));
-  const r=p.last_report;
-  if(r){news.append(document.createTextNode((r.subject||'(제목 없음)')+' · '+rel(now,r.at)));news.title=r.from+' → '+r.to+' · '+when(r.at)}
-  else news.append(document.createTextNode(p.last_activity_at?'보고 없음 · 마지막 활동 '+rel(now,p.last_activity_at):'소식 없음'));
-  c.append(h,news);
-  if(p.sessions.length){
-    c.append(node('h4','세션 ('+p.sessions.length+')'));
-    const ul=node('ul','','plist');
-    for(const v of p.sessions){
-      const li=node('li',''),[text,cls]=sessionStatus(v.state);
-      li.append(node('b',v.role),document.createTextNode(' · '),node('span',text,cls),...(subagentNote(v.subagents)?[document.createTextNode(' · '),node('span',subagentNote(v.subagents),'subs')]:[]),node('span',' · '+dur(Math.max(0,Math.round((new Date(now)-new Date(v.since))/1000)))+'째','muted'));
-      // 폴더는 #346처럼 앞쪽을 줄임표로 줄이고 전체 경로는 툴팁으로.
-      if(v.directory){const d=node('span','\u200e'+v.directory+'\u200e','pdir');d.title=v.directory;li.append(d)}
-      ul.append(li);
-    }
-    c.append(ul);
+function secsSince(now,t){return Math.max(0,Math.round((new Date(now)-new Date(t))/1000))}
+const waitKinds=[['q','질문','warning'],['p','권한','info'],['s','오류','danger'],['d','지시','neutral']];
+const waitCols=['종류','항목','역할','지난 시간'];
+const svcCols=['서비스','상태','세션','답 없는 지시','마지막 소식'];
+const svcChips=[['all','전체',()=>true],['problem','문제 있음',p=>/^(error|blocked)$/.test(p.badge)],['stale','오래된 지시',p=>p.open_directives.some(d=>d.over_threshold)]];
+let progressSeq=0,progressData=null,svcFilter='all';
+// waitItems builds the 대기 rows: {kind,id,item,role,age} with age in seconds.
+function waitItems(d){
+  const now=d.r.generated_at,by={q:[],p:[],s:[],d:[]};
+  for(const q of d.questions)by.q.push({id:q.id,item:q.questions.map(x=>x.header).join(' · '),role:q.asker,age:secsSince(now,q.created_at)});
+  for(const v of d.perms)by.p.push({id:v.id,item:v.tool+(v.summary?' · '+v.summary:''),role:v.requester,age:secsSince(now,v.created_at)});
+  for(const p of d.r.services){
+    for(const v of p.sessions){const m=/^(error|blocked):(.*)$/.exec(v.state||'');if(m)by.s.push({id:v.role,item:m[2]||badgeLabel[m[1]],role:v.role,age:secsSince(now,v.since),tone:m[1]==='blocked'?'warning':'danger',label:badgeLabel[m[1]]})}
+    for(const x of p.open_directives)if(x.over_threshold)by.d.push({id:String(x.id),item:'#'+x.id+' '+(x.subject||'(제목 없음)'),role:x.to,age:x.age_s});
   }
-  if(p.open_directives.length){
-    c.append(node('h4','답 없는 지시 ('+p.open_directives.length+')'));
-    const ul=node('ul','','plist plinks');
-    for(const d of p.open_directives)ul.append(linkItem('#'+d.id+' '+(d.subject||'(제목 없음)'),d.to+' · '+(statusLabel[d.status]||d.status)+' · '+dur(d.age_s)+' 지남'+(d.over_threshold?' · 문턱('+dur(limit)+') 넘음':''),d.over_threshold,()=>openMessage(d.id)));
-    c.append(ul);
-  }
-  return c;
+  const out=[];
+  for(const [k,label,tone] of waitKinds)for(const x of by[k].sort((a,b)=>b.age-a.age))out.push(Object.assign({kind:k,label:label,tone:tone},x));
+  return out;
 }
-let progressSeq=0;
 async function loadProgress(){
   const seq=++progressSeq;
   $('progressNote').textContent='불러오는 중…';
   try{
-    const r=await api('progress');
+    const [r,q,pm]=await Promise.all([api('progress'),api('questions?status=pending&limit=500'),api('permissions?status=pending')]);
     if(seq!==progressSeq)return;
-    const box=$('progress');box.replaceChildren();
-    let over=0;
-    for(const p of r.services){over+=p.open_directives.filter(d=>d.over_threshold).length;box.append(progressCard(p,r.generated_at,r.pending_alert_s))}
-    if(!r.services.length)box.append(node('p','서비스 없음','empty'));
-    setTabCount('progress',over||null);
-    $('progressNote').textContent=r.services.length+'개 서비스 · '+when(r.generated_at)+(over?' · 오래된 지시 '+over+'개':'');
+    progressData={r:r,questions:q.questions,perms:pm.permissions};
+    drawProgress();
   }catch(e){if(seq===progressSeq)$('progressNote').textContent=e.message}
 }
+// cell(text,label,cls) is one list cell; label shows before it in the stacked layout.
+function cell(text,label,cls){const td=node('td',text,cls||'');if(label)td.dataset.label=label;return td}
+// cardBreak ends the first line of a two-line card row below 600px.
+function cardBreak(){const td=node('td','','cardbr');td.setAttribute('aria-hidden','true');return td}
+function badge(text,tone){return node('span',text,'sc-badge '+(toneClass[tone]||toneClass.neutral))}
+function drawProgress(){
+  const d=progressData;if(!d)return;
+  const r=d.r,now=r.generated_at,items=waitItems(d);
+  const wait=$('wait');
+  keepRowFocus(wait,()=>{
+    wait.replaceChildren();
+    for(const x of items){
+      const tr=node('tr','','w-'+x.kind);
+      const k=cell('');k.append(badge(x.label,x.tone));
+      tr.append(k,cell(x.item,'','witem'),cardBreak(),cell(x.role,'','mono'),cell(dur(x.age),'','num nowrap'));
+      detailRow(tr,'progress',x.kind+':'+x.id);
+      wait.append(tr);
+    }
+    if(!items.length)emptyRow(wait,waitCols.length,'대기 없음');
+  });
+  $('waitCount').textContent=String(items.length);
+  const chips=$('svcChips');chips.replaceChildren();
+  for(const [k,label,f] of svcChips){
+    const b=node('button',label+' ','sc-chip');b.type='button';b.setAttribute('aria-pressed',k===svcFilter?'true':'false');
+    b.append(node('span',String(r.services.filter(f).length),'sc-chip-count'));
+    b.onclick=()=>{svcFilter=k;drawProgress()};
+    chips.append(b);
+  }
+  const keep=svcChips.find(c=>c[0]===svcFilter)[2],shown=r.services.filter(keep);
+  const body=$('progress');
+  let over=0;
+  for(const p of r.services)over+=p.open_directives.filter(d=>d.over_threshold).length;
+  keepRowFocus(body,()=>{
+    body.replaceChildren();
+    for(const p of shown){
+      const tr=node('tr','',/^(error|blocked)$/.test(p.badge)?'row-'+p.badge:'');
+      const st=cell('');st.append(badge(badgeLabel[p.badge]||p.badge,badgeTone[p.badge]||'neutral'));
+      const stale=p.open_directives.filter(d=>d.over_threshold).length;
+      const dirs=cell(String(p.open_directives.length),'답 없는 지시','num nowrap');
+      if(stale){dirs.classList.add('over');dirs.title='문턱('+dur(r.pending_alert_s)+') 넘음 '+stale+'개'}
+      const rep=p.last_report;
+      const news=cell(rep?(rep.subject||'(제목 없음)')+' · '+rel(now,rep.at):p.last_activity_at?'보고 없음 · 마지막 활동 '+rel(now,p.last_activity_at):'소식 없음','마지막 소식','muted');
+      if(rep)news.title=rep.from+' → '+rep.to+' · '+when(rep.at);
+      tr.append(cell(p.service,'','strong'),st,cardBreak(),cell(String(p.sessions.length),'세션','num nowrap'),dirs,news);
+      detailRow(tr,'progress','svc:'+p.service);
+      body.append(tr);
+    }
+    if(!shown.length)emptyRow(body,svcCols.length,'서비스 없음');
+  });
+  setTabCount('progress',over||null);
+  $('progressNote').textContent='대기 '+items.length+' · '+r.services.length+'개 서비스'+(over?' · 오래된 지시 '+over+'개':'');
+  $('progressNote').title=when(r.generated_at);
+}
+// The 진행 detail hands each kind to its own spec: q to 질문, p to 권한 요청,
+// s to 세션, d (지시: the mail thread, with 닫기) and svc (서비스) are here.
+const progressDirective={
+  load:async id=>{
+    const [m,r]=await Promise.all([details.mail.load(id),api('progress')]);
+    if(!m)return null;
+    let open=null;
+    for(const p of r.services)for(const d of p.open_directives)if(String(d.id)===id)open=d;
+    return {m:m,open:open,limit:r.pending_alert_s};
+  },
+  head:x=>x.open?{title:'#'+x.m.id+' '+x.m.subject,badge:[x.open.over_threshold?'오래된 지시':'답 없음',x.open.over_threshold?'danger':'warning']}:details.mail.head(x.m),
+  subs:()=>[['thread','스레드'],['body','본문']],
+  draw:async(x,sub,box)=>{
+    if(x.open){
+      const row=node('div','','row'),msg=node('span','','msg');msg.setAttribute('role','status');
+      const close=node('button','닫기');close.type='button';close.title='답을 기다리지 않게 닫기';
+      close.onclick=async()=>{
+        if(!confirm('#'+x.m.id+' 지시를 닫을까요?'))return;
+        close.disabled=true;setMsg(msg,'닫는 중…');
+        try{await apiSend('POST','messages/'+encodeURIComponent(x.m.id)+'/close');setMsg(msg,'닫음','ok');loadProgress();drawDetail()}
+        catch(e){close.disabled=false;setMsg(msg,e.message,'err')}
+      };
+      row.append(close,msg);
+      box.append(dl([['받는 쪽',x.open.to],['상태',statusLabel[x.open.status]||x.open.status],['지난 시간',dur(x.open.age_s)+(x.open.over_threshold?' · 문턱('+dur(x.limit)+') 넘음':'')]]),row);
+    }
+    await details.mail.draw(x.m,sub,box);
+  }
+};
+const progressService={
+  load:async id=>{const r=await api('progress');const p=r.services.find(s=>s.service===id);return p?{p:p,now:r.generated_at,limit:r.pending_alert_s}:null},
+  head:x=>({title:x.p.service,badge:[badgeLabel[x.p.badge]||x.p.badge,badgeTone[x.p.badge]||'neutral']}),
+  subs:x=>[['sessions','세션 '+x.p.sessions.length],['directives','답 없는 지시 '+x.p.open_directives.length],['news','마지막 소식']],
+  draw:async(x,sub,box)=>{
+    const p=x.p,now=x.now;
+    if(sub==='directives'){
+      const ul=node('ul','','dlist');
+      for(const d of p.open_directives){
+        const li=node('li','',d.over_threshold?'over':'');const a=node('a','#'+d.id+' '+(d.subject||'(제목 없음)'));a.href=detailHash('progress','d:'+d.id,'thread');
+        li.append(a,node('small',d.to+' · '+(statusLabel[d.status]||d.status)+' · '+dur(d.age_s)+' 지남'+(d.over_threshold?' · 문턱('+dur(x.limit)+') 넘음':'')));
+        ul.append(li);
+      }
+      box.append(p.open_directives.length?ul:node('p','답 없는 지시 없음','empty'));
+      return;
+    }
+    if(sub==='news'){
+      const r=p.last_report;
+      if(r){
+        const a=node('a','#'+r.id+' '+(r.subject||'(제목 없음)'));a.href=detailHash('mail',r.id,'body');
+        box.append(dl([['보고',a],['보낸 쪽',r.from+' → '+r.to],['시각',when(r.at)+' · '+rel(now,r.at)],['마지막 활동',p.last_activity_at?when(p.last_activity_at):'-']]));
+      }else box.append(dl([['보고','보고 없음'],['마지막 활동',p.last_activity_at?when(p.last_activity_at)+' · '+rel(now,p.last_activity_at):'소식 없음']]));
+      return;
+    }
+    const ul=node('ul','','dlist');
+    for(const v of p.sessions){
+      const li=node('li',''),[text,cls]=sessionStatus(v.state);
+      const a=node('a',v.role);a.href=detailHash('progress','s:'+v.role,'status');
+      const line=node('small','');
+      line.append(node('span',text,cls),...(subagentNote(v.subagents)?[document.createTextNode(' · '),node('span',subagentNote(v.subagents),'subs')]:[]),document.createTextNode(' · '+dur(secsSince(now,v.since))+'째'));
+      li.append(a,line);
+      // 폴더는 #346처럼 앞쪽을 줄임표로 줄이고 전체 경로는 툴팁으로.
+      if(v.directory){const d=node('span','‎'+v.directory+'‎','pdir');d.title=v.directory;li.append(d)}
+      ul.append(li);
+    }
+    box.append(p.sessions.length?ul:node('p','세션 없음','empty'));
+  }
+};
+const progressKinds={q:'questions',p:'permissions',s:'sessions',d:progressDirective,svc:progressService};
+function progressSpec(k){const v=progressKinds[k];return typeof v==='string'?details[v]:v}
+registerDetail('progress',{
+  list:'진행',kinds:['progress','questions','permissions','sessions','mail'],
+  load:async id=>{
+    const i=id.indexOf(':'),spec=i>0?progressSpec(id.slice(0,i)):null;
+    if(!spec)return null;
+    const item=await spec.load(id.slice(i+1));
+    return item?{spec:spec,item:item}:null;
+  },
+  head:x=>x.spec.head(x.item),
+  subs:x=>x.spec.subs(x.item),
+  draw:(x,sub,box)=>x.spec.draw(x.item,sub,box)
+});
 tabLoaders.progress=loadProgress;
 tabLoaders.metrics=loadMetrics;
 // ---- 질문 ----
+// The list is one row per question; a row opens the detail (#questions/<id>/
+// answer|decisions). 답하기 holds the answer form while the question is
+// pending and the admin may answer, else the stored answer. A form is kept
+// per question across live redraws so a half-filled answer survives them.
 const qStatusLabel={pending:'대기',answered:'답함',withdrawn:'거둠'};
-let questionCards=new Map(),questionsLoaded=false,wantFocus=null,formSeq=0;
+const qTone={pending:'warning',answered:'success',withdrawn:'neutral'};
+const questionCols=['상태','질문','묻는 쪽','시각'];
+let formSeq=0;
+const qForms=new Map(),qNotes=new Map();
 function setMsg(el,text,kind){el.textContent=text;el.className='msg'+(kind?' '+kind:'')}
+function qTitle(q){return q.questions.map(x=>x.header).join(' · ')}
 async function refreshQuestionCount(){
   try{setTabCount('questions',(await api('questions?status=pending&limit=500')).questions.length)}catch(e){}
 }
 async function loadQuestions(){
   $('questionsNote').textContent='불러오는 중…';
   try{
-    const list=(await api('questions?limit=200')).questions;
-    const box=$('questions');box.replaceChildren();questionCards=new Map();
-    for(const q of list){const c=questionCard(q);questionCards.set(q.id,c);box.append(c)}
+    const list=(await api('questions?limit=200')).questions,body=$('questions');
+    keepRowFocus(body,()=>{
+      body.replaceChildren();
+      for(const q of list)body.append(questionRow(q));
+      if(!list.length)emptyRow(body,questionCols.length,'질문 없음');
+    });
     const open=list.filter(q=>q.status==='pending').length;
     setTabCount('questions',open);
     $('questionsNote').textContent='대기 '+open+'개 · 모두 '+list.length+'개(최대 200개)';
-    if(!list.length)box.append(node('p','질문 없음','empty'));
-    questionsLoaded=true;
-    if(wantFocus!==null)focusQuestion(wantFocus);
   }catch(e){$('questionsNote').textContent=e.message}
 }
-function questionCard(q){
-  const c=node('article','','card qcard '+q.status);
-  c.tabIndex=-1;
-  const h=node('h3','');
-  h.append(node('span',qStatusLabel[q.status]||q.status,'pill '+q.status));
+function questionRow(q){
+  const tr=node('tr','',q.status==='pending'?'':'done');
+  const st=cell('');st.append(badge(qStatusLabel[q.status]||q.status,qTone[q.status]||'neutral'));
+  const t=cell('',questionCols[1]);
+  questionPills(q,t);
+  t.append(node('strong',qTitle(q)));
+  const at=cell(shortWhen(q.created_at),questionCols[3],'nowrap');at.title=when(q.created_at);
+  tr.append(st,t,cell(q.asker,questionCols[2]),at);
+  detailRow(tr,'questions',q.id);
+  return tr;
+}
+// questionPills adds the 대표 and 전달 대기 marks to h.
+function questionPills(q,h){
   if(q.answerer==='owner')h.append(node('span','대표','pill owner'));
   if(q.delivery==='waiting')h.append(node('span','전달 대기','pill waiting'));
-  h.append(document.createTextNode(q.questions.map(x=>x.header).join(' · ')));
-  c.append(h,node('p',q.asker+' · '+when(q.created_at)+' · '+q.id,'muted'));
-  if(q.status==='pending'&&q.can_answer){c.append(answerForm(q));return c}
+}
+async function findQuestion(id){
+  let q=(await api('questions?limit=200')).questions.find(x=>x.id===id);
+  if(!q)q=(await api('questions?status=pending&limit=500')).questions.find(x=>x.id===id);
+  return q||null;
+}
+registerDetail('questions',{
+  list:'질문',kinds:['questions'],
+  load:async id=>{
+    const q=await findQuestion(id);
+    if(!q)return null;
+    let decs=[];
+    try{decs=(await api('decisions?'+new URLSearchParams({role:q.asker}))).decisions.filter(d=>d.id!==q.id)}catch(e){}
+    return {q:q,decs:decs};
+  },
+  head:x=>({title:qTitle(x.q),badge:[qStatusLabel[x.q.status]||x.q.status,qTone[x.q.status]||'neutral']}),
+  subs:x=>[['answer',x.q.status==='pending'&&x.q.can_answer?'답하기':'답'],['decisions','관련 결정 '+x.decs.length]],
+  draw:async(x,sub,box)=>{
+    const q=x.q;
+    if(sub==='decisions'){
+      for(const d of x.decs.slice(0,20))box.append(decisionRow(d));
+      if(!x.decs.length)box.append(node('p','관련 결정 없음','empty'));
+      return;
+    }
+    const pairs=[['묻는 쪽',q.asker],['시각',when(q.created_at)],['ID',q.id]];
+    const marks=node('span','');questionPills(q,marks);
+    if(marks.childNodes.length)pairs.push(['표시',marks]);
+    box.append(dl(pairs));
+    const note=qNotes.get(q.id);
+    if(note)box.append(node('p',note,'msg err'));
+    if(q.status==='pending'&&q.can_answer){
+      let f=qForms.get(q.id);
+      if(!f){f=answerForm(q);qForms.set(q.id,f)}
+      box.append(f);
+      return;
+    }
+    qForms.delete(q.id);
+    box.append(...questionAnswered(q));
+  }
+});
+// questionAnswered is the read-only view: each item with the stored answer,
+// or the options while it is still pending.
+function questionAnswered(q){
+  const out=[];
   q.questions.forEach((item,i)=>{
     const f=node('div','','qitem');
     const head=node('div','','qhead');head.append(node('span',item.header,'pill'));
@@ -1033,14 +1228,14 @@ function questionCard(q){
     }else if(q.status==='pending'){
       for(const o of item.options)f.append(node('p','· '+o.label+(o.description?' — '+o.description:''),'qans muted'));
     }
-    c.append(f);
+    out.push(f);
   });
-  if(q.status==='answered')c.append(node('p','답한 쪽: '+byLabel(q.answered_by)+' · '+when(q.answered_at),'muted'));
-  if(q.status==='withdrawn')c.append(node('p','거둔 때: '+when(q.withdrawn_at),'muted'));
-  return c;
+  if(q.status==='answered')out.push(node('p','답한 쪽: '+byLabel(q.answered_by)+' · '+when(q.answered_at),'muted'));
+  if(q.status==='withdrawn')out.push(node('p','거둔 때: '+when(q.withdrawn_at),'muted'));
+  return out;
 }
 function answerForm(q){
-  const form=node('form','');
+  const form=node('form','','qform');
   const n=++formSeq;
   const items=q.questions.map((item,i)=>{
     const f=node('fieldset','','qitem');
@@ -1083,24 +1278,15 @@ function answerForm(q){
     }catch(err){
       send.disabled=false;
       if(err.status!==409){setMsg(msg,err.message,'err');return}
-      setMsg($('questionsMsg'),'이미 답했거나 거둔 질문입니다: '+q.id,'err');
+      qNotes.set(q.id,'이미 답했거나 거둔 질문입니다(409)');
     }
-    wantFocus=q.id;await loadQuestions();
+    qForms.delete(q.id);
+    // The answer form had focus: move it to the title before the redraw.
+    $('detailTitle').focus({preventScroll:true});
+    drawDetail();
+    if(curTab==='questions')loadQuestions();
   };
   return form;
-}
-// focusQuestion(id) is called for #q=<id> after the 질문 tab is shown. Before
-// the list has loaded it remembers id and runs again when it has.
-function focusQuestion(id){
-  wantFocus=id;
-  if(!questionsLoaded)return;
-  wantFocus=null;
-  for(const c of questionCards.values())c.classList.remove('focus');
-  const c=questionCards.get(id);
-  if(!c){setMsg($('questionsMsg'),'질문 '+id+' 없음','err');return}
-  c.classList.add('focus');
-  c.scrollIntoView({block:'start'});
-  c.focus({preventScroll:true});
 }
 tabLoaders.questions=loadQuestions;
 // ---- 결정 (#50) ----
@@ -1624,7 +1810,7 @@ tabLoaders.settings=()=>{loadSettings();loadRoles();loadNodes()};
 const permStatusLabel={pending:'대기',allowed:'허용',denied:'거절',expired:'만료'};
 function permFields(v){
   const dl=node('dl','','pdl');
-  const rows=[['ID',v.id],['요청한 역할',v.requester],['기본 역할',v.requester_base],['도구',v.tool],['요약',v.summary],
+  const rows=[['ID',v.id],['요청한 역할',v.requester],['기본 역할',v.requester_base],['도구',v.tool],
     ['부모',v.parent||'-'],['부모 기본 역할',v.parent_base||'-'],['보고된 부모',v.declared_parent||'-'],
     ['요청',when(v.created_at)],['만료',when(v.expires_at)],['결과',permStatusLabel[v.status]||v.status]];
   if(v.decision)rows.push(['결정',v.decision]);
@@ -1633,42 +1819,42 @@ function permFields(v){
   for(const [k,t] of rows)dl.append(node('dt',k),node('dd',t));
   return dl;
 }
-function permHead(v){
-  const h=node('h3','');
-  h.append(node('span',permStatusLabel[v.status]||v.status,'pill '+v.status),document.createTextNode(v.tool+' · '+v.requester));
-  return h;
-}
+const permTone={pending:'warning',allowed:'success',denied:'danger',expired:'neutral'};
+const permCols=['상태','도구 · 요약','요청한 쪽','요청','만료'],permHistCols=['결과','도구 · 요약','요청한 쪽','요청','답한 쪽'];
 function permAnswerForm(v){
   const form=node('form','','panswer');
   const lab=node('label','메모');const note=node('input','');note.maxLength=500;note.autocomplete='off';lab.append(note);
-  const allow=node('button','허용');allow.type='button';
-  const deny=node('button','거절');deny.type='button';
+  const allow=node('button','허용','ok');allow.type='button';
+  const deny=node('button','거절','danger');deny.type='button';
+  const msg=node('div','','msg');msg.setAttribute('role','status');
   const send=async decision=>{
     const word=decision==='allow'?'허용':'거절';
     if(!confirm(v.requester+'의 '+v.tool+' 요청을 '+word+'할까요? 답은 바꿀 수 없습니다.'))return;
     allow.disabled=deny.disabled=true;
     try{
       await apiSend('POST','permissions/'+encodeURIComponent(v.id)+'/answer',{decision:decision,note:note.value});
-      setMsg($('permsMsg'),v.id+' '+word+'했습니다.','ok');loadPermissions();
-    }catch(e){setMsg($('permsMsg'),e.message,'err');allow.disabled=deny.disabled=false}
+      setMsg($('permsMsg'),v.id+' '+word+'했습니다.','ok');
+      $('detailTitle').focus({preventScroll:true});
+      drawDetail();
+      if(curTab==='permissions')loadPermissions();
+    }catch(e){setMsg(msg,e.message,'err');allow.disabled=deny.disabled=false}
   };
   allow.onclick=()=>send('allow');deny.onclick=()=>send('deny');
   form.onsubmit=e=>e.preventDefault();
-  form.append(lab,allow,deny);
+  const row=node('div','','row');row.append(allow,deny);
+  form.append(lab,row,msg);
   return form;
 }
-function permPendingCard(v){
-  const c=node('article','','card pcard pending');
-  c.append(permHead(v),permFields(v));
-  if(v.can_answer)c.append(permAnswerForm(v));
-  return c;
-}
-function permHistoryCard(v){
-  const c=node('details','','card pcard '+v.status),sum=node('summary','');
-  sum.append(node('span',permStatusLabel[v.status]||v.status,'pill '+v.status),
-    document.createTextNode(v.tool+' · '+v.requester+' · '+when(v.created_at)+(v.answered_by?' · '+v.answered_by:'')));
-  c.append(sum,permFields(v));
-  return c;
+function permRow(v,hist){
+  const tr=node('tr','',v.status==='pending'?'':'done');
+  const st=cell('');st.append(badge(permStatusLabel[v.status]||v.status,permTone[v.status]||'neutral'));
+  const t=cell('',permCols[1]);t.append(node('strong',v.tool),node('small',v.summary));
+  const at=cell(shortWhen(v.created_at),permCols[3],'nowrap');at.title=when(v.created_at);
+  const last=hist?cell(v.answered_by||'-',permHistCols[4]):cell(shortWhen(v.expires_at),permCols[4],'nowrap');
+  if(!hist)last.title=when(v.expires_at);
+  tr.append(st,t,cell(v.requester,permCols[2]),at,last);
+  detailRow(tr,'permissions',v.id);
+  return tr;
 }
 let permTimer=0;
 async function loadPermissions(){
@@ -1676,10 +1862,9 @@ async function loadPermissions(){
   try{
     const [open,closed]=await Promise.all([api('permissions?status=pending'),api('permissions?status=closed&limit=200')]);
     const p=open.permissions,h=closed.permissions;
-    $('permPending').replaceChildren(...p.map(permPendingCard));
-    if(!p.length)$('permPending').append(node('p','대기 중인 요청 없음','empty'));
-    $('permHistory').replaceChildren(...h.map(permHistoryCard));
-    if(!h.length)$('permHistory').append(node('p','기록 없음','empty'));
+    const pb=$('permPending'),hb=$('permHistory');
+    keepRowFocus(pb,()=>{pb.replaceChildren(...p.map(v=>permRow(v,false)));if(!p.length)emptyRow(pb,permCols.length,'대기 중인 요청 없음')});
+    keepRowFocus(hb,()=>{hb.replaceChildren(...h.map(v=>permRow(v,true)));if(!h.length)emptyRow(hb,permHistCols.length,'기록 없음')});
     setTabCount('permissions',p.length||null);
     $('permsNote').textContent='대기 '+p.length+' · 기록 '+h.length+'(최대 200)';
     // A pending request turns expired by time alone: reload at the next expiry.
@@ -1688,6 +1873,20 @@ async function loadPermissions(){
     if(isFinite(next))permTimer=setTimeout(loadPermissions,Math.max(1000,next-Date.now()+500));
   }catch(e){$('permsNote').textContent=e.message}
 }
+registerDetail('permissions',{
+  list:'권한 요청',kinds:['permissions'],
+  load:async id=>{
+    try{return await api('permissions/'+encodeURIComponent(id))}
+    catch(e){if(/\(404\)/.test(e.message))return null;throw e}
+  },
+  head:v=>({title:v.tool+' · '+v.requester,badge:[permStatusLabel[v.status]||v.status,permTone[v.status]||'neutral']}),
+  subs:()=>[['request','요청']],
+  draw:async(v,sub,box)=>{
+    box.append(permFields(v));
+    if(v.summary)box.append(node('pre',v.summary));
+    if(v.status==='pending'&&v.can_answer)box.append(permAnswerForm(v));
+  }
+});
 async function refreshPermissionCount(){
   try{const p=(await api('permissions?status=pending')).permissions;setTabCount('permissions',p.length||null)}catch(e){}
 }
@@ -1754,7 +1953,7 @@ function showTab(name){
   liveStale.delete(name);
 }
 // Routes: #progress #sessions #metrics #mail #permissions #questions #settings, #decisions (질문 tab,
-// 결정 view), #q=<id> (질문 + focusQuestion), #terminal=<id> (an older link: it becomes
+// 결정 view), #q=<id> (rewritten to #questions/<id>/answer), #terminal=<id> (an older link: it becomes
 // #terminals/<id>/screen), and #<tab>/<id>/<sub> for a tab with a detail panel
 // (registerDetail). No hash or an unknown one shows 진행.
 function route(){
@@ -1762,6 +1961,7 @@ function route(){
   const parts=h.split('/');
   if(parts.length>1&&details[parts[0]]&&visibleTabs().includes(parts[0])&&parts[1]){
     let id=parts[1];try{id=decodeURIComponent(id)}catch(e){}
+    if(parts[0]==='questions')showQuestionView('questions');
     showTab(parts[0]);showDetail(parts[0],id,parts[2]||'');
     return;
   }
@@ -1775,9 +1975,10 @@ function route(){
   if(h==='decisions'){showTab('questions');showQuestionView('decisions');return}
   if(h==='questions'||h.startsWith('q='))showQuestionView('questions');
   if(h.startsWith('q=')){
-    showTab('questions');
+    // Old question links (Discord, panel) open the question's detail.
     let id=h.slice(2);try{id=decodeURIComponent(id)}catch(e){}
-    focusQuestion(id);
+    history.replaceState(null,'',detailHash('questions',id,'answer'));
+    route();
     return;
   }
   showTab(visibleTabs().includes(h)?h:'progress');
