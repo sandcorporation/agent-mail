@@ -96,7 +96,9 @@ func TestProgressAnsweredWithSlotLikeRoleNames(t *testing.T) {
 			var open []int64
 			for _, p := range mustProgress(t, s).Services {
 				for _, d := range p.OpenDirectives {
-					open = append(open, d.ID)
+					if d.RepliedAt == nil {
+						open = append(open, d.ID)
+					}
 				}
 			}
 			if len(open) != 2 || open[0] != d1 || open[1] != d3 {
@@ -130,7 +132,12 @@ func TestProgressReplicaOfProductionCases(t *testing.T) {
 	ins(363, "sandcorp/boss", "sandcorp/worker-1", "2026-11-17T09:04:17.1Z", "", 361, 0)
 	ins(364, "sandcorp/worker-1", "sandcorp/boss", "2026-11-17T09:06:00Z", "", 361, 363)
 	ins(370, "sandcorp/boss", "sandcorp/worker-1", "2026-11-17T09:10:00Z", "", 0, 0) // control: unanswered
-	got := serviceNamed(t, mustProgress(t, s), "sandcorp").OpenDirectives
+	var got []wire.ProgressDirective
+	for _, d := range serviceNamed(t, mustProgress(t, s), "sandcorp").OpenDirectives {
+		if d.RepliedAt == nil {
+			got = append(got, d)
+		}
+	}
 	if len(got) != 2 || got[0].ID != 355 || got[1].ID != 370 {
 		t.Fatalf("open %+v", got)
 	}

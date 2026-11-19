@@ -28,7 +28,7 @@ func TestCloseDirectiveBySender(t *testing.T) {
 	d := apiMail(t, s, clock, "hq/boss", "/api/messages", map[string]any{"recipient": "team/worker", "subject": "answered by a plain send"})
 	kept := apiMail(t, s, clock, "hq/boss", "/api/messages", map[string]any{"recipient": "team/worker", "subject": "still open"})
 	reply := apiMail(t, s, clock, "team/worker", fmt.Sprintf("/api/messages/%d/reply", kept.ID), map[string]any{"subject": "re", "body": "on it"})
-	if got := openIDs(t, s); !sameIDs(got, []int64{d.ID}) {
+	if got := unrepliedIDs(t, s); !sameIDs(got, []int64{d.ID}) {
 		t.Fatalf("open %v before close, want %d", got, d.ID)
 	}
 
@@ -37,7 +37,7 @@ func TestCloseDirectiveBySender(t *testing.T) {
 			t.Fatalf("close by %s: %d %s, want 403", role, code, body)
 		}
 	}
-	if got := openIDs(t, s); !sameIDs(got, []int64{d.ID}) {
+	if got := unrepliedIDs(t, s); !sameIDs(got, []int64{d.ID}) {
 		t.Fatalf("open %v after refused closes, want %d", got, d.ID)
 	}
 	for i := 0; i < 2; i++ {
@@ -45,7 +45,7 @@ func TestCloseDirectiveBySender(t *testing.T) {
 			t.Fatalf("close #%d by sender: %d %s", i+1, code, body)
 		}
 	}
-	if got := openIDs(t, s); len(got) != 0 {
+	if got := unrepliedIDs(t, s); len(got) != 0 {
 		t.Fatalf("open %v after close, want none", got)
 	}
 	if m, err := s.mail().Get(d.ID); err != nil || !m.NoReply {
@@ -80,7 +80,7 @@ func TestAdminCloseDirective(t *testing.T) {
 			t.Fatalf("admin close #%d: %d %s", i+1, w.Code, w.Body)
 		}
 	}
-	if got := openIDs(t, s); len(got) != 0 {
+	if got := unrepliedIDs(t, s); len(got) != 0 {
 		t.Fatalf("open %v after admin close, want none", got)
 	}
 	if w := adminWrite(s, "POST", fmt.Sprintf("/api/admin/messages/%d/close", reply.ID), ""); w.Code != 400 {

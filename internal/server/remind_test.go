@@ -147,7 +147,7 @@ func TestRemindScheduleOnceEach(t *testing.T) {
 			break
 		}
 	}
-	if first.Subject != fmt.Sprintf("[다시 알림] #%d do X", d.ID) || first.Body != fmt.Sprintf("#%d 에 답하거나(reply) complete 하라", d.ID) || first.Status != "pending" || first.TaskID != "T-1" {
+	if first.Subject != fmt.Sprintf("[다시 알림] #%d do X", d.ID) || first.Body != fmt.Sprintf("#%d 가 끝났으면 reply --done 으로 보고하고, 아직이면 reply 로 진행을 알려라", d.ID) || first.Status != "pending" || first.TaskID != "T-1" {
 		t.Fatalf("reminder %+v", first)
 	}
 	// Reminders are system mail: never directives themselves.
@@ -156,9 +156,9 @@ func TestRemindScheduleOnceEach(t *testing.T) {
 	}
 }
 
-// A reply (reply_to) or complete stops the reminders; new mail that only
-// mentions #id (or shares the task) does not, and leaves the directive in
-// progress.
+// Complete stops the reminders; a reply (reply_to) leaves the directive open
+// and only moves the next reminder to a gap after it (#269); new mail that
+// only mentions #id (or shares the task) changes nothing.
 func TestRemindStopsOnReplyOrComplete(t *testing.T) {
 	s, clock := slotsWithRoles(t)
 	remindOn(s)
@@ -176,8 +176,11 @@ func TestRemindStopsOnReplyOrComplete(t *testing.T) {
 	apiMail(t, s, clock, "team/worker", fmt.Sprintf("/api/messages/%d/reply", replied.ID), map[string]any{"subject": "re", "body": "working on it"})
 	apiMail(t, s, clock, "team/worker", fmt.Sprintf("/api/messages/%d/complete", done.ID), nil)
 	apiMail(t, s, clock, "team/worker", "/api/messages", map[string]any{"recipient": "hq/boss", "subject": fmt.Sprintf("status, see #%d", mentioned.ID), "task_id": "T-9"})
-	if got := openIDs(t, s); !sameIDs(got, []int64{mentioned.ID}) {
-		t.Fatalf("open %v, want only %d (a mention is no answer)", got, mentioned.ID)
+	if got := openIDs(t, s); !sameIDs(got, []int64{replied.ID, mentioned.ID}) {
+		t.Fatalf("open %v, want %d and %d (a reply does not close)", got, replied.ID, mentioned.ID)
+	}
+	if got := unrepliedIDs(t, s); !sameIDs(got, []int64{mentioned.ID}) {
+		t.Fatalf("unreplied %v, want only %d (a mention is no answer)", got, mentioned.ID)
 	}
 	for _, h := range []time.Duration{3, 7, 15, 40} {
 		sweepAt(t, s, clock, start.Add(h*remindGap))
@@ -187,8 +190,11 @@ func TestRemindStopsOnReplyOrComplete(t *testing.T) {
 		fmt.Sprintf("team/worker remind:%d:1", done.ID),
 		fmt.Sprintf("team/worker remind:%d:1", mentioned.ID),
 		fmt.Sprintf("team/worker remind:%d:2", mentioned.ID),
+		fmt.Sprintf("team/worker remind:%d:2", replied.ID),
 		fmt.Sprintf("team/worker remind:%d:3", mentioned.ID),
+		fmt.Sprintf("team/worker remind:%d:3", replied.ID),
 		fmt.Sprintf("hq/boss remind-sender:%d", mentioned.ID),
+		fmt.Sprintf("hq/boss remind-sender:%d", replied.ID),
 	}
 	if got := remindKeys(t, s); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("reminders %v, want %v", got, want)

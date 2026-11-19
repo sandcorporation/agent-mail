@@ -1,32 +1,36 @@
 package presence
 
 import (
+	"sort"
 	"time"
 
 	"github.com/sandcorporation/switchboard/internal/identity"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
-// Idle after an answer (#268).
+// Idle open directives (#268, #269).
 //
-// A directive whose recipient answered it (a plain reply, so it is no longer
-// open) but never completed it, and whose recipient sessions then went idle,
-// is work that may have stopped after an acknowledgement. Nothing else
-// watches it: the reminders stop at the answer. The check takes, per
-// recipient mailbox, only its newest directive from a boss role (the work
-// the session was last given), when mail.DirectiveState says
-// AwaitingCompletion, the recipient is not a boss role, and the live session
-// reading the mailbox (slot 1 for <base>, slot N for <base>-N) has been idle, with no sub-agent running, for SWITCHBOARD_REMIND_IDLE (default 1h, 0 off)
-// since the later of the answer and the start of the idle stretch. The 진행
-// view lists it under Stalled (대기 멈춤 rows); the reminder sweep, when
-// reminders are on, tells its sender once (idle-after:<id>), never earlier
-// than SWITCHBOARD_REMIND_IDLE after the reminders were switched on.
+// An open directive (the answered rule's Open: not done and not closed,
+// however many replies it got) whose recipient sessions went idle is work
+// that may have stopped, for example after an acknowledgement. The check
+// takes, per recipient mailbox, only its newest directive from a boss role
+// (the work the session was last given), when that directive is open, the
+// recipient is not a boss role, and the live session reading the mailbox
+// (slot 1 for <base>, slot N for <base>-N) has been idle, with no sub-agent
+// running, for SWITCHBOARD_REMIND_IDLE (default 1h, 0 off) since the latest
+// of the directive, its newest reply and the start of the idle stretch. The
+// 진행 view lists it under Stalled (대기 멈춤 rows); the reminder sweep, when
+// reminders are on, tells its sender up to SWITCHBOARD_REMIND_IDLE_MAX times
+// (default 1; idle-after:<id>, then idle-after:<id>:<n>), one threshold
+// apart, never earlier than SWITCHBOARD_REMIND_IDLE after the reminders were
+// switched on.
 
 const defaultRemindIdle = time.Hour
 
-// stall is a directive idle after its answer.
+// stall is an open directive whose recipient is idle.
 type stall struct {
 	progressMailRow
-	Since    time.Time // the later of the answer and the idle stretch start
+	Since    time.Time // the latest of the directive, its newest reply and the idle stretch start
 	Sessions []string
 }
 
@@ -73,36 +77,33 @@ func (s *Service) liveSessions(now time.Time) ([]liveSession, error) {
 	return out, rows.Err()
 }
 
-// idleAfterAnswer lists the directives idle after their answer as of now,
-// oldest first; none when the check is off. sessions is liveSessions(now).
-func (s *Service) idleAfterAnswer(now time.Time, sessions []liveSession, base func(string) string, isBossName func(string) bool) ([]stall, error) {
+// idleOpen lists, per recipient mailbox, its newest open directive when the
+// recipient is idle past the threshold as of now, oldest first; none when the check is off. sessions is liveSessions(now).
+func (s *Service) idleOpen(now time.Time, sessions []liveSession, base func(string) string, isBossName func(string) bool) ([]stall, error) {
 	idle := s.cfg.Remind.idle()
 	if idle <= 0 {
 		return nil, nil
 	}
-	bossSenders, err := s.bossSenders(isBossName)
-	if err != nil || len(bossSenders) == 0 {
-		return nil, err
-	}
-	in := `(` + placeholders(len(bossSenders)) + `)`
-	newest, err := s.progressMailQuery(`m.id IN (SELECT MAX(id) FROM messages WHERE sender IN `+in+` AND (COALESCE(reply_to,0)=0 OR directive=1) GROUP BY recipient)`, anySlice(bossSenders)...)
+	open, err := s.openDirectives(base, isBossName)
 	if err != nil {
 		return nil, err
 	}
+	newest := map[string]int{} // recipient -> index in ds of its newest open directive
 	var ds []progressMailRow
-	for _, d := range newest {
-		if !isBossName(d.Recipient) {
-			ds = append(ds, d)
-		}
-	}
-	if err = s.settle(s.rule(), false, ds, base, isBossName); err != nil {
-		return nil, err
-	}
-	var out []stall
-	for _, d := range ds {
-		if !d.State.AwaitingCompletion() {
+	for _, d := range open { // oldest first
+		if isBossName(d.Recipient) {
 			continue
 		}
+		if i, ok := newest[d.Recipient]; ok {
+			ds[i] = d
+			continue
+		}
+		newest[d.Recipient] = len(ds)
+		ds = append(ds, d)
+	}
+	sort.Slice(ds, func(i, j int) bool { return ds[i].ID < ds[j].ID })
+	var out []stall
+	for _, d := range ds {
 		var mine []liveSession
 		for _, v := range sessions {
 			if v.Mailbox() == d.Recipient {
@@ -112,7 +113,10 @@ func (s *Service) idleAfterAnswer(now time.Time, sessions []liveSession, base fu
 		if len(mine) == 0 {
 			continue // no live session: the offline and label stall notices cover it
 		}
-		st := stall{progressMailRow: d, Since: d.LastAnswer}
+		st := stall{progressMailRow: d, Since: d.At}
+		if d.LastAnswer.After(st.Since) {
+			st.Since = d.LastAnswer
+		}
 		allIdle := true
 		for _, v := range mine {
 			if v.State != "idle" || v.Subagents > 0 {
@@ -129,4 +133,19 @@ func (s *Service) idleAfterAnswer(now time.Time, sessions []liveSession, base fu
 		}
 	}
 	return out, nil
+}
+
+// mailboxState is the live state of the sessions reading mailbox (the worst,
+// as progressBadge ranks them), or offline when none is live.
+func mailboxState(sessions []liveSession, mailbox string) string {
+	var mine []wire.ProgressSession
+	for _, v := range sessions {
+		if v.Mailbox() == mailbox {
+			mine = append(mine, wire.ProgressSession{State: v.State, Subagents: v.Subagents})
+		}
+	}
+	if len(mine) == 0 {
+		return "offline"
+	}
+	return progressBadge(mine)
 }

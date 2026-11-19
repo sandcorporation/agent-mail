@@ -85,21 +85,19 @@ type progressMailRow struct {
 	At                         time.Time
 	ThreadID, ReplyTo          int64
 	NoReply                    bool
-	// Filled by settle: whether the directive is open, and its newest
-	// answer, zero when none.
+	// Filled by settle: what the answered rule's Open reads, and the newest
+	// reply, zero when none.
 	State      mail.DirectiveState
 	LastAnswer time.Time
 }
 
 // openDirectives lists the open directives, oldest first: mail from a boss
-// role that is a directive (a send, or a reply sent with --directive) whose
-// mail.DirectiveState is Open: not sent with --no-reply or closed, not
-// completed by its recipient and not replied to (the answered rule,
-// mail.Replies unless Config.Rule says otherwise: reply_to or the
-// directive's thread, back to the sender's base; a mention of #id or a
-// shared task id elsewhere does not count). The progress view lists them whatever their
-// status; the reminders (SweepReminders) take only the read ones to
-// non-boss roles.
+// role that is a directive (a send, or a reply sent with --directive) that
+// the answered rule's Open (mail.CurrentAnsweredRule unless Config.Rule says
+// otherwise) calls open: since version 2 (#269) not sent with --no-reply or
+// closed and not done by its recipient, however many replies it got. The
+// progress view lists them whatever their status; the reminders
+// (SweepReminders) take only the read ones to non-boss roles.
 func (s *Service) openDirectives(base func(string) string, isBossName func(string) bool) ([]progressMailRow, error) {
 	return s.openDirectivesUnder(s.rule(), false, base, isBossName)
 }
@@ -112,7 +110,7 @@ func (s *Service) openDirectivesUnder(rule mail.AnsweredRule, wide bool, base fu
 	if err != nil || len(bossSenders) == 0 {
 		return nil, err
 	}
-	// Completed and closed directives are never open (mail.DirectiveState),
+	// Completed and closed directives are never open (every version's Open),
 	// so the query leaves them out before the answered rule runs.
 	directives, err := s.progressMailQuery(`m.sender IN (`+placeholders(len(bossSenders))+`) AND (COALESCE(m.reply_to,0)=0 OR m.directive=1) AND m.no_reply=0 AND `+mail.StatusExpr+` NOT IN ('complete','completed')`, anySlice(bossSenders)...)
 	if err != nil {
@@ -123,7 +121,7 @@ func (s *Service) openDirectivesUnder(rule mail.AnsweredRule, wide bool, base fu
 	}
 	var out []progressMailRow
 	for _, m := range directives {
-		if m.State.Open() {
+		if rule.Open(m.State) {
 			out = append(out, m)
 		}
 	}
@@ -183,7 +181,7 @@ func (s *Service) settle(rule mail.AnsweredRule, wide bool, directives []progres
 				}
 				seen[c.ID] = true
 				if rule.Replies(d, c, base) {
-					m.State.Answered = true
+					m.State.Replied = true
 					if c.Created.After(m.LastAnswer) {
 						m.LastAnswer = c.Created
 					}
@@ -316,17 +314,27 @@ func (s *Service) Progress(pending time.Duration, base func(string) string) (wir
 	for _, m := range directives {
 		age := max(0, int64(now.Sub(m.At)/time.Second))
 		p := get(m.Recipient)
-		p.OpenDirectives = append(p.OpenDirectives, wire.ProgressDirective{ID: m.ID, To: m.Recipient, Subject: m.Subject, Status: m.Status, AgeS: age, OverThreshold: pending > 0 && age >= int64(pending/time.Second)})
+		pd := wire.ProgressDirective{ID: m.ID, To: m.Recipient, Subject: m.Subject, Status: m.Status, AgeS: age, OverThreshold: pending > 0 && age >= int64(pending/time.Second), Recipient: mailboxState(live, m.Recipient)}
+		if !m.LastAnswer.IsZero() {
+			t := m.LastAnswer
+			pd.RepliedAt = &t
+		}
+		p.OpenDirectives = append(p.OpenDirectives, pd)
 	}
 
-	// Directives idle after their answer (idle.go): the 대기 멈춤 rows.
-	stalls, err := s.idleAfterAnswer(now, live, base, isBossName)
+	// Open directives whose recipient is idle (idle.go): the 대기 멈춤 rows.
+	stalls, err := s.idleOpen(now, live, base, isBossName)
 	if err != nil {
 		return out, err
 	}
 	for _, st := range stalls {
 		p := get(st.Recipient)
-		p.Stalled = append(p.Stalled, wire.ProgressStall{ID: st.ID, From: st.Sender, To: st.Recipient, Subject: st.Subject, AnsweredAt: st.LastAnswer, IdleSince: st.Since, IdleS: max(0, int64(now.Sub(st.Since)/time.Second)), Sessions: st.Sessions})
+		ps := wire.ProgressStall{ID: st.ID, From: st.Sender, To: st.Recipient, Subject: st.Subject, IdleSince: st.Since, IdleS: max(0, int64(now.Sub(st.Since)/time.Second)), Sessions: st.Sessions}
+		if !st.LastAnswer.IsZero() {
+			t := st.LastAnswer
+			ps.AnsweredAt = &t
+		}
+		p.Stalled = append(p.Stalled, ps)
 	}
 
 	for _, p := range svcs {

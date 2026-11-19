@@ -126,8 +126,8 @@ func TestProgressOpenDirectives(t *testing.T) {
 	}
 	got := serviceNamed(t, r, "team").OpenDirectives
 	want := []wire.ProgressDirective{
-		{ID: old, To: "team/worker", Subject: "old", Status: "read", AgeS: 3 * 3600, OverThreshold: true},
-		{ID: fresh, To: "team/worker-2", Subject: "fresh", Status: "pending", AgeS: 3600},
+		{ID: old, To: "team/worker", Subject: "old", Status: "read", AgeS: 3 * 3600, OverThreshold: true, Recipient: "offline"},
+		{ID: fresh, To: "team/worker-2", Subject: "fresh", Status: "pending", AgeS: 3600, Recipient: "offline"},
 	}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("directives\n got %+v\nwant %+v", got, want)

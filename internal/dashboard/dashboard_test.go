@@ -452,7 +452,7 @@ func TestDashboardWaitAndDetails(t *testing.T) {
 		`<h3 class="sechead">대기 <span id="waitCount"`,
 		`<table id="waitTbl" class="stack list cards"><thead><tr><th>종류</th><th>항목</th><th>역할</th><th class="num">지난 시간</th></tr></thead><tbody id="wait"></tbody></table>`,
 		`<h3 class="sechead">서비스</h3>`, `id="svcChips"`,
-		`<table id="progressTbl" class="stack list cards"><thead><tr><th>서비스</th><th>상태</th><th class="num">세션</th><th class="num">답 없는 지시</th><th>마지막 소식</th></tr></thead><tbody id="progress"></tbody></table>`,
+		`<table id="progressTbl" class="stack list cards"><thead><tr><th>서비스</th><th>상태</th><th class="num">세션</th><th class="num">열린 지시</th><th>마지막 소식</th></tr></thead><tbody id="progress"></tbody></table>`,
 		`id="panel-sessions"`,
 	}
 	last := -1
@@ -477,7 +477,7 @@ func TestDashboardWaitAndDetails(t *testing.T) {
 		"const progressKinds={q:'questions',p:'permissions',s:'sessions',d:progressDirective,m:progressDirective,svc:progressService};",
 		"registerDetail('progress',{",
 		"kinds:['progress','questions','permissions','sessions','mail'],",
-		"subs:x=>[['sessions','세션 '+x.p.sessions.length],['directives','답 없는 지시 '+x.p.open_directives.length],['news','마지막 소식']],",
+		"subs:x=>[['sessions','세션 '+x.p.sessions.length],['directives','열린 지시 '+x.p.open_directives.length],['news','마지막 소식']],",
 		// 지시: thread first, 닫기 through the admin close API.
 		"subs:()=>[['thread','스레드'],['body','본문']],",
 		"apiSend('POST','messages/'+encodeURIComponent(x.m.id)+'/close')",

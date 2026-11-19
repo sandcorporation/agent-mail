@@ -19,13 +19,15 @@ type Message struct {
 	ThreadID       int64      `json:"thread_id,omitempty"`
 	ReplyTo        int64      `json:"reply_to,omitempty"`
 	Status         string     `json:"status"`
-	Priority       string     `json:"priority"`               // "normal" or "urgent"
-	AddressedTo    string     `json:"addressed_to,omitempty"` // label address the sender used (see labels.go)
-	HeldID         int64      `json:"held_id,omitempty"`      // ID while held, when the message moved to a session
-	HeldAt         *time.Time `json:"held_at,omitempty"`      // when the message was held for a label
-	DeliveredAt    *time.Time `json:"delivered_at,omitempty"` // when held mail moved to a session
-	Directive      bool       `json:"directive,omitempty"`    // a reply that carries new work (reply --directive); plain sends are directives anyway
-	NoReply        bool       `json:"no_reply,omitempty"`     // needs no answer (send/reply --no-reply): never an open directive
+	Priority       string     `json:"priority"`                  // "normal" or "urgent"
+	AddressedTo    string     `json:"addressed_to,omitempty"`    // label address the sender used (see labels.go)
+	HeldID         int64      `json:"held_id,omitempty"`         // ID while held, when the message moved to a session
+	HeldAt         *time.Time `json:"held_at,omitempty"`         // when the message was held for a label
+	DeliveredAt    *time.Time `json:"delivered_at,omitempty"`    // when held mail moved to a session
+	Directive      bool       `json:"directive,omitempty"`       // a reply that carries new work (reply --directive); plain sends are directives anyway
+	NoReply        bool       `json:"no_reply,omitempty"`        // needs no answer (send/reply --no-reply): never an open directive
+	Done           bool       `json:"done,omitempty"`            // reply --done: the reply is the final report and marks the replied-to mail done (#269)
+	DirectiveState string     `json:"directive_state,omitempty"` // reply response: the replied-to directive's state, open or done (#269)
 	IdempotencyKey string     `json:"-"`
 }
 

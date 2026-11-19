@@ -9,7 +9,7 @@ import (
 // Report status, derived from the linked threads (never stored).
 const (
 	ReportOpen = "open" // a linked directive is still open
-	ReportDone = "done" // every linked directive is answered, completed or closed; or no links
+	ReportDone = "done" // every linked directive is done or closed; or no links
 )
 
 // Report limits.
@@ -87,8 +87,9 @@ type ReportMail struct {
 }
 
 // ReportThread is a linked thread: its root directive and the replies in
-// order. Open is the thread's share of the report status: not answered
-// (mail.Replies), not completed by the recipient and not closed (no_reply).
+// order. Answered: it got a reply (mail.Replies). Open is the thread's share
+// of the report status, the answered rule's Open: since version 2 not done
+// by the recipient and not closed (no_reply), however many replies.
 type ReportThread struct {
 	Directive ReportMail   `json:"directive"`
 	Replies   []ReportMail `json:"replies"`

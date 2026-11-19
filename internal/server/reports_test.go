@@ -178,25 +178,35 @@ func TestReportStatusFollowsAnsweredRule(t *testing.T) {
 	if rp.Status != wire.ReportOpen {
 		t.Fatalf("new: %s", rp.Status)
 	}
-	// An acknowledgement from the worker to the boss in the thread answers it.
+	// An acknowledgement from the worker to the boss in the thread answers
+	// it, and the directive stays open until done (#269).
 	reply := workerReply(t, s, answered, "built")
 	d := reportDetail(t, s, rp.ID)
 	if d.Status != wire.ReportOpen || len(d.Threads) != 2 {
 		t.Fatalf("after one reply: %+v", d)
 	}
-	if th := d.Threads[0]; !th.Answered || th.Open || len(th.Replies) != 1 || th.Replies[0].ID != reply || !th.Replies[0].Answers || th.Directive.Body != "do it" {
+	if th := d.Threads[0]; !th.Answered || !th.Open || len(th.Replies) != 1 || th.Replies[0].ID != reply || !th.Replies[0].Answers || th.Directive.Body != "do it" {
 		t.Fatalf("answered thread %+v", th)
 	}
 	if th := d.Threads[1]; th.Answered || !th.Open || th.Completed {
 		t.Fatalf("open thread %+v", th)
 	}
-	// The recipient completing the second directive closes the report.
+	// Completing the second directive leaves the report in progress: the
+	// first got a reply but is not done (#269).
 	if w := callAs(s, "POST", "/api/messages/"+itoa(completed)+"/complete", reportWorkerToken, reportWorkerRole, nil); w.Code >= 300 {
 		t.Fatalf("complete: %d %s", w.Code, w.Body)
 	}
 	d = reportDetail(t, s, rp.ID)
-	if d.Status != wire.ReportDone || !d.Threads[1].Completed || d.Threads[1].Open {
+	if d.Status != wire.ReportOpen || !d.Threads[1].Completed || d.Threads[1].Open || !d.Threads[0].Open {
 		t.Fatalf("after complete: %+v", d)
+	}
+	// reply --done on the first closes it, and with it the report.
+	if w := callAs(s, "POST", "/api/messages/"+itoa(answered)+"/reply", reportWorkerToken, reportWorkerRole, map[string]any{"subject": "re", "body": "shipped", "done": true}); w.Code != 201 {
+		t.Fatalf("reply --done: %d %s", w.Code, w.Body)
+	}
+	d = reportDetail(t, s, rp.ID)
+	if d.Status != wire.ReportDone || d.Threads[0].Open {
+		t.Fatalf("after reply --done: %+v", d)
 	}
 	l := reportList(t, s)
 	if l[0].Status != wire.ReportDone || l[0].LastReplyAt == nil || !slices.Equal(l[0].Mail, []int64{answered, completed}) {
