@@ -2,13 +2,20 @@ package server
 
 import (
 	"errors"
+	"io"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/sandcorporation/switchboard/internal/adminauth"
 	"github.com/sandcorporation/switchboard/internal/config"
+	"github.com/sandcorporation/switchboard/internal/hosting"
+	"github.com/sandcorporation/switchboard/internal/identity"
+	"github.com/sandcorporation/switchboard/internal/store"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 // Terminal hosting (#173) is compiled in but off. SWITCHBOARD_HOSTING=on turns
@@ -92,4 +99,46 @@ func hostingNodePath(path string) bool { return strings.HasPrefix(path, "node/")
 // replace it with the real handlers.
 func hostingStub(w http.ResponseWriter) {
 	http.Error(w, "not implemented", http.StatusNotImplemented)
+}
+
+// hostingAdmin serves an /api/admin/ hosting path (prefix removed) for an
+// identified admin past the write guard: the records and the node list, and
+// the stub for the routes of later tickets.
+func (s *Server) hostingAdmin(w http.ResponseWriter, r *http.Request, path string) {
+	h := s.hostingService()
+	if rest, ok := strings.CutPrefix(path, "terminals"); ok && h.AdminTerminalsAPI(w, r, strings.TrimPrefix(rest, "/")) {
+		return
+	}
+	if rest, ok := strings.CutPrefix(path, "nodes"); ok && h.AdminNodesAPI(w, r, strings.TrimPrefix(rest, "/")) {
+		return
+	}
+	hostingStub(w)
+}
+
+// hostingService is the hosted-session store over this server's database.
+func (s *Server) hostingService() *hosting.Service {
+	return hosting.New(s.db, s.now, func(base string) bool { return identity.RoleExists(s.db, base) })
+}
+
+// HostCLI is the binary's `host` command: the hosted-session records in
+// DB_PATH, which must name this instance's own database (the same rule as
+// SWITCHBOARD_HOSTING=on), so the operations database never gains records.
+func HostCLI(action, id string, add wire.HostedSessionCreate, jsonOut bool, stdout io.Writer) (int, error) {
+	path := os.Getenv("DB_PATH")
+	switch {
+	case path == "":
+		return 0, errors.New("host: DB_PATH is unset; name this instance's own database")
+	case filepath.ToSlash(filepath.Clean(path)) == containerDBPath:
+		return 0, errors.New("host: DB_PATH is the container default " + containerDBPath + "; name this instance's own database")
+	}
+	db, err := store.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
+	svc := hosting.New(db, time.Now, func(base string) bool { return identity.RoleExists(db, base) })
+	if err = svc.RunCLI(action, id, add, jsonOut, stdout); err != nil {
+		return 0, err
+	}
+	return 0, nil
 }

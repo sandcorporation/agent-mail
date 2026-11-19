@@ -49,5 +49,5 @@ func runMain() {
 		Run(version)
 		return
 	}
-	os.Exit(cli.Run(args, version, adminauth.CLI))
+	os.Exit(cli.Run(args, version, adminauth.CLI, HostCLI))
 }
