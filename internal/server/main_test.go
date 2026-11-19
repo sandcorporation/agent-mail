@@ -150,13 +150,13 @@ func TestDashboardUsesSameOriginAndNoRoleCredentials(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(body, "fetch('/api/admin/") || strings.Contains(body, "Authorization") || strings.Contains(body, "type=\"password\"") || strings.Contains(body, "localStorage") {
 		t.Fatalf("dashboard is not same-origin/read-only: %d", w.Code)
 	}
-	// Message content must be rendered as text; the body opens inside the clicked card.
-	for _, banned := range []string{"innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", `id="detail"`} {
+	// Message content must be rendered as text; the body opens in the detail panel (#229).
+	for _, banned := range []string{"innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"} {
 		if strings.Contains(body, banned) {
 			t.Fatalf("dashboard uses %s", banned)
 		}
 	}
-	for _, want := range []string{`lang="ko"`, "열기", "닫기", "스레드 보기", "aria-expanded", "긴급", "m.priority==='urgent'", "api('presence')", "<th>컨텍스트</th>", "오프라인", "'오류: '", "'막힘: '", ".st-error{", ".st-blocked{"} {
+	for _, want := range []string{`lang="ko"`, "닫기", "스레드 보기", "node('pre',m.body)", "긴급", "m.priority==='urgent'", "api('presence')", `<th class="num">컨텍스트</th>`, "오프라인", "'오류: '", "'막힘: '", ".st-error{", ".st-blocked{"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("dashboard missing %q", want)
 		}
