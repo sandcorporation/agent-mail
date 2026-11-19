@@ -208,6 +208,19 @@ var commands = []command{
 			{"--restart", "POLICY", "add: always (default), on-failure or never"},
 			optJSON,
 		}},
+	{name: "up",
+		summary: "Run this PC's hosting instance: the server with terminal hosting on, on 127.0.0.1:PORT with its database in DIR, and a node for this machine in the same process",
+		options: []option{
+			{"--data", "DIR", "data directory: database, node token, tmux config (created if missing)"},
+			{"--port", "PORT", "loopback port to listen on"},
+			{"--node", "NAME", "name of this machine's node, as host add --node names it (default local)"},
+		}},
+	{name: "node",
+		summary: "Run a node for this machine attached to a hosting instance (loopback only in this release)",
+		options: []option{
+			{"--host", "URL", "the instance's URL, e.g. http://127.0.0.1:8090"},
+			{"--token-file", "PATH", "node token file (up writes DIR/node.token)"},
+		}},
 	{name: "admin", args: "ACTION NAME", nargs: 2, synopsis: "(ACTION: create | passwd | totp-reset | disable) NAME",
 		summary: "Manage built-in dashboard admins in the server database (DB_PATH; run inside the server container); create and passwd read the password from the terminal or the first line of stdin",
 		options: []option{optJSON}},
@@ -244,16 +257,33 @@ type HostFunc func(action, id string, add wire.HostedSessionCreate, jsonOut bool
 // server's database, which the client never opens, so the binary supplies it.
 type AdminFunc func(action, name string, jsonOut bool, stdin io.Reader, stdout, stderr io.Writer) (int, error)
 
+// UpFunc runs `up`: the server and a node in one process, until stopped.
+type UpFunc func(dataDir string, port int, nodeName string) error
+
+// NodeFunc runs `node`: a node attached to the host at hostURL, until
+// stopped.
+type NodeFunc func(hostURL, tokenFile string) error
+
+// Commands are the commands the binary supplies because they run the server
+// or open its database.
+type Commands struct {
+	Admin AdminFunc
+	Host  HostFunc
+	Up    UpFunc
+	Node  NodeFunc
+}
+
 var (
 	version string    // build version, from Run
 	admin   AdminFunc // the admin command, from Run
 	host    HostFunc  // the host command, from Run
+	binary  Commands  // every command the binary supplies, from Run
 )
 
 // Run runs the client command in args (the arguments after the program name)
 // and returns the process exit code.
-func Run(args []string, buildVersion string, adminCmd AdminFunc, hostCmd HostFunc) int {
-	version, admin, host = buildVersion, adminCmd, hostCmd
+func Run(args []string, buildVersion string, cmds Commands) int {
+	version, admin, host, binary = buildVersion, cmds.Admin, cmds.Host, cmds
 	return runCLI(args)
 }
 
@@ -350,6 +380,10 @@ func dispatch(args []string) (int, error) {
 		return cliRegister(p)
 	case "admin":
 		return admin(p.pos[0], p.pos[1], p.bool("--json"), os.Stdin, os.Stdout, os.Stderr)
+	case "up":
+		return cliUp(p)
+	case "node":
+		return cliNode(p)
 	case "join":
 		return cliJoin(p, os.Stdout)
 	case "config":

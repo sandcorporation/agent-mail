@@ -129,11 +129,22 @@ func (b *Backend) command(ctx context.Context, args ...string) *exec.Cmd {
 	} else {
 		cmd = exec.CommandContext(ctx, b.bin, full...)
 	}
-	// An enclosing tmux must not leak into ours.
-	cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool {
-		return strings.HasPrefix(kv, "TMUX=") || strings.HasPrefix(kv, "TMUX_PANE=")
-	})
+	cmd.Env = serverEnv(os.Environ())
 	return cmd
+}
+
+// serverEnvNames are the variables tmux itself needs. The server's global
+// environment is the base of every pane's, so it gets only these: a
+// session's environment is exactly its Spec.Env, and a variable the node
+// leaves out of a child (a credential) never reaches it through the server.
+// An enclosing tmux (TMUX, TMUX_PANE) never leaks into ours.
+var serverEnvNames = map[string]bool{"HOME": true, "PATH": true, "TMUX_TMPDIR": true, "TMPDIR": true, "USER": true, "LOGNAME": true, "LANG": true, "LC_ALL": true, "LC_CTYPE": true}
+
+func serverEnv(environ []string) []string {
+	return slices.DeleteFunc(slices.Clone(environ), func(kv string) bool {
+		k, _, _ := strings.Cut(kv, "=")
+		return !serverEnvNames[k]
+	})
 }
 
 // run runs one tmux command line and returns its stdout.

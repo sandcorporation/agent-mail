@@ -21,5 +21,10 @@ func main() {
 		server.Run(version)
 		return
 	}
-	os.Exit(cli.Run(args, version, adminauth.CLI, server.HostCLI))
+	os.Exit(cli.Run(args, version, cli.Commands{
+		Admin: adminauth.CLI,
+		Host:  server.HostCLI,
+		Up:    func(dir string, port int, node string) error { return server.Up(version, dir, port, node) },
+		Node:  func(host, tokenFile string) error { return server.Node(version, host, tokenFile) },
+	}))
 }

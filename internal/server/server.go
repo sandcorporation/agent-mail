@@ -10,11 +10,13 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -22,6 +24,7 @@ import (
 	"github.com/sandcorporation/switchboard/internal/asks"
 	"github.com/sandcorporation/switchboard/internal/config"
 	"github.com/sandcorporation/switchboard/internal/dashboard"
+	"github.com/sandcorporation/switchboard/internal/hosting"
 	"github.com/sandcorporation/switchboard/internal/identity"
 	"github.com/sandcorporation/switchboard/internal/insight"
 	"github.com/sandcorporation/switchboard/internal/live"
@@ -53,6 +56,8 @@ type Server struct {
 	live        live.Bus            // dashboard change stream (internal/live, served by live.go)
 	publicURL   string              // SWITCHBOARD_PUBLIC_URL; a WebSocket Origin it also accepts
 	hosting     bool                // SWITCHBOARD_HOSTING=on (hosting.go); off answers every hosting route 404
+	hubOnce     sync.Once
+	nodeHub     *hosting.Hub // the node channel (hosting.go), built on first use
 }
 
 // version is the build version /health reports (set by Run).
@@ -60,9 +65,16 @@ var version = "dev"
 
 // Run reads the settings from the environment, opens the database and serves
 // until SIGINT or SIGTERM. v is the build version.
-func Run(v string) {
+func Run(v string) { run(v, nil) }
+
+// attachFunc starts more work on a server about to serve (up's node); ctx
+// ends at shutdown.
+type attachFunc func(ctx context.Context, s *Server) error
+
+// run is Run; attach, when set, runs after the listener is bound.
+func run(v string, attach attachFunc) {
 	version = v
-	hosting, e := hostingStart(os.Getenv)
+	hostingOn, e := hostingStart(os.Getenv)
 	if e != nil {
 		log.Fatal(e)
 	}
@@ -70,7 +82,7 @@ func Run(v string) {
 	if e != nil {
 		log.Fatal(e)
 	}
-	s := &Server{db: db, tokens: map[string]string{}, admin: adminauth.Config{ProxyToken: config.EnvAlias("ADMIN_PROXY_TOKEN")}, done: make(chan struct{}), publicURL: strings.TrimRight(config.EnvAlias("PUBLIC_URL"), "/"), hosting: hosting}
+	s := &Server{db: db, tokens: map[string]string{}, admin: adminauth.Config{ProxyToken: config.EnvAlias("ADMIN_PROXY_TOKEN")}, done: make(chan struct{}), publicURL: strings.TrimRight(config.EnvAlias("PUBLIC_URL"), "/"), hosting: hostingOn}
 	if v, from := config.EnvAliasFrom(os.Getenv, "SSE_KEEPALIVE"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil || d <= 0 {
@@ -132,15 +144,30 @@ func Run(v string) {
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	stopped := make(chan struct{})
 	waitSweeper := s.startSweeper()
+	ln, e := net.Listen("tcp", addr)
+	if e != nil {
+		log.Fatal(e)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if s.hosting {
+		go s.hostingHub().Run(ctx, hosting.SyncInterval)
+	}
+	if attach != nil {
+		if e = attach(ctx, s); e != nil {
+			log.Fatal(e)
+		}
+	}
 	go func() {
 		<-stop
+		cancel()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(ctx)
 		close(stopped)
 	}()
 	log.Printf("switchboard listening on %s", addr)
-	if e = srv.ListenAndServe(); e != nil && !errors.Is(e, http.ErrServerClosed) {
+	if e = srv.Serve(ln); e != nil && !errors.Is(e, http.ErrServerClosed) {
 		log.Fatal(e)
 	}
 	<-stopped
@@ -218,8 +245,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.adminAPI(w, r)
 		return
 	}
-	if s.hosting && hostingNodePath(strings.TrimPrefix(r.URL.Path, "/api/")) {
-		hostingStub(w)
+	if p := strings.TrimPrefix(r.URL.Path, "/api/"); s.hosting && hostingNodePath(p) {
+		s.hostingHub().NodeAPI(w, r, strings.TrimPrefix(p, "node/"))
 		return
 	}
 	if r.URL.Path == "/api/register" {

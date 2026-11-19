@@ -75,7 +75,7 @@ func TestDashboardProgressTab(t *testing.T) {
 		`id="panel-progress" role="tabpanel" aria-labelledby="tab-progress" tabindex="0" class="card">`,
 		`id="panel-sessions" role="tabpanel" aria-labelledby="tab-sessions" tabindex="0" class="card" hidden>`,
 		"tabLoaders.progress=loadProgress", "api('progress')", `id="reloadProgress"`, `id="progress"`,
-		"showTab(tabNames.includes(h)?h:'progress')",
+		"showTab(visibleTabs().includes(h)?h:'progress')",
 		"function openMessage(id)", `id="task"`, "task:task,id:id",
 		"setTabCount('progress',", "d.over_threshold", "'세션 없음'",
 	} {
@@ -182,5 +182,37 @@ func TestDashboardQuestionWaitingDelivery(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("question card missing %q", want)
 		}
+	}
+}
+
+// The 터미널 tab (terminal hosting, #186) is hidden in the page and shown
+// only when the bootstrap call reports hosting:true; with hosting off it is
+// absent from the tab bar, keyboard order and routing.
+func TestDashboardTerminalsTabOnlyWithHosting(t *testing.T) {
+	w := httptest.NewRecorder()
+	Page(w, httptest.NewRequest("GET", "/", nil))
+	body := w.Body.String()
+	tab := regexp.MustCompile(`<button[^>]*id="tab-terminals"[^>]*>`).FindString(body)
+	if tab == "" || !strings.Contains(tab, " hidden") {
+		t.Fatalf("terminals tab button %q is not hidden by default", tab)
+	}
+	if !strings.Contains(body, `id="panel-terminals" role="tabpanel" aria-labelledby="tab-terminals" tabindex="0" class="card" hidden>`) {
+		t.Fatal("terminals panel missing or shown by default")
+	}
+	for _, want := range []string{
+		`$('tab-terminals').hidden=!hostingOn;`,
+		`function visibleTabs(){return tabNames.filter(n=>n!=='terminals'||hostingOn)}`,
+		`showTab(visibleTabs().includes(h)?h:'progress');`,
+		`terminals:loadTerminals}`,
+		`tabLoaders.terminals=loadTerminals;`,
+		`api('terminals')`,
+		`confirm(`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("dashboard missing %q", want)
+		}
+	}
+	if strings.Contains(body, "innerHTML") {
+		t.Error("dashboard renders HTML from strings")
 	}
 }

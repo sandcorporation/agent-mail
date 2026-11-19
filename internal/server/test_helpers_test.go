@@ -41,6 +41,16 @@ type discordPayload struct {
 	} `json:"allowed_mentions"`
 }
 
+// binaryCommands are the commands cmd/switchboard hands the client.
+func binaryCommands() cli.Commands {
+	return cli.Commands{
+		Admin: adminauth.CLI,
+		Host:  HostCLI,
+		Up:    func(dir string, port int, node string) error { return Up(version, dir, port, node) },
+		Node:  func(host, tokenFile string) error { return Node(version, host, tokenFile) },
+	}
+}
+
 // runMain is cmd/switchboard's main: the server without arguments, else the
 // client.
 func runMain() {
@@ -49,5 +59,5 @@ func runMain() {
 		Run(version)
 		return
 	}
-	os.Exit(cli.Run(args, version, adminauth.CLI, HostCLI))
+	os.Exit(cli.Run(args, version, binaryCommands()))
 }

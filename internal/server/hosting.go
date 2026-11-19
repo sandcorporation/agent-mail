@@ -105,14 +105,20 @@ func hostingStub(w http.ResponseWriter) {
 // identified admin past the write guard: the records and the node list, and
 // the stub for the routes of later tickets.
 func (s *Server) hostingAdmin(w http.ResponseWriter, r *http.Request, path string) {
-	h := s.hostingService()
-	if rest, ok := strings.CutPrefix(path, "terminals"); ok && h.AdminTerminalsAPI(w, r, strings.TrimPrefix(rest, "/")) {
+	if rest, ok := strings.CutPrefix(path, "terminals"); ok && s.hostingHub().AdminTerminalsAPI(w, r, strings.TrimPrefix(rest, "/")) {
 		return
 	}
-	if rest, ok := strings.CutPrefix(path, "nodes"); ok && h.AdminNodesAPI(w, r, strings.TrimPrefix(rest, "/")) {
+	if rest, ok := strings.CutPrefix(path, "nodes"); ok && s.hostingService().AdminNodesAPI(w, r, strings.TrimPrefix(rest, "/")) {
 		return
 	}
 	hostingStub(w)
+}
+
+// hostingHub is the node channel over this server's database; its changes
+// publish the live kind "terminals".
+func (s *Server) hostingHub() *hosting.Hub {
+	s.hubOnce.Do(func() { s.nodeHub = hosting.NewHub(s.hostingService(), s.live.Publish) })
+	return s.nodeHub
 }
 
 // hostingService is the hosted-session store over this server's database.
