@@ -32,8 +32,10 @@ const (
 // node for this machine runs in the same process and attaches to it over
 // loopback HTTP with the node token kept in dataDir (created on first start,
 // mode 0600). Every refusal of SWITCHBOARD_HOSTING=on still applies (the
-// admin mode must be builtin or oidc). It returns only when start-up fails;
-// otherwise it serves until SIGINT or SIGTERM.
+// admin mode must be builtin or oidc). The listener is bound before the
+// node's backend (tmux server, keeper) is touched, so a port held by
+// another process ends up at once with nothing left running. It returns
+// only when start-up fails; otherwise it serves until SIGINT or SIGTERM.
 func Up(v, dataDir string, port int, nodeName string) error {
 	dir, err := filepath.Abs(dataDir)
 	if err != nil {
@@ -55,12 +57,17 @@ func Up(v, dataDir string, port int, nodeName string) error {
 	if _, err = hostingStart(os.Getenv); err != nil {
 		return err
 	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("up: %w", err)
+	}
 	tokenFile := filepath.Join(dir, upNodeToken)
 	part, err := prepareNode(v, nodeName, tokenFile, "http://"+addr, dir)
 	if err != nil {
+		ln.Close()
 		return err
 	}
-	run(v, func(ctx context.Context, s *Server) error {
+	run(v, ln, func(ctx context.Context, s *Server) error {
 		token, err := node.EnsureTokenFile(tokenFile)
 		if err != nil {
 			return fmt.Errorf("up: node %s: %w", nodeName, err)

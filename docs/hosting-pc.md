@@ -68,12 +68,12 @@ $sb = "$data\bin\switchboard.exe"
 $agent = (Get-Command claude -CommandType Application | Where-Object Source -like '*.exe' | Select-Object -First 1).Source
 & $sb version
 & $sb up --help
-Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+$probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $port); $probe.Start(); $probe.Stop()
 ```
 
-Check: `version` prints the tag from W2. `up --help` lists `--data DIR` and `--port PORT`. `Get-NetTCPConnection` prints nothing (the port is free). `$agent` is a path ending in `.exe`.
+Check: `version` prints the tag from W2. `up --help` lists `--data DIR` and `--port PORT`. The `$probe` line prints nothing (`up` can bind the port). `$agent` is a path ending in `.exe`.
 
-If it fails: `up --help` prints the general help instead → the release predates terminal hosting; use a newer release. The port is in use → set `$port` to another free port (`8091`, …) and use it everywhere below. `$agent` is empty → back to W1.
+If it fails: `up --help` prints the general help instead → the release predates terminal hosting; use a newer release. The `$probe` line prints `Only one usage of each socket address` or `forbidden by its access permissions` → another program holds the port, or Windows reserves it, even when no listener shows for it; set `$port` to another port (`8091`, …), run the block again, and use that port everywhere below. `$agent` is empty → back to W1.
 
 Save the values and helpers for later windows:
 
@@ -134,11 +134,20 @@ Remove-Item Env:DB_PATH
 (Get-Content "$data\admin.json" -Raw | ConvertFrom-Json).action
 ```
 
-Check: prints `created`. `$data\admin.json` holds `secret` and `otpauth_uri` (shown only this once); `$data\admin.password` holds the password. Both stay inside the data directory, which only this user can read.
+Check: prints `create`. `$data\admin.json` holds `secret` and `otpauth_uri` (shown only this once); `$data\admin.password` holds the password. Both stay inside the data directory, which only this user can read.
 
 If it fails: `admin "pcadmin" already exists` → this data directory was set up before; continue with W5 if `admin.json` and `admin.password` are both there, otherwise run W9 uninstall and start again at W3. `DB_PATH` errors → the `$env:DB_PATH` line was skipped; run the block again.
 
 ### W5. Roles and profiles
+
+Clear the variables an agent session (or an earlier `sbpc`) leaves in this window; `Start-Process` below passes them on to `up`.
+
+```powershell
+Remove-Item Env:SWITCHBOARD_PROFILE, Env:SWITCHBOARD_ROLE, Env:SWITCHBOARD_TOKEN, Env:SWITCHBOARD_ENDPOINT, Env:SWITCHBOARD_CONFIG_DIR, Env:SWITCHBOARD_MACHINE, Env:SWITCHBOARD_LABEL, Env:SWITCHBOARD_PARENT, Env:AGENT_MAIL_PROFILE, Env:AGENT_MAIL_ROLE, Env:AGENT_MAIL_TOKEN, Env:AGENT_MAIL_ENDPOINT, Env:AGENT_MAIL_CONFIG_DIR, Env:DB_PATH, Env:LISTEN_ADDR -ErrorAction SilentlyContinue
+Get-ChildItem Env: | Where-Object Name -match '^((SWITCHBOARD|AGENT_MAIL)_(PROFILE|ROLE|TOKEN|ENDPOINT|CONFIG_DIR|MACHINE|LABEL|PARENT)|DB_PATH|LISTEN_ADDR)$'
+```
+
+Check: `Get-ChildItem` prints nothing.
 
 `register` creates a role only on an instance started with `SWITCHBOARD_ENROLLMENT_TOKEN`; the instance runs with it only for these commands.
 
@@ -148,7 +157,7 @@ foreach ($r in 'boss', 'worker') { New-SbToken | Set-Content "$data\$r.token" }
 $env:SWITCHBOARD_ADMIN_AUTH = 'builtin'; $env:SWITCHBOARD_HOSTING_AGENT = $agent; $env:SWITCHBOARD_ENROLLMENT_TOKEN = Get-Content "$data\enroll.token"
 $setup = Start-Process $sb -ArgumentList 'up', '--data', "`"$data`"", '--port', $port -RedirectStandardOutput "$data\setup.out" -RedirectStandardError "$data\setup.log" -WindowStyle Hidden -PassThru
 Remove-Item Env:SWITCHBOARD_ADMIN_AUTH, Env:SWITCHBOARD_HOSTING_AGENT, Env:SWITCHBOARD_ENROLLMENT_TOKEN
-sbwait 60 { Test-SbHealth }
+sbwait 60 { if ($setup.HasExited) { throw "up exited: $(Get-Content "$data\setup.log" -Tail 3)" }; Test-SbHealth }
 foreach ($r in 'boss', 'worker') {
   sbpc register --endpoint "http://127.0.0.1:$port" --role "team/$r" --token-file "$data\$r.token" --enrollment-token-file "$data\enroll.token"
   sbpc --profile "pc-$r" config set --endpoint "http://127.0.0.1:$port" --role "team/$r" --token-file "$data\$r.token"
@@ -161,7 +170,7 @@ Get-ChildItem "$data\config"
 
 Check: each `register` prints `{"role":"team/<name>","status":"registered"}`, each `config set` prints `Saved <data>\config\pc-<name>.json`, `inbox` prints no error, and `$data\config` lists `pc-boss.json` and `pc-worker.json`. A profile holds the role token; `host add` names only the profile.
 
-If it fails: `timed out` waiting for health → read `$data\setup.log` and look the message up under [Refusals](#refusals). `role already registered` → the role exists from an earlier run whose profile is in `$data\config`; skip it. `enrollment authorization required` → the instance was not started from this block; stop it (`Stop-Process -Id $setup.Id`) and run the block again.
+If it fails: `up exited: …` or `timed out` waiting for health → look the message (the rest of it is in `$data\setup.log`) up under [Refusals](#refusals). `role already registered` → the role exists from an earlier run whose profile is in `$data\config`; skip it. `enrollment authorization required` → the instance was not started from this block; stop it (`Stop-Process -Id $setup.Id`) and run the block again.
 
 ### W6. Start, and start at sign-in
 
@@ -385,13 +394,13 @@ chmod 700 "$SBDATA" "$SBDATA/config"
 tar -xzf "$SBDL/$SBASSET" -C "$SBDATA/bin" switchboard
 "$SB" version
 "$SB" up --help | grep -- '--data DIR'
-if (exec 3<>"/dev/tcp/127.0.0.1/$SBPORT") 2>/dev/null; then echo "port $SBPORT is in use" >&2; false; fi
+python3 -c 'import socket,sys; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("127.0.0.1", int(sys.argv[1]))); s.listen()' "$SBPORT" 2>/dev/null || { echo "port $SBPORT is in use" >&2; false; }
 stat -c '%a %n' "$SBDATA" "$SBDATA/config"
 ```
 
 Check: `version` prints the tag from L2; `grep` prints the `--data DIR` line; nothing says `port 8090 is in use`; `stat` prints `700` for both directories.
 
-If it fails: `grep` prints nothing → the release predates terminal hosting; use a newer release. The port is in use → change `SBPORT=` in `env.sh` to another free port, run `. "$HOME/.local/share/switchboard-pc/env.sh"` and continue.
+If it fails: `grep` prints nothing → the release predates terminal hosting; use a newer release. `port 8090 is in use` → another program holds the port (listening or only bound); change `SBPORT=` in `env.sh` to another free port, run `. "$HOME/.local/share/switchboard-pc/env.sh"` and continue.
 
 ### L4. Admin
 
@@ -402,11 +411,20 @@ python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["action"])' "$SB
 stat -c '%a %n' "$SBDATA/admin.password" "$SBDATA/admin.json"
 ```
 
-Check: prints `created`, and `600` for both files. `admin.json` holds `secret` and `otpauth_uri` (shown only this once).
+Check: prints `create`, and `600` for both files. `admin.json` holds `secret` and `otpauth_uri` (shown only this once).
 
 If it fails: `admin "pcadmin" already exists` → continue with L5 if both files are there, otherwise uninstall (L9) and start again at L3.
 
 ### L5. Roles and profiles
+
+Clear the variables an agent session leaves in this shell; the `up` below inherits them.
+
+```sh
+unset SWITCHBOARD_PROFILE SWITCHBOARD_ROLE SWITCHBOARD_TOKEN SWITCHBOARD_ENDPOINT SWITCHBOARD_CONFIG_DIR SWITCHBOARD_MACHINE SWITCHBOARD_LABEL SWITCHBOARD_PARENT AGENT_MAIL_PROFILE AGENT_MAIL_ROLE AGENT_MAIL_TOKEN AGENT_MAIL_ENDPOINT AGENT_MAIL_CONFIG_DIR DB_PATH LISTEN_ADDR
+env | grep -E '^((SWITCHBOARD|AGENT_MAIL)_(PROFILE|ROLE|TOKEN|ENDPOINT|CONFIG_DIR|MACHINE|LABEL|PARENT)|DB_PATH|LISTEN_ADDR)=' || echo 'none set'
+```
+
+Check: prints `none set`.
 
 `register` creates a role only on an instance started with `SWITCHBOARD_ENROLLMENT_TOKEN`; the instance runs with it only for these commands.
 
@@ -583,7 +601,7 @@ Reinstall: a removed node (revoked in the dashboard, Settings) cannot come back 
 | `tmux 3.2 or newer is required for terminal hosting on Linux: …` | L1. |
 | `node: terminal hosting needs Windows 10 1809 (build 17763) or later; …` | This PC cannot host; see W1. |
 | `node local: node is revoked` | The node was removed in Settings. Uninstall (W9 / L9) and install again from W3 / L3. |
-| `listen tcp 127.0.0.1:8090: bind: …` | Another program holds the port. Pick a free port and change it in `env.ps1` and `up.cmd`, or in `env.sh` and the unit. |
+| `up: listen tcp 127.0.0.1:8090: bind: …` | Another program holds the port (it may show no listener), or Windows reserves it. `up` exits at once and starts no keeper or tmux server. Pick a free port and change it in `env.ps1` and `up.cmd`, or in `env.sh` and the unit. |
 | `401 login failed` from `sblogin` | Wrong password or a TOTP code already used; wait 30 s and run `sblogin` again. |
 
 ## Operations deployment

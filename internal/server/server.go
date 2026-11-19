@@ -66,14 +66,16 @@ var version = "dev"
 
 // Run reads the settings from the environment, opens the database and serves
 // until SIGINT or SIGTERM. v is the build version.
-func Run(v string) { run(v, nil) }
+func Run(v string) { run(v, nil, nil) }
 
 // attachFunc starts more work on a server about to serve (up's node); ctx
 // ends at shutdown.
 type attachFunc func(ctx context.Context, s *Server) error
 
-// run is Run; attach, when set, runs after the listener is bound.
-func run(v string, attach attachFunc) {
+// run is Run; ln, when set, is the listener already bound to LISTEN_ADDR
+// (up binds it first), and attach, when set, runs after the listener is
+// bound.
+func run(v string, ln net.Listener, attach attachFunc) {
 	version = v
 	hostingOn, e := hostingStart(os.Getenv)
 	if e != nil {
@@ -145,9 +147,10 @@ func run(v string, attach attachFunc) {
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	stopped := make(chan struct{})
 	waitSweeper := s.startSweeper()
-	ln, e := net.Listen("tcp", addr)
-	if e != nil {
-		log.Fatal(e)
+	if ln == nil {
+		if ln, e = net.Listen("tcp", addr); e != nil {
+			log.Fatal(e)
+		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -42,6 +42,35 @@ type docBlock struct {
 	step    string // the ### heading above it, e.g. "W3. Data directory, binary and port"
 	lang    string
 	lines   []string
+	// prints is the text the "Check: prints `…`" line after the block
+	// names ("" when there is none).
+	prints string
+}
+
+// docPrints is the "Check: prints" text of the blocks of step (prefix such
+// as "L4."), in order; it fails the test when there is none.
+func docPrints(t *testing.T, step string) []string {
+	t.Helper()
+	var out []string
+	for _, b := range readDocBlocks(t) {
+		if strings.HasPrefix(b.step, step) && b.prints != "" {
+			out = append(out, b.prints)
+		}
+	}
+	if len(out) == 0 {
+		t.Fatalf("%s: no \"Check: prints\" line", step)
+	}
+	return out
+}
+
+// hasLine reports whether out has a line equal to want.
+func hasLine(out, want string) bool {
+	for _, l := range strings.Split(out, "\n") {
+		if strings.TrimRight(l, "\r ") == want {
+			return true
+		}
+	}
+	return false
 }
 
 func readDocBlocks(t *testing.T) []docBlock {
@@ -53,12 +82,16 @@ func readDocBlocks(t *testing.T) []docBlock {
 	var out []docBlock
 	var cur *docBlock
 	section, step := "", ""
+	const prints = "Check: prints `"
 	for _, line := range strings.Split(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n") {
 		switch {
 		case cur == nil && strings.HasPrefix(line, "## "):
 			section, step = strings.TrimPrefix(line, "## "), ""
 		case cur == nil && strings.HasPrefix(line, "### "):
 			step = strings.TrimPrefix(line, "### ")
+		case cur == nil && strings.HasPrefix(line, prints) && len(out) > 0 && out[len(out)-1].step == step && out[len(out)-1].prints == "":
+			text, _, _ := strings.Cut(strings.TrimPrefix(line, prints), "`")
+			out[len(out)-1].prints = text
 		case cur == nil && strings.HasPrefix(line, "```"):
 			cur = &docBlock{section: section, step: step, lang: strings.TrimPrefix(line, "```")}
 		case cur != nil && line == "```":
@@ -229,10 +262,16 @@ func TestE2E_HostingDocLinux(t *testing.T) {
 	}
 	var script strings.Builder
 	script.WriteString("set -euo pipefail\n")
+	inherited := false
 	for _, b := range readDocBlocks(t) {
 		if b.section == "Linux" {
 			if b.lang != "sh" {
 				t.Fatalf("Linux block in %q, want sh", b.lang)
+			}
+			if strings.HasPrefix(b.step, "L5.") && !inherited {
+				// What an agent session's shell carries; L5 clears it.
+				script.WriteString("export SWITCHBOARD_PROFILE=elsewhere SWITCHBOARD_ROLE=team/other AGENT_MAIL_PROFILE=elsewhere\n")
+				inherited = true
 			}
 			fmt.Fprintf(&script, "echo '>>> %s'\n%s\n", strings.ReplaceAll(b.lines[0], "'", ""), strings.Join(b.lines, "\n"))
 		}
@@ -345,9 +384,13 @@ func TestE2E_HostingDocLinux(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the Linux variant failed: %v\n%s\nup.log:\n%s", err, out, upLog)
 	}
+	for _, want := range append(docPrints(t, "L4."), docPrints(t, "L5.")[0]) {
+		if !hasLine(string(out), want) {
+			t.Errorf("output has no line %q (the doc's check):\n%s", want, out)
+		}
+	}
 	for _, want := range []string{
 		asset + ": OK",
-		"created",
 		`{"role":"team/worker","status":"registered"}`,
 		"pc-worker.json",
 		"terminal hosting is on",
@@ -488,11 +531,16 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 	var blocks []string
 	for _, d := range readDocBlocks(t) {
 		if d.section == "Windows" && (strings.HasPrefix(d.step, "W3.") || strings.HasPrefix(d.step, "W4.") || strings.HasPrefix(d.step, "W5.")) {
-			blocks = append(blocks, "Write-Output '>>> "+d.step+"'\n"+strings.Join(d.lines, "\n"))
+			pre := ""
+			if strings.HasPrefix(d.step, "W5.") && !strings.Contains(strings.Join(blocks, "\n"), ">>> W5.") {
+				// What an agent session's window carries; W5 clears it.
+				pre = "$env:SWITCHBOARD_PROFILE = 'elsewhere'; $env:SWITCHBOARD_ROLE = 'team/other'; $env:AGENT_MAIL_PROFILE = 'elsewhere'\n"
+			}
+			blocks = append(blocks, pre+"Write-Output '>>> "+d.step+"'\n"+strings.Join(d.lines, "\n"))
 		}
 	}
-	if len(blocks) != 4 {
-		t.Fatalf("W3 to W5 have %d blocks, want 4", len(blocks))
+	if len(blocks) != 5 {
+		t.Fatalf("W3 to W5 have %d blocks, want 5", len(blocks))
 	}
 	root, err := os.MkdirTemp("", "sbdocw")
 	if err != nil {
@@ -544,7 +592,8 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 		"$env:LOCALAPPDATA = '" + filepath.Join(root, "local") + "'\n" +
 		"$env:PATH = '" + agentDir + ";' + $env:PATH\n" +
 		"$dl = '" + dl + "'\n$asset = '" + asset + "'\n" +
-		body + "\n'TOTP ' + (Get-SbTotp '" + secret + "')\n"
+		body + "\n'TOTP ' + (Get-SbTotp '" + secret + "')\n" +
+		"'LEFT[' + ((Get-ChildItem Env: | Where-Object Name -match '^(SWITCHBOARD|AGENT_MAIL)_(PROFILE|ROLE)$').Name -join ',') + ']'\n"
 	file := filepath.Join(root, "doc.ps1")
 	if err := os.WriteFile(file, []byte(script), 0o600); err != nil {
 		t.Fatal(err)
@@ -566,9 +615,13 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("W3 to W5: %v\n%s\nsetup.log:\n%s", err, out, setupLog)
 	}
+	for _, want := range append(docPrints(t, "W4."), "LEFT[]") {
+		if !hasLine(string(out), want) {
+			t.Errorf("output has no line %q", want)
+		}
+	}
 	for _, want := range []string{
 		" e2e",
-		"created",
 		`{"role":"team/boss","status":"registered"}`,
 		`{"role":"team/worker","status":"registered"}`,
 		"pc-boss.json",

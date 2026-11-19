@@ -20,8 +20,10 @@ case "$(go env GOOS)" in
   windows) doc=TestE2E_HostingDocWindows ;;
   *) doc= ;;
 esac
-if [ -n "$doc" ] && ! grep -q "^--- PASS: $doc " <<<"$out"; then
-  echo "end to end: $doc did not pass"
-  exit 1
-fi
+for t in ${doc:+$doc TestE2E_HostingDocPortCheckRefusesABoundPort TestE2E_UpOnABoundPortExitsAtOnce}; do
+  if ! grep -q "^--- PASS: $t " <<<"$out"; then
+    echo "end to end: $t did not pass"
+    exit 1
+  fi
+done
 echo "end to end: $ran steps passed${doc:+, $doc passed}"
