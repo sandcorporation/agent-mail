@@ -32,7 +32,7 @@ func TestDashboardTabsSkeleton(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		`role="tab"`, "aria-selected", "function setTabCount(name,n)", "function focusQuestion(id)",
+		`role="tab"`, "aria-selected", "function setTabCount(name,n)", "history.replaceState(null,'',detailHash('questions',id,'answer'));",
 		"'hashchange'", "h.startsWith('q=')", "ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp", "tabLoaders", "id=\"reloadMail\"", "id=\"reloadSessions\"",
 	} {
 		if !strings.Contains(body, want) {
@@ -436,6 +436,70 @@ func TestDashboardTerminalsDetail(t *testing.T) {
 	for _, gone := range []string{`id="termView"`, `id="termBack"`, "termFocus"} {
 		if strings.Contains(body, gone) {
 			t.Errorf("old terminals view left: %q", gone)
+		}
+	}
+}
+
+// 진행, 질문 and 권한 요청 use the list + detail panel (#230): 진행 starts
+// with 대기 (질문, 권한, 오류, 지시 in that order, oldest first within a
+// kind), then the services under three chips; every row opens a detail.
+func TestDashboardWaitAndDetails(t *testing.T) {
+	w := httptest.NewRecorder()
+	Page(w, httptest.NewRequest("GET", "/", nil))
+	body := w.Body.String()
+	order := []string{
+		`<h3 class="sechead">대기 <span id="waitCount"`,
+		`<table id="waitTbl" class="stack list cards"><thead><tr><th>종류</th><th>항목</th><th>역할</th><th class="num">지난 시간</th></tr></thead><tbody id="wait"></tbody></table>`,
+		`<h3 class="sechead">서비스</h3>`, `id="svcChips"`,
+		`<table id="progressTbl" class="stack list cards"><thead><tr><th>서비스</th><th>상태</th><th class="num">세션</th><th class="num">답 없는 지시</th><th>마지막 소식</th></tr></thead><tbody id="progress"></tbody></table>`,
+		`id="panel-sessions"`,
+	}
+	last := -1
+	for _, want := range order {
+		i := strings.Index(body, want)
+		if i < last {
+			t.Fatalf("progress list missing or out of order: %q", want)
+		}
+		last = i
+	}
+	for _, want := range []string{
+		// 대기: kinds in order, oldest first, the counts the menu shows.
+		"const waitKinds=[['q','질문','warning'],['p','권한','info'],['s','오류','danger'],['d','지시','neutral']];",
+		"for(const [k,label,tone] of waitKinds)for(const x of by[k].sort((a,b)=>b.age-a.age))",
+		"api('questions?status=pending&limit=500'),api('permissions?status=pending')",
+		"for(const x of p.open_directives)if(x.over_threshold)by.d.push(",
+		"detailRow(tr,'progress',x.kind+':'+x.id);",
+		"const svcChips=[['all','전체',()=>true],['problem','문제 있음',p=>/^(error|blocked)$/.test(p.badge)],['stale','오래된 지시',p=>p.open_directives.some(d=>d.over_threshold)]];",
+		"detailRow(tr,'progress','svc:'+p.service);",
+		// Each 대기 kind opens its own detail.
+		"const progressKinds={q:'questions',p:'permissions',s:'sessions',d:progressDirective,svc:progressService};",
+		"registerDetail('progress',{",
+		"kinds:['progress','questions','permissions','sessions','mail'],",
+		"subs:x=>[['sessions','세션 '+x.p.sessions.length],['directives','답 없는 지시 '+x.p.open_directives.length],['news','마지막 소식']],",
+		// 지시: thread first, 닫기 through the admin close API.
+		"subs:()=>[['thread','스레드'],['body','본문']],",
+		"apiSend('POST','messages/'+encodeURIComponent(x.m.id)+'/close')",
+		// 질문: 답하기 / 관련 결정; the form survives live redraws; a late 409 is one line.
+		"registerDetail('questions',{",
+		"subs:x=>[['answer',x.q.status==='pending'&&x.q.can_answer?'답하기':'답'],['decisions','관련 결정 '+x.decs.length]],",
+		"if(!f){f=answerForm(q);qForms.set(q.id,f)}",
+		"qNotes.set(q.id,'이미 답했거나 거둔 질문입니다(409)');",
+		"detailRow(tr,'questions',q.id);",
+		// 권한 요청: 대기 / 지난 기록 lists, detail with allow and deny.
+		"registerDetail('permissions',{",
+		"api('permissions/'+encodeURIComponent(id))",
+		"detailRow(tr,'permissions',v.id);",
+		"if(v.status==='pending'&&v.can_answer)box.append(permAnswerForm(v));",
+		// Below 600px 대기 and service rows are two-line cards.
+		"table.cards td.cardbr{display:block;flex-basis:100%;height:0}",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("dashboard missing %q", want)
+		}
+	}
+	for _, banned := range []string{"function progressCard(", "function focusQuestion(", "function permPendingCard("} {
+		if strings.Contains(body, banned) {
+			t.Fatalf("old card view left: %q", banned)
 		}
 	}
 }
