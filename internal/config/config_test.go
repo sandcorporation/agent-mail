@@ -52,3 +52,11 @@ func TestHostingOffByDefaultOnlyOnEnables(t *testing.T) {
 		t.Fatalf("new name must win: %v %q", on, from)
 	}
 }
+
+func TestWithoutOwnEnvDropsBothPrefixes(t *testing.T) {
+	in := []string{"PATH=/bin", "AGENT_MAIL_ROLE=x/y", "SWITCHBOARD_TOKEN=t", "agent_mail_token=t", "Switchboard_Profile=p", "HOME=/h", "SWITCHBOARDX=keep", "DB_PATH=/d"}
+	got := WithoutOwnEnv(in)
+	if want := []string{"PATH=/bin", "HOME=/h", "SWITCHBOARDX=keep", "DB_PATH=/d"}; !slices.Equal(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sandcorporation/switchboard/internal/config"
 	"github.com/sandcorporation/switchboard/internal/node"
 	"github.com/sandcorporation/switchboard/internal/node/fakeagent"
 	"github.com/sandcorporation/switchboard/internal/term"
@@ -424,7 +425,7 @@ func TestLaunchCommandRunsFakeAgent(t *testing.T) {
 	r := newRig(t)
 	r.cfg.Agent = os.Args[0]
 	dir := t.TempDir()
-	r.cfg.Environ = append(os.Environ(), fakeagent.Env(dir)...)
+	r.cfg.Environ = append(config.WithoutOwnEnv(os.Environ()), fakeagent.Env(dir)...)
 	n := r.node(rec("a"))
 	r.reconcile(n)
 	if err := r.fake.Exit("sb-a", 0); err != nil {

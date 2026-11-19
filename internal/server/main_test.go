@@ -237,7 +237,7 @@ func TestActualCLILifecycle(t *testing.T) {
 	if err := os.WriteFile(enrollFile, []byte("enrollment-secret\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	env := append(append(os.Environ(), clearNewEnv...), "SWITCHBOARD_TEST_CLI=1", "AGENT_MAIL_CONFIG_DIR="+dir)
+	env := append(cliEnv(), "SWITCHBOARD_TEST_CLI=1", "AGENT_MAIL_CONFIG_DIR="+dir)
 	run := func(args ...string) string {
 		cmd := exec.Command(os.Args[0], "-test.run=^TestCLIHelperProcess$")
 		argJSON, _ := json.Marshal(args)

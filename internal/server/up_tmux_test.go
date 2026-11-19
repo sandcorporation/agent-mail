@@ -107,7 +107,7 @@ func newUpRig(t *testing.T, extraEnv ...string) *upRig {
 	r.port = strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
 	ln.Close()
 	args, _ := json.Marshal([]string{"up", "--data", r.dir, "--port", r.port})
-	r.env = append(append(os.Environ(), clearNewEnv...), "SWITCHBOARD_TEST_CLI=1", "SWITCHBOARD_TEST_ARGS="+string(args),
+	r.env = append(cliEnv(), "SWITCHBOARD_TEST_CLI=1", "SWITCHBOARD_TEST_ARGS="+string(args),
 		"SWITCHBOARD_ADMIN_AUTH=builtin", "SWITCHBOARD_HOSTING_AGENT="+agent, "SWITCHBOARD_HOSTING_MACHINE=pc-1", "TMUX_TMPDIR="+d,
 		"SWITCHBOARD_TOKEN=role-secret-of-the-operator")
 	r.env = append(r.env, extraEnv...)

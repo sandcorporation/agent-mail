@@ -156,6 +156,27 @@ const (
 	TokenName         = "TOKEN"
 )
 
+// IsOwnEnv reports whether the environment variable name is one this package
+// reads: anything under the new or the old prefix. Windows names are
+// case-insensitive, so the match ignores case. Tests use it to keep a
+// machine's own setup out of the processes they start (#246).
+func IsOwnEnv(name string) bool {
+	n := strings.ToUpper(name)
+	return strings.HasPrefix(n, EnvPrefix) || strings.HasPrefix(n, legacyEnvPrefix)
+}
+
+// WithoutOwnEnv returns environ (KEY=value entries) without the variables
+// IsOwnEnv matches.
+func WithoutOwnEnv(environ []string) []string {
+	out := make([]string, 0, len(environ))
+	for _, kv := range environ {
+		if name, _, _ := strings.Cut(kv, "="); !IsOwnEnv(name) {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
 // LegacyEnv returns the old-prefix spelling of name, so callers that must
 // strip a variable under both names (a credential kept out of a child) can
 // do so without hard-coding the prefix.
