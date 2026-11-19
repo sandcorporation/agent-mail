@@ -368,3 +368,147 @@ func TestQuestionSingleSourceOfTruth_OwnerQuestionPanelAnswer(t *testing.T) {
 	h.dashboardAnswer(v.ID, 409)
 	h.wantAnswerMail(sotBossToken, sotBoss, v.ID, 1)
 }
+
+// slot registers a session of the asker's base at dir with label.
+func (h *sotHarness) slot(dir, label string) wire.SlotGrant {
+	h.t.Helper()
+	code, body := h.as("POST", "/api/slots/register", sotAskerToken, sotAsker, wire.SlotRequest{Machine: "box-1", Directory: dir, Label: label})
+	if code != 200 {
+		h.fail("register %s: %d %s", dir, code, body)
+	}
+	var g wire.SlotGrant
+	if err := json.Unmarshal(body, &g); err != nil {
+		h.t.Fatal(err)
+	}
+	return g
+}
+
+// leave releases the slot of the session at dir.
+func (h *sotHarness) leave(g wire.SlotGrant) {
+	h.t.Helper()
+	if code, body := h.as("POST", "/api/slots/release", sotAskerToken, g.Role, wire.SlotRequest{Machine: "box-1", Directory: g.Directory}); code != 200 {
+		h.fail("release %s: %d %s", g.Role, code, body)
+	}
+}
+
+// noAnswerMail wants no answer mail for id in role's inbox.
+func (h *sotHarness) noAnswerMail(role, id string) {
+	h.t.Helper()
+	if n := h.answerMail(sotAskerToken, role, id); n != 0 {
+		h.fail("answer mail delivered %d times to %s, want none", n, role)
+	}
+}
+
+// delivery is the delivery field of question id in the admin list.
+func (h *sotHarness) delivery(id string) string {
+	h.t.Helper()
+	code, body := h.admin("GET", "/api/admin/questions", nil)
+	if code != 200 {
+		h.fail("admin questions: %d %s", code, body)
+	}
+	var out wire.QuestionList
+	if err := json.Unmarshal(body, &out); err != nil {
+		h.t.Fatal(err)
+	}
+	for _, v := range out.Questions {
+		if v.ID == id {
+			return v.Delivery
+		}
+	}
+	h.fail("admin list misses %s", id)
+	return ""
+}
+
+// 8. The asking session left and came back under another number (another
+// session took its old one): the answer reaches the new number, not the old.
+func TestQuestionSingleSourceOfTruth_AskerBackUnderAnotherNumber(t *testing.T) {
+	h := newSOT(t)
+	h.slot("/work/a", "")
+	q := h.slot("/work/q", "")
+	v := h.ask(sotAskerToken, q.Role)
+	h.leave(q)
+	other := h.slot("/work/other", "")
+	if other.Number != q.Number {
+		h.fail("other session got %s, want the asker's old number %s", other.Role, q.Role)
+	}
+	back := h.slot("/work/q", "")
+	if back.Number == q.Number {
+		h.fail("asking session came back as %s, want another number", back.Role)
+	}
+	h.panelAnswer(sotBossToken, sotBoss, v.ID, 200)
+	h.noAnswerMail(other.Role, v.ID)
+	h.wantAnswerMail(sotAskerToken, back.Role, v.ID, 1)
+}
+
+// 9. The asking session is gone and two sessions of its base are live: only
+// the most recently registered one gets the answer.
+func TestQuestionSingleSourceOfTruth_NewestLiveSlotGetsAnswer(t *testing.T) {
+	h := newSOT(t)
+	q := h.slot("/work/q", "")
+	v := h.ask(sotAskerToken, q.Role)
+	h.leave(q)
+	older := h.slot("/work/a", "")
+	newer := h.slot("/work/b", "")
+	h.panelAnswer(sotBossToken, sotBoss, v.ID, 200)
+	h.noAnswerMail(older.Role, v.ID)
+	h.wantAnswerMail(sotAskerToken, newer.Role, v.ID, 1)
+}
+
+// 10. No session of the asking base is live: the answer waits (the admin list
+// says so) and the next session that registers gets it, once.
+func TestQuestionSingleSourceOfTruth_WaitingAnswerGoesToNextSessionOnce(t *testing.T) {
+	h := newSOT(t)
+	a := h.slot("/work/a", "")
+	q := h.slot("/work/q", "")
+	v := h.ask(sotAskerToken, q.Role)
+	h.leave(a)
+	h.leave(q)
+	h.panelAnswer(sotBossToken, sotBoss, v.ID, 200)
+	if d := h.delivery(v.ID); d != wire.DeliveryWaiting {
+		h.fail("admin list delivery %q before any session, want %q", d, wire.DeliveryWaiting)
+	}
+	first := h.slot("/work/b", "")
+	second := h.slot("/work/c", "")
+	h.noAnswerMail(second.Role, v.ID)
+	h.wantAnswerMail(sotAskerToken, first.Role, v.ID, 1)
+	if d := h.delivery(v.ID); d != "" {
+		h.fail("admin list delivery %q after delivery, want none", d)
+	}
+}
+
+// 11. A live session of the base with another label (another task) never
+// gets the answer; it waits for a session with the asker's label.
+func TestQuestionSingleSourceOfTruth_OtherLabelNeverGetsAnswer(t *testing.T) {
+	h := newSOT(t)
+	busy := h.slot("/work/a", "issue-2")
+	q := h.slot("/work/q", "issue-1")
+	v := h.ask(sotAskerToken, q.Role)
+	h.leave(q)
+	h.panelAnswer(sotBossToken, sotBoss, v.ID, 200)
+	h.noAnswerMail(busy.Role, v.ID)
+	if d := h.delivery(v.ID); d != wire.DeliveryWaiting {
+		h.fail("admin list delivery %q with only another label live, want %q", d, wire.DeliveryWaiting)
+	}
+	taker := h.slot("/work/d", "issue-2")
+	h.noAnswerMail(taker.Role, v.ID)
+	same := h.slot("/work/e", "issue-1")
+	h.noAnswerMail(busy.Role, v.ID)
+	h.noAnswerMail(taker.Role, v.ID)
+	h.wantAnswerMail(sotAskerToken, same.Role, v.ID, 1)
+}
+
+// 12. The asking session is still live: it gets the answer even when a newer
+// session of its base registered after it asked.
+func TestQuestionSingleSourceOfTruth_LiveAskerKeepsAnswer(t *testing.T) {
+	h := newSOT(t)
+	h.slot("/work/a", "")
+	q := h.slot("/work/q", "")
+	v := h.ask(sotAskerToken, q.Role)
+	newer := h.slot("/work/b", "")
+	h.panelAnswer(sotBossToken, sotBoss, v.ID, 200)
+	h.noAnswerMail(newer.Role, v.ID)
+	h.wantAnswerMail(sotAskerToken, q.Role, v.ID, 1)
+	if d := h.delivery(v.ID); d != "" {
+		h.fail("admin list delivery %q for a delivered answer, want none", d)
+	}
+}

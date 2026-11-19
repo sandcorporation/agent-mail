@@ -96,6 +96,9 @@ func Init(db *sql.DB) error {
 	if e = migrateQuestions(db); e != nil {
 		return e
 	}
+	if e = migrateHandoffs(db); e != nil {
+		return e
+	}
 	return migrateRoleAliases(db)
 }
 
@@ -384,6 +387,32 @@ CREATE INDEX IF NOT EXISTS idx_questions_answered ON questions(status,answered_a
 	}
 	_, err = db.Exec(`ALTER TABLE questions ADD COLUMN answerer TEXT NOT NULL DEFAULT ''`)
 	return err
+}
+
+// askerSlotColumns record the live slot a question was asked from (empty when
+// the asker held no slot): its answer follows that session (internal/asks).
+var askerSlotColumns = []string{"asker_machine", "asker_directory", "asker_label"}
+
+// migrateHandoffs adds the handoffs table (held mail waiting for the next
+// matching session, internal/mail/handoff.go) and the asker slot columns of
+// questions (additive).
+func migrateHandoffs(db *sql.DB) error {
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS handoffs(message_id INTEGER PRIMARY KEY, base TEXT NOT NULL, machine TEXT NOT NULL, directory TEXT NOT NULL, label TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_handoffs_base ON handoffs(base);`); err != nil {
+		return err
+	}
+	for _, c := range askerSlotColumns {
+		has, err := HasColumn(db, "questions", c)
+		if err != nil {
+			return err
+		}
+		if !has {
+			if _, err = db.Exec(`ALTER TABLE questions ADD COLUMN ` + c + ` TEXT NOT NULL DEFAULT ''`); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // InTx runs f in one transaction on db: it commits when f returns nil and

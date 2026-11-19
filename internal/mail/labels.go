@@ -120,15 +120,25 @@ func DeliverHeld(tx *sql.Tx, base string, number int, label string, now time.Tim
 	if !ok {
 		return "", 0, nil
 	}
-	var next int64
-	if err = tx.QueryRow(`SELECT MAX(COALESCE((SELECT seq FROM sqlite_sequence WHERE name='messages'),0),COALESCE((SELECT MAX(id) FROM messages),0))`).Scan(&next); err != nil {
+	if err = moveHeld(tx, ids, box, now); err != nil {
 		return "", 0, err
+	}
+	return box, len(ids), nil
+}
+
+// moveHeld delivers the held messages ids to box. Each gets a new ID, larger
+// than every existing one, and the references to its old ID follow it.
+func moveHeld(tx *sql.Tx, ids []int64, box string, now time.Time) error {
+	var next int64
+	var err error
+	if err = tx.QueryRow(`SELECT MAX(COALESCE((SELECT seq FROM sqlite_sequence WHERE name='messages'),0),COALESCE((SELECT MAX(id) FROM messages),0))`).Scan(&next); err != nil {
+		return err
 	}
 	at := now.UTC().Format(time.RFC3339Nano)
 	for _, old := range ids {
 		next++
 		if _, err = tx.Exec(`UPDATE messages SET id=?,held_id=id,recipient=?,status='pending',delivered_at=? WHERE id=?`, next, box, at, old); err != nil {
-			return "", 0, err
+			return err
 		}
 		for _, q := range []string{
 			`UPDATE messages SET thread_id=? WHERE thread_id=?`,
@@ -136,14 +146,12 @@ func DeliverHeld(tx *sql.Tx, base string, number int, label string, now time.Tim
 			`UPDATE role_states SET message_id=? WHERE message_id=?`,
 		} {
 			if _, err = tx.Exec(q, next, old); err != nil {
-				return "", 0, err
+				return err
 			}
 		}
 	}
-	if _, err = tx.Exec(`UPDATE sqlite_sequence SET seq=? WHERE name='messages'`, next); err != nil {
-		return "", 0, err
-	}
-	return box, len(ids), nil
+	_, err = tx.Exec(`UPDATE sqlite_sequence SET seq=? WHERE name='messages'`, next)
+	return err
 }
 
 // messageCols is the column list scanMessage reads, for a query with the

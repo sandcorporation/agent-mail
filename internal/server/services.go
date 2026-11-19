@@ -67,9 +67,11 @@ func (s *Server) presence() *presence.Service {
 
 // asks is the question, decision and permission rules over this server's
 // database, clock and settings. A new question whose settings ask for it is
-// posted to Discord.
+// posted to Discord; an answer goes to the asking session's live slot
+// (internal/presence).
 func (s *Server) asks() *asks.Service {
-	return asks.New(s.db, s.now, &s.asksCfg, s.ids(), s.mail(), &s.hub, s.done, s.discord.NoticeQuestion)
+	return asks.New(s.db, s.now, &s.asksCfg, s.ids(), s.mail(), &s.hub, s.done, s.discord.NoticeQuestion,
+		asks.SlotRules{Asking: presence.AskingSlot, Answer: presence.AnswerSlot})
 }
 
 // insight is the metrics and alert rules over this server's database, clock,

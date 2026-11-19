@@ -123,7 +123,7 @@ tr.row-blocked td:first-child{box-shadow:inset 3px 0 var(--blocked)}
 .qcard.focus{outline:2px solid var(--accent);outline-offset:2px}
 .qcard.answered,.qcard.withdrawn{background:var(--surface-2)}
 .pill{display:inline-block;border-radius:var(--r-sm);padding:0 .4rem;margin-right:var(--s2);font-size:.75em;font-weight:600;vertical-align:middle;color:var(--accent);background:var(--accent-soft)}
-.pill.pending{color:var(--blocked);background:var(--blocked-bg)}.pill.answered{color:var(--idle);background:var(--idle-bg)}.pill.withdrawn{color:var(--offline);background:var(--offline-bg)}
+.pill.pending{color:var(--blocked);background:var(--blocked-bg)}.pill.answered{color:var(--idle);background:var(--idle-bg)}.pill.withdrawn{color:var(--offline);background:var(--offline-bg)}.pill.waiting{color:var(--blocked);background:var(--blocked-bg)}
 .qitem{border:1px solid var(--border);border-radius:var(--r);padding:var(--s3);margin:var(--s3) 0;min-width:0}
 .qitem legend,.qhead{font-weight:600;padding:0 var(--s1)}
 .qtext{margin:var(--s1) 0 var(--s2);white-space:pre-wrap;overflow-wrap:anywhere}
@@ -680,6 +680,7 @@ function questionCard(q){
   const h=node('h3','');
   h.append(node('span',qStatusLabel[q.status]||q.status,'pill '+q.status));
   if(q.answerer==='owner')h.append(node('span','대표','pill owner'));
+  if(q.delivery==='waiting')h.append(node('span','전달 대기','pill waiting'));
   h.append(document.createTextNode(q.questions.map(x=>x.header).join(' · ')));
   c.append(h,node('p',q.asker+' · '+when(q.created_at)+' · '+q.id,'muted'));
   if(q.status==='pending'&&q.can_answer){c.append(answerForm(q));return c}

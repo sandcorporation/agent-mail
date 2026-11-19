@@ -173,3 +173,14 @@ func TestDashboardLiveUpdates(t *testing.T) {
 		}
 	}
 }
+
+func TestDashboardQuestionWaitingDelivery(t *testing.T) {
+	w := httptest.NewRecorder()
+	Page(w, httptest.NewRequest("GET", "/", nil))
+	body := w.Body.String()
+	for _, want := range []string{"if(q.delivery==='waiting')h.append(node('span','전달 대기','pill waiting'));", ".pill.waiting{"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("question card missing %q", want)
+		}
+	}
+}

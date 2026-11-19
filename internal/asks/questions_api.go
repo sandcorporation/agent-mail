@@ -77,14 +77,20 @@ var (
 	ErrQuestionNotPending = errors.New("question is not pending")
 )
 
-const questionColumns = `id,asker,asker_base,questions,answers,status,answered_by,created_at,answered_at,withdrawn_at,seq,answerer`
+// questionColumns ends with whether the answer mail waits for a session
+// (internal/mail/handoff.go).
+var questionColumns = `id,asker,asker_base,questions,answers,status,answered_by,created_at,answered_at,withdrawn_at,seq,answerer,` + mail.HandoffWaitingSQL("questions.id")
 
 func scanQuestion(sc interface{ Scan(...any) error }) (wire.QuestionView, error) {
 	var v wire.QuestionView
 	var qs, as string
 	var created, answered, withdrawn int64
-	if err := sc.Scan(&v.ID, &v.Asker, &v.AskerBase, &qs, &as, &v.Status, &v.AnsweredBy, &created, &answered, &withdrawn, &v.Seq, &v.Answerer); err != nil {
+	var waiting bool
+	if err := sc.Scan(&v.ID, &v.Asker, &v.AskerBase, &qs, &as, &v.Status, &v.AnsweredBy, &created, &answered, &withdrawn, &v.Seq, &v.Answerer, &waiting); err != nil {
 		return v, err
+	}
+	if waiting {
+		v.Delivery = wire.DeliveryWaiting
 	}
 	if err := json.Unmarshal([]byte(qs), &v.Questions); err != nil {
 		return v, err
@@ -346,8 +352,12 @@ func (s *Service) askQuestion(w http.ResponseWriter, r *http.Request, p identity
 		if e != nil {
 			return e
 		}
-		if _, e = tx.Exec(`INSERT INTO questions(id,asker,asker_base,questions,created_at,seq,answerer) VALUES(?,?,?,?,?,?,?)`,
-			id, p.Role, p.Base, string(encoded), ms(now), seq, answerer); e != nil {
+		asking, e := s.askingSlot(tx, p, now)
+		if e != nil {
+			return e
+		}
+		if _, e = tx.Exec(`INSERT INTO questions(id,asker,asker_base,questions,created_at,seq,answerer,asker_machine,asker_directory,asker_label) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+			id, p.Role, p.Base, string(encoded), ms(now), seq, answerer, asking.Machine, asking.Directory, asking.Label); e != nil {
 			return e
 		}
 		if v, e = loadQuestion(tx, id); e != nil {
@@ -448,7 +458,15 @@ func (s *Service) AnswerQuestion(ctx context.Context, id, by string, answers []w
 		}
 		body := wire.AnswerText(v)
 		first := v.Questions[0].Header
-		if box, ok := identity.Mailbox(tx, v.Asker); ok {
+		box, held, e := s.answerBox(tx, v, now)
+		if e != nil {
+			return e
+		}
+		if held != nil {
+			if e = mail.HoldForHandoff(tx, *held, v.Asker, fmt.Sprintf("[질문 답] %s %s", id, first), body, id, now); e != nil {
+				return e
+			}
+		} else if box != "" {
 			if e = mail.InsertSystemMail(tx, box, fmt.Sprintf("[질문 답] %s %s", id, first), body, id, "normal", "", now); e != nil {
 				return e
 			}
