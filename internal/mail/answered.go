@@ -92,6 +92,22 @@ func Answers(d, m FlowMail, base func(string) string, isBoss func(string) bool) 
 	return (d.TaskID != "" && m.TaskID == d.TaskID) || m.mentions(d.ID)
 }
 
+// AnsweredRuleVersion is the version of the answered rule (Answers and
+// Replies). Bump it with every change to how either decides, together with
+// the golden table (answered_golden_test.go) and a line in the release notes:
+// at start-up presence.MigrateAnsweredRule marks the directives the new rule
+// would reopen as needing no reply. Version 1 is the rule since #214.
+const AnsweredRuleVersion = 1
+
+// AnsweredRule is a version of the strict rule open directives follow.
+type AnsweredRule struct {
+	Version int
+	Replies func(d, m FlowMail, base func(string) string) bool
+}
+
+// CurrentAnsweredRule is the rule this code runs.
+var CurrentAnsweredRule = AnsweredRule{Version: AnsweredRuleVersion, Replies: Replies}
+
 // Replies is the strict rule (#214) for whether m answers the directive d:
 // the progress view's open_directives and the directive reminders use it.
 //

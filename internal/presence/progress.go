@@ -89,10 +89,11 @@ type progressMailRow struct {
 // openDirectives lists the open directives, oldest first: mail from a boss
 // role that is a directive (a send, or a reply sent with --directive), not
 // sent with --no-reply, not completed by its recipient and not replied to
-// (mail.Replies: reply_to or the directive's thread, back to the sender's
-// base; a mention of #id or a shared task id elsewhere does not count). The
-// progress view lists them whatever their status; the reminders
-// (SweepReminders) take only the read ones to non-boss roles.
+// (the answered rule, mail.Replies unless Config.Rule says otherwise:
+// reply_to or the directive's thread, back to the sender's base; a mention
+// of #id or a shared task id elsewhere does not count). The progress view
+// lists them whatever their status; the reminders (SweepReminders) take only
+// the read ones to non-boss roles.
 func (s *Service) openDirectives(base func(string) string, isBossName func(string) bool) ([]progressMailRow, error) {
 	senders, err := s.distinctNames("sender")
 	if err != nil {
@@ -123,13 +124,14 @@ func (s *Service) openDirectives(base func(string) string, isBossName func(strin
 	for _, c := range candidates {
 		byThread[c.ThreadID] = append(byThread[c.ThreadID], c)
 	}
+	replies := s.rule().Replies
 	var out []progressMailRow
 directive:
 	for i, m := range directives {
 		d := ds[i]
 		for _, group := range [][]mail.FlowMail{byThread[d.Thread()], byThread[d.ID]} {
 			for _, c := range group {
-				if mail.Replies(d, c, base) {
+				if replies(d, c, base) {
 					continue directive
 				}
 			}

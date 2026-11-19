@@ -22,6 +22,8 @@ jobs:
         run: sudo apt-get update -q && sudo apt-get install -y -q tmux && tmux -V
       - name: Question source of truth (server e2e)
         run: bash scripts/ci/question_sot.sh
+      - name: Answered rule golden (bump mail.AnsweredRuleVersion on change)
+        run: bash scripts/ci/answered_golden.sh
       - name: Hosting end to end (up, tmux)
         run: bash scripts/ci/e2e.sh
       - name: tmux backend against real tmux
