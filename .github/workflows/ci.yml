@@ -50,6 +50,41 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Keeper tests x100 (#261, temporary)
+        shell: bash
+        continue-on-error: true
+        run: |
+          go test -timeout 40m -count=100 -run 'TestKeeper' ./internal/term/conpty/ > "$RUNNER_TEMP/r.txt" 2>&1; echo "exit=$?"
+          echo "FAIL lines: $(grep -c -- '--- FAIL' "$RUNNER_TEMP/r.txt")"
+          grep -o -- '--- FAIL: [A-Za-z0-9]*' "$RUNNER_TEMP/r.txt" | sort | uniq -c; echo "RemoveAll lines: $(grep -c RemoveAll "$RUNNER_TEMP/r.txt")"; grep -m3 -B1 'RemoveAll\|_test.go:[0-9]*:' "$RUNNER_TEMP/r.txt" | cut -c1-220
+          tail -n 3 "$RUNNER_TEMP/r.txt"
+      - name: Keeper exit times, this keeper.go (#261, temporary)
+        shell: bash
+        continue-on-error: true
+        run: |
+          go test -timeout 30m -count=50 -v -run '^TestDiag261KeeperExit$' ./internal/term/conpty/ > "$RUNNER_TEMP/d.txt" 2>&1; echo "exit=$?"
+          grep -o 'diag261.*' "$RUNNER_TEMP/d.txt" > "$RUNNER_TEMP/d1.txt"; wc -l < "$RUNNER_TEMP/d1.txt"
+          for k in v1_exit_after_replaced_ms v2_shutdown_call_ms v2_exit_after_shutdown_ms; do
+            grep -o "$k=-\?[0-9]*" "$RUNNER_TEMP/d1.txt" | cut -d= -f2 | sort -n | awk -v k=$k '{a[NR]=$1} END {print k, "n="NR, "min="a[1], "median="a[int((NR+1)/2)], "p90="a[int(NR*0.9)], "max="a[NR]}'
+          done
+          grep -- '--- FAIL\|RemoveAll' "$RUNNER_TEMP/d.txt" | head
+      - name: Before #227 keeper.go, exit times and x100 (#261, temporary)
+        shell: bash
+        continue-on-error: true
+        run: |
+          git fetch -q --depth=1 origin a25cb21d12ac4d5543ad35850b5de360468edefd
+          git show a25cb21d12ac4d5543ad35850b5de360468edefd:internal/term/conpty/keeper.go > internal/term/conpty/keeper.go
+          git show a25cb21d12ac4d5543ad35850b5de360468edefd:internal/term/conpty/keeper_test.go > internal/term/conpty/keeper_test.go
+          go test -timeout 30m -count=50 -v -run '^TestDiag261KeeperExit$' ./internal/term/conpty/ > "$RUNNER_TEMP/o.txt" 2>&1; echo "exit=$?"
+          grep -o 'diag261.*' "$RUNNER_TEMP/o.txt" > "$RUNNER_TEMP/o1.txt"; wc -l < "$RUNNER_TEMP/o1.txt"
+          for k in v1_exit_after_replaced_ms v2_shutdown_call_ms v2_exit_after_shutdown_ms; do
+            grep -o "$k=-\?[0-9]*" "$RUNNER_TEMP/o1.txt" | cut -d= -f2 | sort -n | awk -v k=$k '{a[NR]=$1} END {print k, "n="NR, "min="a[1], "median="a[int((NR+1)/2)], "p90="a[int(NR*0.9)], "max="a[NR]}'
+          done
+          grep -- '--- FAIL\|RemoveAll' "$RUNNER_TEMP/o.txt" | head
+          go test -timeout 40m -count=100 -run 'TestKeeper' ./internal/term/conpty/ > "$RUNNER_TEMP/r0.txt" 2>&1; echo "exit=$?"
+          echo "FAIL lines: $(grep -c -- '--- FAIL' "$RUNNER_TEMP/r0.txt")"
+          grep -o -- '--- FAIL: [A-Za-z0-9]*' "$RUNNER_TEMP/r0.txt" | sort | uniq -c; echo "RemoveAll lines: $(grep -c RemoveAll "$RUNNER_TEMP/r0.txt")"; grep -m3 -B1 'RemoveAll\|_test.go:[0-9]*:' "$RUNNER_TEMP/r0.txt" | cut -c1-220
+          git checkout -- internal/term/conpty
       - name: ConPTY backend and keeper
         shell: bash
         run: go test -count=1 -v ./internal/term/conpty/ -args -conpty.record="$RUNNER_TEMP/conpty"
