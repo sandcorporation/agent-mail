@@ -90,6 +90,10 @@ func (s *Service) GroupOf(role string) (Group, bool) {
 // progress and alerts are for global bosses only.
 func (s *Service) IsGlobalBoss(p Principal) bool { return s.bossRoles[p.Base] || s.bossRoles[p.Role] }
 
+// IsBoss reports whether p is a boss role: a global boss
+// (SWITCHBOARD_BOSS_ROLES) or the boss role of a live group.
+func (s *Service) IsBoss(p Principal) bool { return s.IsGlobalBoss(p) || len(s.bossOf(p)) > 0 }
+
 // IsBossName reports whether a mailbox name is a global boss role or a slot
 // of one (metrics and progress).
 func (s *Service) IsBossName(base func(string) string) func(string) bool {

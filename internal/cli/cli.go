@@ -173,6 +173,18 @@ var commands = []command{
 	{name: "progress", args: "[SERVICE]", nargs: 1, optArgs: true,
 		summary: "Show per-service progress: last report, live sessions, and open directives (! over the threshold) (boss roles only)",
 		options: []option{{"--json", "", "print the server's whole JSON response unchanged (SERVICE is ignored)"}, optProfile}},
+	{name: "report", synopsis: "--title TEXT [--request TEXT] [--mail ID[,ID...]]... (--body TEXT | --body-file PATH | stdin)",
+		summary: "Post a report to the dashboard, linking the directive threads it covers (boss roles only); prints the report ID",
+		options: []option{
+			{"--title", "TEXT", "report title (one line)"},
+			{"--request", "TEXT", "what was asked (one line)"},
+			{"--mail", "ID[,ID...]", "link mail by ID (repeatable); a reply links its thread's directive; #N in the body is never a link"},
+			{"--body", "TEXT", "report body (Markdown)"},
+			{"--body-file", "PATH", "read the report body from a file (stdin is used when neither is given)"},
+			{"--idem", "KEY", "retry-safe key; posting again with the same key returns the first report"},
+			{"--json", "", "print the stored report as JSON"},
+			optProfile,
+		}},
 	{name: "decisions",
 		summary: "Show the decision ledger (answered questions), newest first; a boss role sees all, other roles their own base",
 		options: []option{
@@ -443,6 +455,8 @@ func dispatch(args []string) (int, error) {
 		return cliDecisions(c, p)
 	case "progress":
 		return cliProgress(c, p)
+	case "report":
+		return cliReport(c, p, os.Stdout)
 	case "permission":
 		return cliPermission(c, p)
 	case "question":
@@ -489,6 +503,7 @@ func dispatch(args []string) (int, error) {
 
 type parsedArgs struct {
 	values map[string]string
+	multi  map[string][]string // every value of an option given more than once, in order
 	pos    []string
 	extra  []string // after --, for a command with extra
 }
@@ -498,7 +513,7 @@ func (p parsedArgs) bool(name string) bool { _, ok := p.values[name]; return ok 
 // parseCommandArgs accepts only the options declared for cmd. Unknown options,
 // missing values and a wrong number of positional arguments are errors.
 func parseCommandArgs(cmd command, args []string) (parsedArgs, error) {
-	p := parsedArgs{values: map[string]string{}}
+	p := parsedArgs{values: map[string]string{}, multi: map[string][]string{}}
 	known := map[string]option{}
 	for _, o := range cmd.options {
 		known[o.name] = o
@@ -537,6 +552,7 @@ func parseCommandArgs(cmd command, args []string) (parsedArgs, error) {
 			value = args[i]
 		}
 		p.values[name] = value
+		p.multi[name] = append(p.multi[name], value)
 	}
 	if len(p.pos) != cmd.nargs && !(cmd.optArgs && len(p.pos) < cmd.nargs) {
 		if cmd.nargs == 0 {

@@ -117,7 +117,10 @@ func Init(db *sql.DB) error {
 	if e = migrateRemind(db); e != nil {
 		return e
 	}
-	return migrateAnsweredRule(db)
+	if e = migrateAnsweredRule(db); e != nil {
+		return e
+	}
+	return migrateReports(db)
 }
 
 func HasColumn(db *sql.DB, table, column string) (bool, error) {
@@ -561,5 +564,26 @@ func migrateRemind(db *sql.DB) error {
 // presence.MigrateAnsweredRule, never here.
 func migrateAnsweredRule(db *sql.DB) error {
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS answered_rule(id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL, updated_at TEXT NOT NULL)`)
+	return err
+}
+
+// migrateReports adds reports (a boss role's report, #262) and report_mail,
+// the threads a report links by their root message ID. A report's status is
+// derived from those threads, never stored.
+func migrateReports(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS reports(
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		author TEXT NOT NULL,
+		title TEXT NOT NULL,
+		request TEXT NOT NULL DEFAULT '',
+		body TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		idem TEXT,
+		UNIQUE(author, idem));
+	CREATE TABLE IF NOT EXISTS report_mail(
+		report_id INTEGER NOT NULL REFERENCES reports(id),
+		message_id INTEGER NOT NULL,
+		PRIMARY KEY(report_id, message_id));
+	CREATE INDEX IF NOT EXISTS idx_report_mail_message ON report_mail(message_id);`)
 	return err
 }
