@@ -112,12 +112,16 @@ func NewKeeper(o KeeperOptions) *Keeper {
 }
 
 // Done is closed when a client has asked the keeper to shut down, every
-// child has ended and every listener and connection has been closed, so a
-// caller that has seen Done cannot connect any more.
+// child has ended and every listener Serve had taken before Shutdown, and
+// every connection, has been closed, so a caller that has seen Done cannot
+// connect through those listeners any more. A listener passed to Serve after
+// Shutdown is not covered: that Serve closes it itself (see Serve).
 func (k *Keeper) Done() <-chan struct{} { return k.done }
 
 // Serve answers connections on l until Shutdown, which closes l. It returns
-// nil once Shutdown has closed l.
+// nil once Shutdown has closed l. Serve called after Shutdown has begun
+// closing listeners does not serve: it closes l and returns nil, and l is
+// closed by the time it returns; Done may already be closed by then.
 func (k *Keeper) Serve(l net.Listener) error {
 	k.mu.Lock()
 	if k.stopped {

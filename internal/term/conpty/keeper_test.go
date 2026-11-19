@@ -562,7 +562,16 @@ func TestDoneMeansListenerClosed(t *testing.T) {
 	served := make(chan error, 1)
 	go func() { served <- k.Serve(l) }()
 	var d net.Dialer
-	open, err := d.DialContext(ctx(t), "tcp", inner.Addr().String())
+	dial := func(ctx context.Context) (net.Conn, error) { return d.DialContext(ctx, "tcp", inner.Addr().String()) }
+	// A dial alone is answered by the kernel as soon as net.Listen returns;
+	// an answered request shows Serve has taken l, so Shutdown below covers
+	// it (#259).
+	c := conpty.NewClient(dial)
+	defer c.Close()
+	if _, err := c.Version(ctx(t)); err != nil {
+		t.Fatal(err)
+	}
+	open, err := dial(ctx(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -591,6 +600,35 @@ func TestDoneMeansListenerClosed(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Serve did not return after shutdown")
+	}
+}
+
+// TestServeAfterShutdown pins the contract for the order a keeper process
+// never takes: Serve after Shutdown does not serve, closes the listener
+// before it returns and returns nil (#259).
+func TestServeAfterShutdown(t *testing.T) {
+	inner, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &slowCloseListener{Listener: inner}
+	k := conpty.NewKeeper(conpty.KeeperOptions{Spawn: newSpawner().spawn, Logf: t.Logf})
+	k.Shutdown(time.Second)
+	select {
+	case <-k.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("keeper did not finish shutting down")
+	}
+	if err := k.Serve(l); err != nil {
+		t.Fatalf("Serve after Shutdown: %v", err)
+	}
+	if !l.isClosed() {
+		t.Fatal("Serve after Shutdown returned with the listener open")
+	}
+	var d net.Dialer
+	if c, err := d.DialContext(ctx(t), "tcp", inner.Addr().String()); err == nil {
+		c.Close()
+		t.Fatal("listener passed to Serve after Shutdown still accepts")
 	}
 }
 
