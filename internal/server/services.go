@@ -12,6 +12,7 @@ import (
 	"github.com/sandcorporation/switchboard/internal/insight"
 	"github.com/sandcorporation/switchboard/internal/mail"
 	"github.com/sandcorporation/switchboard/internal/presence"
+	"github.com/sandcorporation/switchboard/internal/reports"
 	"github.com/sandcorporation/switchboard/internal/store"
 	"github.com/sandcorporation/switchboard/internal/wire"
 )
@@ -78,6 +79,12 @@ func (s *Server) asks() *asks.Service {
 // alert thresholds and boss roles. Alert mail wakes the hub.
 func (s *Server) insight() *insight.Service {
 	return insight.New(s.db, s.now, s.ids(), s.alerts, s.bossRoles, s.hub.Publish, s.aliasUse)
+}
+
+// reports is the boss reports over this server's database, clock and
+// identity rules, with the base resolver the answered rule compares.
+func (s *Server) reports() *reports.Service {
+	return reports.New(s.db, s.now, s.ids(), insight.NewBaseResolver(s.db).Of)
 }
 
 // progressAPI serves the progress view with the metrics alert limit and base

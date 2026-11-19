@@ -57,7 +57,7 @@ func liveKinds(path string, admin bool) []string {
 		case "terminals", "nodes":
 			return []string{"terminals"}
 		case "messages":
-			return []string{"mail", "progress"}
+			return []string{"mail", "progress", "reports"}
 		}
 		return nil
 	}
@@ -65,7 +65,9 @@ func liveKinds(path string, admin bool) []string {
 	case "register", "join":
 		return []string{"sessions", "progress", "settings"}
 	case "messages":
-		return []string{"mail", "progress", "metrics"}
+		return []string{"mail", "progress", "metrics", "reports"}
+	case "reports":
+		return []string{"reports"}
 	case "permissions":
 		return []string{"permissions", "mail", "progress"}
 	case "questions":

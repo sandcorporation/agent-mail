@@ -325,6 +325,10 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.progressAPI(w, r, s.ids().IsGlobalBoss(who))
 		return
 	}
+	if path == "reports" {
+		s.reports().API(w, r, who)
+		return
+	}
 	if path == "slots" || strings.HasPrefix(path, "slots/") {
 		s.presence().SlotAPI(w, r, who, strings.TrimPrefix(strings.TrimPrefix(path, "slots"), "/"))
 		return
@@ -427,6 +431,10 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	if rest, ok := strings.CutPrefix(path, "permissions"); ok && (rest == "" || strings.HasPrefix(rest, "/")) {
 		s.asks().AdminPermissionsAPI(w, r, strings.TrimPrefix(rest, "/"))
+		return
+	}
+	if rest, ok := strings.CutPrefix(path, "reports"); ok && (rest == "" || strings.HasPrefix(rest, "/")) {
+		s.reports().AdminAPI(w, r, strings.TrimPrefix(rest, "/"))
 		return
 	}
 	if rest, ok := strings.CutPrefix(path, "roles"); ok && (rest == "" || strings.HasPrefix(rest, "/")) {
