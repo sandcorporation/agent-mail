@@ -44,6 +44,7 @@ type plugin struct {
 
 	mu      sync.Mutex
 	session string
+	granted string // the slot role of the last registration
 	muted   bool
 	stop    chan struct{}
 }
@@ -106,7 +107,39 @@ func (p *plugin) register(session string) (string, error) {
 	p.session = session
 	p.mu.Unlock()
 	g, err := p.call("register", session)
+	if err == nil {
+		p.mu.Lock()
+		p.granted = g.Role
+		p.mu.Unlock()
+	}
 	return g.Role, err
+}
+
+// inbox is the slot's inbox (GET /api/messages), newest first, read as its
+// slot role the way the plugin checks mail.
+func (p *plugin) inbox() ([]wire.Message, error) {
+	p.mu.Lock()
+	role := p.granted
+	p.mu.Unlock()
+	if role == "" {
+		role = p.role
+	}
+	req, err := http.NewRequest(http.MethodGet, p.endpoint+"/api/messages?box=inbox", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+p.token)
+	req.Header.Set(config.HeaderPrefix+"Role", role)
+	res, err := p.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("inbox: %s", res.Status)
+	}
+	var out []wire.Message
+	return out, json.NewDecoder(res.Body).Decode(&out)
 }
 
 // release ends the lease now, as the plugin does when a session ends.

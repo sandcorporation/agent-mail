@@ -253,3 +253,35 @@ func (s *syncBuffer) String() string {
 	defer s.mu.Unlock()
 	return s.b.String()
 }
+
+func TestFakeAgentReadsItsSlotInbox(t *testing.T) {
+	var role, auth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/messages" {
+			role, auth = r.Header.Get("X-Switchboard-Role"), r.Header.Get("Authorization")
+			_ = json.NewEncoder(w).Encode([]wire.Message{{Sender: "team/lead", Subject: "second"}, {Sender: "team/boss", Subject: "first"}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(wire.SlotGrant{SlotView: wire.SlotView{Role: "team/worker-2"}})
+	}))
+	defer srv.Close()
+	conf := t.TempDir()
+	if err := os.WriteFile(filepath.Join(conf, "team-worker.json"), []byte(`{"role":"team/worker","token":"profile-secret-value"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, code := agent(t, t.TempDir(), "inbox\nexit 0\n",
+		[]string{"SWITCHBOARD_PROFILE=team-worker", "SWITCHBOARD_CONFIG_DIR=" + conf, "SWITCHBOARD_ENDPOINT=" + srv.URL},
+		"--session-id", "abc")
+	if code != 0 || !strings.Contains(out, "mail team/lead second\r\nmail team/boss first\r\n") {
+		t.Fatalf("exit %d, output:\n%s", code, out)
+	}
+	if role != "team/worker-2" || auth != "Bearer profile-secret-value" {
+		t.Errorf("inbox read as %q with %q", role, auth)
+	}
+
+	// Without a profile there is no mailbox to read; size needs a terminal.
+	out, _ = agent(t, t.TempDir(), "inbox\nsize\n", nil, "--session-id", "abc")
+	if !strings.Contains(out, "error: inbox: no profile\r\n") || !strings.Contains(out, "error: size:") {
+		t.Errorf("output:\n%s", out)
+	}
+}

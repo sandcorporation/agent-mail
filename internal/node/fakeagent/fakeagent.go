@@ -16,7 +16,9 @@
 // "limit [RESET]" prints the usage-limit message (LimitMessage),
 // "draw <scene>" paints SWITCHBOARD_FAKE_AGENT_SCENES/<scene>.vt, "clear"
 // moves to a new conversation id ("session <id>"), "mute" stops slot
-// heartbeats, anything else is echoed as "echo <line>".
+// heartbeats, "size" prints the terminal size it sees ("size <cols>x<rows>"),
+// "inbox" prints its slot's inbox ("mail <sender> <subject>" per message,
+// newest first, or "inbox empty"), anything else is echoed as "echo <line>".
 //
 // With SWITCHBOARD_PROFILE naming a profile file in SWITCHBOARD_CONFIG_DIR
 // it also plays the switchboard plugin (slot.go): it registers its slot
@@ -41,6 +43,7 @@ import (
 	"github.com/sandcorporation/switchboard/internal/config"
 	"github.com/sandcorporation/switchboard/internal/node"
 	"github.com/sandcorporation/switchboard/internal/term"
+	xterm "golang.org/x/term"
 )
 
 // Requested reports whether this process should act as the fake agent.
@@ -198,6 +201,36 @@ func Run(args, environ []string, in io.Reader, out io.Writer) int {
 				pl.mute()
 			}
 			fmt.Fprintf(out, "muted\r\n")
+		case "size":
+			// The size the child itself sees: tmux's window, or the
+			// pseudo-console on Windows.
+			f, ok := out.(*os.File)
+			if !ok {
+				fmt.Fprintf(out, "error: size: not a terminal\r\n")
+				continue
+			}
+			cols, rows, err := xterm.GetSize(int(f.Fd()))
+			if err != nil {
+				fmt.Fprintf(out, "error: size: %v\r\n", err)
+				continue
+			}
+			fmt.Fprintf(out, "size %dx%d\r\n", cols, rows)
+		case "inbox":
+			if pl == nil {
+				fmt.Fprintf(out, "error: inbox: no profile\r\n")
+				continue
+			}
+			msgs, err := pl.inbox()
+			if err != nil {
+				fmt.Fprintf(out, "error: %v\r\n", err)
+				continue
+			}
+			if len(msgs) == 0 {
+				fmt.Fprintf(out, "inbox empty\r\n")
+			}
+			for _, m := range msgs {
+				fmt.Fprintf(out, "mail %s %s\r\n", m.Sender, m.Subject)
+			}
 		case "draw":
 			if err := draw(out, scenes, strings.TrimSpace(arg)); err != nil {
 				fmt.Fprintf(out, "error: %v\r\n", err)
