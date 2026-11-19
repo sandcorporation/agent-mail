@@ -48,6 +48,7 @@ type Hub struct {
 	owner   map[string]string               // node by record id, as of the last Sync
 	digest  string                          // the records as of the last Sync
 	viewers map[string]map[*viewer]struct{} // open browser terminal sockets by record id
+	sizeBy  map[string]*viewer              // the viewer whose size a terminal has, by record id
 	admin   Admin
 
 	tickets tickets
@@ -66,7 +67,7 @@ func NewHub(svc *Service, publish func(kinds ...string)) *Hub {
 		publish = func(...string) {}
 	}
 	return &Hub{svc: svc, publish: publish, conns: map[string]*nodeConn{}, runtime: map[string]wire.HostedRuntime{},
-		away: map[string]int64{}, owner: map[string]string{}, viewers: map[string]map[*viewer]struct{}{}}
+		away: map[string]int64{}, owner: map[string]string{}, viewers: map[string]map[*viewer]struct{}{}, sizeBy: map[string]*viewer{}}
 }
 
 // Run re-reads the records every interval until ctx is done.
@@ -416,17 +417,20 @@ func (h *Hub) AdminTerminalsAPI(w http.ResponseWriter, r *http.Request, rest str
 		writeJSON(w, http.StatusOK, out)
 		return true
 	}
-	for _, sub := range []string{"/ticket", "/socket"} {
+	for _, sub := range []string{"/ticket", "/socket", "/log"} {
 		id, ok := strings.CutSuffix(rest, sub)
 		if !ok {
 			continue
 		}
-		if !ValidID(id) {
+		switch {
+		case !ValidID(id):
 			http.Error(w, "no such hosted session", http.StatusNotFound)
-		} else if sub == "/ticket" {
+		case sub == "/ticket":
 			h.ticketAPI(w, r, id)
-		} else {
+		case sub == "/socket":
 			h.terminalSocket(w, r, id)
+		default:
+			h.logAPI(w, r, id)
 		}
 		return true
 	}

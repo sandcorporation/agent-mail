@@ -102,7 +102,10 @@ func Init(db *sql.DB) error {
 	if e = migrateRoleAliases(db); e != nil {
 		return e
 	}
-	return migrateHosting(db)
+	if e = migrateHosting(db); e != nil {
+		return e
+	}
+	return migrateTerminalLog(db)
 }
 
 func HasColumn(db *sql.DB, table, column string) (bool, error) {
@@ -448,5 +451,16 @@ func migrateHosting(db *sql.DB) error {
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS hosted_sessions(id TEXT PRIMARY KEY, node TEXT NOT NULL, base TEXT NOT NULL, label TEXT NOT NULL DEFAULT '', parent TEXT NOT NULL DEFAULT '', profile TEXT NOT NULL, directory TEXT NOT NULL, agent_session_id TEXT NOT NULL, launched INTEGER NOT NULL DEFAULT 0, args TEXT NOT NULL DEFAULT '[]', env TEXT NOT NULL DEFAULT '{}', restart TEXT NOT NULL DEFAULT 'always', desired TEXT NOT NULL DEFAULT 'running', cols INTEGER NOT NULL DEFAULT 120, rows INTEGER NOT NULL DEFAULT 40, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE(node, base, directory));
 CREATE TABLE IF NOT EXISTS nodes(name TEXT PRIMARY KEY, token_hash TEXT NOT NULL, machine TEXT NOT NULL DEFAULT '', os TEXT NOT NULL DEFAULT '', version TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, last_seen_at INTEGER, revoked_at INTEGER);
 CREATE TABLE IF NOT EXISTS node_invites(code_hash TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, used_at INTEGER);`)
+	return err
+}
+
+// migrateTerminalLog adds terminal_log (#192): who attached to, detached
+// from or typed into a hosted terminal and when, with the byte count of
+// input per socket per minute. Input content is never stored. Times are
+// Unix ms; rows older than 30 days are pruned by the sweep.
+func migrateTerminalLog(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS terminal_log(id INTEGER PRIMARY KEY AUTOINCREMENT, session TEXT NOT NULL, admin_user TEXT NOT NULL, kind TEXT NOT NULL, at INTEGER NOT NULL, bytes INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS terminal_log_session ON terminal_log(session, at);
+CREATE INDEX IF NOT EXISTS terminal_log_at ON terminal_log(at);`)
 	return err
 }

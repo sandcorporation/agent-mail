@@ -322,6 +322,17 @@ func (s *Service) Get(id string) (wire.HostedSession, error) {
 	return h, err
 }
 
+// SetSize stores the terminal size of the record id, used on its next
+// launch; changed is false when it already had that size or is gone.
+func (s *Service) SetSize(id string, cols, rows int) (changed bool, err error) {
+	res, err := s.db.Exec(`UPDATE hosted_sessions SET cols=?, rows=? WHERE id=? AND (cols<>? OR rows<>?)`, cols, rows, id, cols, rows)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // Update applies the non-nil fields of c to the record id.
 func (s *Service) Update(id string, c wire.HostedSessionChange) (wire.HostedSession, error) {
 	h, err := s.Get(id)

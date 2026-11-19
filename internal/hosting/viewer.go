@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -33,10 +34,27 @@ const (
 	viewerDropWait = time.Second // a dropped viewer's socket closes at the latest after this
 )
 
-// Ticket modes. A "view" socket only receives; input arrives with #192.
+// Ticket modes. A "view" socket only receives: its input and resize frames
+// are ignored.
 const (
 	ModeView  = "view"
 	ModeInput = "input"
+)
+
+// Input limits (#192).
+const (
+	// MaxInput is the most bytes one input frame may carry; a larger one is
+	// refused and the client splits pastes.
+	MaxInput = 64 << 10
+	// MaxCols and MaxRows bound a resize.
+	MaxCols = 500
+	MaxRows = 200
+	// viewerReadLimit bounds a client frame: JSON escapes control bytes
+	// (six bytes each), so a refusable frame still fits.
+	viewerReadLimit = 7 * MaxInput
+	// nodeInputWait is how long input waits for room on a busy node channel
+	// before it is refused (the node is not dropped for it).
+	nodeInputWait = 2 * time.Second
 )
 
 // Admin is what the browser terminal routes need from admin sign-in; the
@@ -129,10 +147,17 @@ func (t *tickets) redeem(now time.Time, raw, id, session string) (string, bool) 
 // viewer is one open browser terminal socket.
 type viewer struct {
 	id    string
+	mode  string // ModeView or ModeInput
+	user  string // the signed-in admin
 	out   chan viewerFrame
 	gone  chan struct{} // closed when the hub drops it as too slow
 	state string        // the state last sent
 	once  sync.Once
+
+	cols, rows int // the size this viewer last asked for (0: none); under Hub.mu
+
+	mu    sync.Mutex
+	typed tally // input bytes of the current LogWindow
 }
 
 type viewerFrame struct {
@@ -180,6 +205,9 @@ func (h *Hub) removeViewer(v *viewer) {
 		return
 	}
 	delete(set, v)
+	if h.sizeBy[v.id] == v {
+		delete(h.sizeBy, v.id)
+	}
 	if len(set) > 0 {
 		return
 	}
@@ -195,6 +223,152 @@ func (h *Hub) attachViewedLocked(c *nodeConn) {
 	for id := range h.viewers {
 		if h.owner[id] == c.name {
 			h.sendLocked(c, wire.NodeFrame{Type: wire.NodeAttach, ID: id})
+		}
+	}
+}
+
+// toNode queues f for node c, waiting up to nodeInputWait for room.
+func toNode(c *nodeConn, f wire.NodeFrame) bool {
+	t := time.NewTimer(nodeInputWait)
+	defer t.Stop()
+	select {
+	case c.out <- f:
+		return true
+	case <-t.C:
+		return false
+	}
+}
+
+// errNodeBusy refuses input a node channel had no room for.
+var errNodeBusy = errors.New("the session's node is busy")
+
+// input types b into v's terminal. The last viewer that sent input or a
+// resize sets the terminal's size, so a viewer typing into a terminal last
+// sized by another viewer resizes it to its own size first.
+func (h *Hub) input(v *viewer, b []byte) error {
+	h.mu.Lock()
+	c, ok := h.conns[h.owner[v.id]]
+	resize := ok && v.cols > 0 && h.sizeBy[v.id] != v
+	if resize {
+		h.sizeBy[v.id] = v
+	}
+	cols, rows := v.cols, v.rows
+	h.mu.Unlock()
+	if !ok {
+		return ErrNodeOffline
+	}
+	if resize {
+		h.applySize(v, c, cols, rows)
+	}
+	if !toNode(c, wire.NodeFrame{Type: wire.NodeInput, ID: v.id, Data: b}) {
+		return errNodeBusy
+	}
+	return nil
+}
+
+// resize makes cols x rows the size of v's terminal: the node resizes it,
+// the record keeps it for the next launch, and the other viewers are told.
+func (h *Hub) resize(v *viewer, cols, rows int) {
+	h.mu.Lock()
+	v.cols, v.rows = cols, rows
+	h.sizeBy[v.id] = v
+	c := h.conns[h.owner[v.id]]
+	h.mu.Unlock()
+	h.applySize(v, c, cols, rows)
+}
+
+// applySize sends the resize to node c (nil: offline), stores it and, when
+// the stored size changed, tells the other viewers and syncs the records.
+func (h *Hub) applySize(v *viewer, c *nodeConn, cols, rows int) {
+	if c != nil {
+		toNode(c, wire.NodeFrame{Type: wire.NodeResize, ID: v.id, Cols: cols, Rows: rows})
+	}
+	changed, err := h.svc.SetSize(v.id, cols, rows)
+	if err != nil {
+		log.Printf("hosting: store size of %s: %v", v.id, err)
+		return
+	}
+	if !changed {
+		return
+	}
+	h.mu.Lock()
+	for o := range h.viewers[v.id] {
+		if o != v {
+			o.pushJSON(wire.TerminalMessage{Type: "size", Cols: cols, Rows: rows})
+		}
+	}
+	h.mu.Unlock()
+	if err := h.Sync(); err != nil {
+		log.Printf("hosting: sync: %v", err)
+	}
+}
+
+// audit appends a terminal_log row for v; failures are logged, not fatal.
+func (h *Hub) audit(v *viewer, kind string, at int64, bytes int) {
+	if err := h.svc.logTerminal(v.id, v.user, kind, at, bytes); err != nil {
+		log.Printf("hosting: terminal log: %v", err)
+	}
+}
+
+// typed counts n input bytes of v, logging a finished minute.
+func (h *Hub) typed(v *viewer, n int) {
+	v.mu.Lock()
+	done := v.typed.add(h.svc.clock().UnixMilli(), n)
+	v.mu.Unlock()
+	if done.bytes > 0 {
+		h.audit(v, LogInput, done.start, done.bytes)
+	}
+}
+
+// flushTyped logs v's input minute when it is over, or at once when force.
+func (h *Hub) flushTyped(v *viewer, force bool) {
+	v.mu.Lock()
+	done := v.typed.due(h.svc.clock().UnixMilli(), force)
+	v.mu.Unlock()
+	if done.bytes > 0 {
+		h.audit(v, LogInput, done.start, done.bytes)
+	}
+}
+
+// readViewer takes the client frames of v's socket until it closes. Only an
+// input socket is heard; a view socket's frames are read and dropped.
+func (h *Hub) readViewer(ctx context.Context, ws *websocket.Conn, v *viewer) {
+	refuse := func(msg string) { v.pushJSON(wire.TerminalMessage{Type: "refused", Error: msg}) }
+	for {
+		typ, b, err := ws.Read(ctx)
+		if err != nil {
+			return
+		}
+		if typ != websocket.MessageText || v.mode != ModeInput {
+			continue
+		}
+		var m wire.TerminalInput
+		if json.Unmarshal(b, &m) != nil {
+			refuse("invalid json")
+			continue
+		}
+		switch m.Type {
+		case "input":
+			if len(m.Data) > MaxInput {
+				refuse("input over 64 KiB")
+				continue
+			}
+			if m.Data == "" {
+				continue
+			}
+			if err := h.input(v, []byte(m.Data)); err != nil {
+				refuse(err.Error())
+				continue
+			}
+			h.typed(v, len(m.Data))
+		case "resize":
+			if m.Cols < 1 || m.Cols > MaxCols || m.Rows < 1 || m.Rows > MaxRows {
+				refuse("size out of range")
+				continue
+			}
+			h.resize(v, m.Cols, m.Rows)
+		default:
+			refuse("unknown type")
 		}
 	}
 }
@@ -315,7 +489,7 @@ func (h *Hub) terminalSocket(w http.ResponseWriter, r *http.Request, id string) 
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	_, key, ok := a.Session(r)
+	user, key, ok := a.Session(r)
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -324,7 +498,8 @@ func (h *Hub) terminalSocket(w http.ResponseWriter, r *http.Request, id string) 
 		http.Error(w, "forbidden origin", http.StatusForbidden)
 		return
 	}
-	if _, ok := h.tickets.redeem(h.svc.clock(), r.URL.Query().Get("ticket"), id, key); !ok {
+	mode, ok := h.tickets.redeem(h.svc.clock(), r.URL.Query().Get("ticket"), id, key)
+	if !ok {
 		http.Error(w, "invalid ticket", http.StatusForbidden)
 		return
 	}
@@ -339,7 +514,9 @@ func (h *Hub) terminalSocket(w http.ResponseWriter, r *http.Request, id string) 
 		return
 	}
 	defer ws.CloseNow()
-	ctx := ws.CloseRead(r.Context()) // a view socket takes nothing from the browser
+	ws.SetReadLimit(viewerReadLimit)
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
 	send := func(f viewerFrame) bool {
 		wctx, done := context.WithTimeout(ctx, viewerWriteTTL)
 		defer done()
@@ -349,7 +526,7 @@ func (h *Hub) terminalSocket(w http.ResponseWriter, r *http.Request, id string) 
 		}
 		return ws.Write(wctx, typ, f.data) == nil
 	}
-	v := &viewer{id: id, out: make(chan viewerFrame, a.Queue), gone: make(chan struct{}), state: rec.Runtime.State}
+	v := &viewer{id: id, mode: mode, user: user, out: make(chan viewerFrame, a.Queue), gone: make(chan struct{}), state: rec.Runtime.State}
 	hello := wire.TerminalMessage{Type: "hello", State: rec.Runtime.State, Cols: rec.Cols, Rows: rec.Rows}
 	if wctx, done := context.WithTimeout(ctx, viewerWriteTTL); wsjson.Write(wctx, ws, hello) != nil {
 		done()
@@ -357,8 +534,22 @@ func (h *Hub) terminalSocket(w http.ResponseWriter, r *http.Request, id string) 
 	} else {
 		done()
 	}
+	h.audit(v, LogAttach, h.svc.clock().UnixMilli(), 0)
 	h.addViewer(v)
-	defer h.removeViewer(v)
+	read := make(chan struct{})
+	go func() {
+		defer close(read)
+		defer cancel() // the browser went away
+		h.readViewer(ctx, ws, v)
+	}()
+	defer func() {
+		h.removeViewer(v)
+		cancel()
+		_ = ws.CloseNow()
+		<-read
+		h.flushTyped(v, true)
+		h.audit(v, LogDetach, h.svc.clock().UnixMilli(), 0)
+	}()
 	go func() {
 		// A viewer stuck in a write is closed shortly after it is dropped.
 		select {
@@ -383,6 +574,7 @@ func (h *Hub) terminalSocket(w http.ResponseWriter, r *http.Request, id string) 
 				ws.Close(websocket.StatusPolicyViolation, "signed out")
 				return
 			}
+			h.flushTyped(v, false)
 			pctx, done := context.WithTimeout(ctx, viewerWriteTTL)
 			err := ws.Ping(pctx)
 			done()

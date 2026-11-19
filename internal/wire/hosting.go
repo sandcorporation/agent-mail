@@ -100,6 +100,8 @@ const (
 	NodeRestart = "restart" // ID: restart one session with resume
 	NodeAttach  = "attach"  // ID: a browser viewer wants this terminal: stream it, starting with a fresh snapshot
 	NodeDetach  = "detach"  // ID: no viewer is left: stop streaming it
+	NodeInput   = "input"   // ID, Data: type these bytes into the terminal
+	NodeResize  = "resize"  // ID, Cols, Rows: resize the terminal
 	// Node to host.
 	NodeHelloType = "hello" // Hello: who the node is
 	NodeStateType = "state" // States: what the node observes, every record
@@ -137,6 +139,9 @@ type NodeFrame struct {
 	ID       string            `json:"id,omitempty"`
 	Hello    *NodeHello        `json:"hello,omitempty"`
 	States   []HostedNodeState `json:"states,omitempty"`
+	Data     []byte            `json:"data,omitempty"`
+	Cols     int               `json:"cols,omitempty"`
+	Rows     int               `json:"rows,omitempty"`
 }
 
 // NodeHello is what a node says about itself when it attaches.
@@ -169,11 +174,34 @@ type TerminalTicket struct {
 }
 
 // TerminalMessage is a text frame of the browser terminal socket, host to
-// browser: "hello" first (State, Cols, Rows), then "state" on changes.
+// browser: "hello" first (State, Cols, Rows), then "state" on changes,
+// "size" (Cols, Rows) when a viewer set the terminal's size, and "refused"
+// (Error) for a client frame the host did not take.
 // Binary frames carry VT bytes: a snapshot, then output.
 type TerminalMessage struct {
 	Type  string `json:"type"`
-	State string `json:"state"`
+	State string `json:"state,omitempty"`
 	Cols  int    `json:"cols,omitempty"`
 	Rows  int    `json:"rows,omitempty"`
+	Error string `json:"error,omitempty"`
+}
+
+// TerminalInput is a text frame of the browser terminal socket, browser to
+// host: {"type":"input","data":…} or {"type":"resize","cols":…,"rows":…}.
+// Only a socket opened with an "input" ticket is heard.
+type TerminalInput struct {
+	Type string `json:"type"`
+	Data string `json:"data,omitempty"`
+	Cols int    `json:"cols,omitempty"`
+	Rows int    `json:"rows,omitempty"`
+}
+
+// TerminalLogEntry is one row of a terminal's attach/input log: who, when
+// (unix ms), what ("attach", "detach", "input") and, for input, how many
+// bytes in that minute. Input content is never kept.
+type TerminalLogEntry struct {
+	AdminUser string `json:"admin_user"`
+	Kind      string `json:"kind"`
+	At        int64  `json:"at"`
+	Bytes     int    `json:"bytes"`
 }

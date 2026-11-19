@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/sandcorporation/switchboard/internal/config"
+	"github.com/sandcorporation/switchboard/internal/hosting"
 	"github.com/sandcorporation/switchboard/internal/identity"
 	"github.com/sandcorporation/switchboard/internal/presence"
 	"github.com/sandcorporation/switchboard/internal/wire"
@@ -20,8 +21,8 @@ import (
 // mail from the system sender: offline notices to a session's presence parent
 // (presence.Service.SweepOffline) and label stall notices to the sender of
 // mail held longer than SWITCHBOARD_LABEL_STALL (mail.Service.SweepLabels).
-// The same sweep sends due metrics alerts and prunes old presence_log and
-// alerts rows.
+// The same sweep sends due metrics alerts and prunes old presence_log,
+// alerts and terminal_log rows.
 
 const (
 	defaultSweepInterval = 30 * time.Second
@@ -112,7 +113,7 @@ type sweepResult struct {
 }
 
 // sweep sends every due stall notice and metrics alert once and prunes old
-// presence_log and alerts rows.
+// presence_log, alerts and terminal_log rows.
 // It is safe to run repeatedly.
 func (s *Server) sweep(ctx context.Context) (sweepResult, error) {
 	var out sweepResult
@@ -127,7 +128,10 @@ func (s *Server) sweep(ctx context.Context) (sweepResult, error) {
 	if out.Alerts, err = s.insight().SweepAlerts(ctx); err != nil {
 		return out, err
 	}
-	_, err = presence.PruneLog(s.db, s.now())
+	if _, err = presence.PruneLog(s.db, s.now()); err != nil {
+		return out, err
+	}
+	_, err = hosting.PruneLog(s.db, s.now())
 	return out, err
 }
 
