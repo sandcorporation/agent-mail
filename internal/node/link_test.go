@@ -40,6 +40,7 @@ type fakeHost struct {
 	refuse  bool
 	hellos  []wire.NodeHello
 	states  [][]wire.HostedNodeState
+	notices []wire.NodeNotice
 	conns   []*websocket.Conn
 	attachs int
 }
@@ -76,6 +77,8 @@ func (h *fakeHost) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.hellos = append(h.hellos, *f.Hello)
 		case wire.NodeStateType:
 			h.states = append(h.states, f.States)
+		case wire.NodeNoticeType:
+			h.notices = append(h.notices, *f.Notice)
 		}
 		h.mu.Unlock()
 	}
@@ -233,4 +236,36 @@ func TestLinkRestart(t *testing.T) {
 		t.Errorf("restart launched %v", l[1])
 	}
 	waitFor(t, "two runs reported", func() bool { s, ok := host.lastState("a"); return ok && s.Runtime.Run == 2 && s.Runtime.Restarts == 1 })
+}
+
+// A notice goes to the host once per connection while the node holds it.
+func TestLinkSendsNoticesOncePerConnection(t *testing.T) {
+	r := newRig(t)
+	a := rec("a")
+	n := r.node(a)
+	r.reconcile(n)
+	for range node.CrashLoopRuns {
+		r.exitAfter(n, time.Minute, 1)
+		if r.state(n, "a").Observed == node.ObservedBackingOff {
+			r.waitOut(n)
+		}
+	}
+	if r.state(n, "a").Observed != node.ObservedCrashLoop {
+		t.Fatalf("no crash loop: %+v", r.state(n, "a"))
+	}
+	host := &fakeHost{token: "sbn_t", assign: []wire.HostedSession{a}}
+	srv := httptest.NewServer(host)
+	defer srv.Close()
+	runLink(t, &node.Link{Node: n, Host: srv.URL, Token: "sbn_t", Interval: 10 * time.Millisecond, Sleep: func(context.Context, time.Duration) error { return nil }, Logf: t.Logf})
+	count := func() int { host.mu.Lock(); defer host.mu.Unlock(); return len(host.notices) }
+	waitFor(t, "the notice", func() bool { return count() == 1 })
+	waitFor(t, "a few state reports", func() bool { host.mu.Lock(); defer host.mu.Unlock(); return len(host.states) > 0 })
+	host.drop()
+	waitFor(t, "the notice again after reconnecting", func() bool { return count() == 2 })
+	host.mu.Lock()
+	got := host.notices[0]
+	host.mu.Unlock()
+	if got.Kind != wire.NoticeCrashLoop || got.ID != "a" || got.Run != 5 || got.Runs != 5 {
+		t.Fatalf("notice %+v", got)
+	}
 }

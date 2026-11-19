@@ -50,6 +50,8 @@ type Hub struct {
 	viewers map[string]map[*viewer]struct{} // open browser terminal sockets by record id
 	sizeBy  map[string]*viewer              // the viewer whose size a terminal has, by record id
 	admin   Admin
+	notify  Notify
+	bosses  []string
 
 	tickets tickets
 }
@@ -190,26 +192,37 @@ func (h *Hub) List() ([]wire.HostedSession, error) {
 	return recs, nil
 }
 
-// Restart restarts a running record with resume through its node; a stopped
-// record is set to run instead.
+// Restart restarts a running record with resume through its node (the
+// record's restart counter, so a node that reconnects still gets it); a
+// stopped record is set to run instead. A running record's node must be
+// attached.
 func (h *Hub) Restart(id string) (wire.HostedSession, error) {
 	r, err := h.svc.Get(id)
 	if err != nil {
 		return r, err
 	}
-	if r.Desired == DesiredStopped {
-		if r, err = h.svc.SetDesired(id, DesiredRunning); err == nil {
-			err = h.Sync()
+	if r.Desired != DesiredStopped {
+		h.mu.Lock()
+		_, ok := h.conns[r.Node]
+		h.mu.Unlock()
+		if !ok {
+			return r, ErrNodeOffline
 		}
-		return r, err
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	c, ok := h.conns[r.Node]
-	if !ok || !h.sendLocked(c, wire.NodeFrame{Type: wire.NodeRestart, ID: id}) {
-		return r, ErrNodeOffline
+	if r, err = h.svc.Restart(id); err == nil {
+		err = h.Sync()
 	}
-	return r, nil
+	return r, err
+}
+
+// NewConversation gives the record a new conversation and sends it to its
+// node, which stops the session and starts it with --session-id.
+func (h *Hub) NewConversation(id string) (wire.HostedSession, error) {
+	r, err := h.svc.NewConversation(id)
+	if err == nil {
+		err = h.Sync()
+	}
+	return r, err
 }
 
 // NodeAPI serves /api/node/ paths (prefix removed): join for a node
@@ -364,7 +377,7 @@ func (h *Hub) receive(c *nodeConn, f wire.NodeFrame) {
 		}
 	case wire.NodeStateType:
 		now := h.svc.clock().UnixMilli()
-		changed, launched := false, []string{}
+		changed, launched := false, []wire.HostedNodeState{}
 		h.mu.Lock()
 		for _, st := range f.States {
 			if h.owner[st.ID] != c.name {
@@ -382,17 +395,27 @@ func (h *Hub) receive(c *nodeConn, f wire.NodeFrame) {
 			}
 			h.runtime[st.ID] = rt
 			if st.Launched {
-				launched = append(launched, st.ID)
+				launched = append(launched, st)
 			}
 		}
 		h.mu.Unlock()
-		for _, id := range launched {
-			if err := h.svc.markLaunched(id); err != nil {
-				log.Printf("hosting: mark %s launched: %v", id, err)
+		for _, st := range launched {
+			if err := h.svc.markLaunched(st.ID, st.AgentSessionID); err != nil {
+				log.Printf("hosting: mark %s launched: %v", st.ID, err)
 			}
 		}
 		if changed {
 			h.changed()
+		}
+	case wire.NodeNoticeType:
+		if f.Notice == nil {
+			return
+		}
+		h.mu.Lock()
+		own := h.owner[f.Notice.ID] == c.name
+		h.mu.Unlock()
+		if own {
+			h.notice(*f.Notice)
 		}
 	}
 }
@@ -434,7 +457,11 @@ func (h *Hub) AdminTerminalsAPI(w http.ResponseWriter, r *http.Request, rest str
 		}
 		return true
 	}
-	if id, ok := strings.CutSuffix(rest, "/restart"); ok {
+	for _, sub := range []string{"/restart", "/new-conversation"} {
+		id, ok := strings.CutSuffix(rest, sub)
+		if !ok {
+			continue
+		}
 		if !ValidID(id) {
 			http.Error(w, "no such hosted session", http.StatusNotFound)
 			return true
@@ -443,7 +470,11 @@ func (h *Hub) AdminTerminalsAPI(w http.ResponseWriter, r *http.Request, rest str
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return true
 		}
-		rec, err := h.Restart(id)
+		act := h.Restart
+		if sub == "/new-conversation" {
+			act = h.NewConversation
+		}
+		rec, err := act(id)
 		if errors.Is(err, ErrNodeOffline) {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return true

@@ -11,7 +11,7 @@ import (
 	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
-// RunCLI serves `host add|list|start|stop|remove` against the service's
+// RunCLI serves `host add|list|start|stop|restart|new-conversation|remove` against the service's
 // database. The client has already checked the action and its arguments;
 // add is the record for `host add`, id the record for the others. The host
 // picks database changes up when it reconciles, so no server is called.
@@ -35,6 +35,10 @@ func (s *Service) RunCLI(action, id string, add wire.HostedSessionCreate, jsonOu
 		h, err = s.SetDesired(id, DesiredRunning)
 	case "stop":
 		h, err = s.SetDesired(id, DesiredStopped)
+	case "restart":
+		h, err = s.Restart(id)
+	case "new-conversation":
+		h, err = s.NewConversation(id)
 	case "remove":
 		h, err = s.Delete(id)
 	default:
@@ -54,6 +58,10 @@ func (s *Service) RunCLI(action, id string, add wire.HostedSessionCreate, jsonOu
 		fmt.Fprintln(stdout, h.ID)
 	case "remove":
 		fmt.Fprintf(stdout, "removed %s\n", h.ID)
+	case "restart":
+		fmt.Fprintf(stdout, "%s restart requested\n", h.ID)
+	case "new-conversation":
+		fmt.Fprintf(stdout, "%s new conversation %s\n", h.ID, h.AgentSessionID)
 	default:
 		fmt.Fprintf(stdout, "%s %s\n", h.ID, h.Desired)
 	}

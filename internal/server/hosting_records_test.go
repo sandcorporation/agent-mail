@@ -216,6 +216,21 @@ func TestHostCLIManagesRecords(t *testing.T) {
 	if code, _, stderr = hostCLI(t, dbPath, "start"); code != 2 {
 		t.Errorf("start without ID = %d %s", code, stderr)
 	}
+	// Restart and New conversation go through the record, so the host's
+	// next sync carries them to the node.
+	if code, out, _ = hostCLI(t, dbPath, "restart", id); code != 0 || out != id+" restart requested" {
+		t.Errorf("restart = %d %q", code, out)
+	}
+	if code, out, _ = hostCLI(t, dbPath, "new-conversation", id); code != 0 || !strings.HasPrefix(out, id+" new conversation ") || strings.HasSuffix(out, h.AgentSessionID) {
+		t.Errorf("new-conversation = %d %q", code, out)
+	}
+	if _, out, _ = hostCLI(t, dbPath, "list", "--json"); json.Unmarshal([]byte(out), &list) != nil || list[0].RestartGen != 1 || list[0].StartGen != 1 ||
+		list[0].AgentSessionID == h.AgentSessionID || list[0].Launched {
+		t.Errorf("after restart and new conversation %+v", list[0])
+	}
+	if code, _, stderr = hostCLI(t, dbPath, "restart"); code != 2 {
+		t.Errorf("restart without ID = %d %s", code, stderr)
+	}
 	if code, out, _ = hostCLI(t, dbPath, "remove", id); code != 0 || out != "removed "+id {
 		t.Errorf("remove = %d %q", code, out)
 	}

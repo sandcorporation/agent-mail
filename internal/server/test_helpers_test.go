@@ -47,8 +47,8 @@ func binaryCommands() cli.Commands {
 		Admin: adminauth.CLI,
 		Host:  HostCLI,
 		Up:    func(dir string, port int, node string) error { return Up(version, dir, port, node) },
-		Node: func(host, tokenFile, joinCode string) error {
-			return Node(version, host, tokenFile, joinCode)
+		Node: func(host, tokenFile, joinCode string, restartSessions bool) error {
+			return Node(version, host, tokenFile, joinCode, restartSessions)
 		},
 		NodeInvite: NodeInviteCLI,
 	}
