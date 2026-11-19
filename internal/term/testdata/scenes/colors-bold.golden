@@ -1,0 +1,24 @@
+size 24x5
+cursor 11,4 visible
+history 0
+screen
+|red bold green          |
+|bright 208 true         |
+|white on blue plain-bg  |
+|faint it ul rev st      |
+|   bold-bg              |
+styles
+s0 0-2 fg=1
+s0 4-13 fg=2 bold
+s1 0-5 fg=9
+s1 7-9 fg=208
+s1 11-14 fg=#ff8000
+s2 0-12 fg=15 bg=4
+s2 13-21 fg=15
+s3 0-4 faint
+s3 6-7 italic
+s3 9-10 underline
+s3 12-14 reverse
+s3 16-17 strike
+s4 0-1 bg=#000080
+s4 2-10 bg=#000080 bold

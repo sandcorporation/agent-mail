@@ -1,0 +1,10 @@
+# Spinner and status updates: cursor moves and partial rewrites of single lines.
+@size 20x5
+line one\r\n
+line two\r\n
+line three\r\n
+\e[2A\e[5Gtwo!\e[K
+\e[1B\r\e[6C33
+\e[1;1H\e[2CXX
+\e7\e[5;10Hsaved\e8\e[1D!
+\e[3;4H\e[1K

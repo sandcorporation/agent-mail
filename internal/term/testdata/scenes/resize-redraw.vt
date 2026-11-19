@@ -1,0 +1,9 @@
+# The terminal narrows; the program repaints the whole viewport at the new size.
+@size 20x5
+first line of output\r\n
+second\r\n
+third
+@resize 12x4
+\e[H\e[2J
+redrawn 12\r\n
+\e[1mstatus\e[0m

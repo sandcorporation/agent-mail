@@ -1,0 +1,11 @@
+size 10x4
+cursor 2,3 visible
+history 2
+|prompt> th|
+|is line is|
+screen
+| longer th|
+|an ten col|
+|umns      |
+|$         |
+styles

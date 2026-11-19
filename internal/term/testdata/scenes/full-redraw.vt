@@ -1,0 +1,12 @@
+# Claude Code repaints the whole viewport: home, then every row, erasing the rest of each.
+@size 24x6
+\e[?25l\e[H\e[2J
+\e[1m Claude Code \e[0m\e[K\r\n
+\e[2m────────────────────────\e[0m
+\e[3;1H> list the files\e[K
+\e[4;1H\e[32m●\e[0m Reading 3 files\e[K
+\e[5;1H\e[K
+\e[6;1H\e[7m esc to interrupt \e[0m\e[K
+\e[H
+\e[1m Claude Code \e[0m\e[K
+\e[3;1H> list the files ok\e[K

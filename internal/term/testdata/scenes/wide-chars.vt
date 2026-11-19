@@ -1,0 +1,8 @@
+# Korean text and emoji take two columns; a Korean run longer than the width wraps,
+# and a wide character with one column left wraps whole.
+@size 12x7
+안녕하세요\r\n
+ok 🚀 done✅\r\n
+abcdefghij한\r\n
+abcdefghijk한\r\n
+\e[33m가나다라마바사\e[0m아

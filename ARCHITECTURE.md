@@ -16,6 +16,8 @@ The Go HTTP server authenticates each request by hashing the bearer token (SHA-2
 | `internal/insight` | metrics, metrics alerts, the Discord question notice | `config`, `identity`, `mail`, `store`, `wire` |
 | `internal/dashboard` | the admin page (HTML, CSS and JS in one document) | `config` |
 | `internal/cli` | the client: every subcommand, profiles, the HTTP client | `config`, `wire` |
+| `internal/term` | the terminal backend seam for hosted sessions: `Backend`, `Spec`, `Info`, `Grid`, `Emulator` (VT bytes in, `Grid` out) and `Grid.Snapshot`; `term/internal/vt` is a patched copy of `charmbracelet/x/vt` vt/v0.1.0 (see its README); no runtime path uses it yet | none |
+| `internal/term/termtest` | the in-memory `Backend` for tests above the backend | `term` |
 | `internal/live` | the dashboard change bus: numbered change kinds, a ring for resume, bounded per-client queues that drop slow clients | none |
 | `internal/wire` | the HTTP API shapes and the checks client and server share | none |
 | `internal/store` | `Open`, the schema and its additive migrations, `InTx`, token hashing | none |

@@ -1,0 +1,13 @@
+size 12x4
+cursor 6,1 visible
+history 3
+|first line o|
+|second|
+|third|
+screen
+|redrawn 12  |
+|status      |
+|            |
+|            |
+styles
+s1 0-5 bold
