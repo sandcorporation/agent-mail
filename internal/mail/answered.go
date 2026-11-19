@@ -129,7 +129,7 @@ var AnsweredRules = map[int]AnsweredRule{
 // that decides whether a directive is still open: the progress view and 대기,
 // the reminders, the idle check and the report status all go through it. A
 // directive is open until it ends; replies, however many, leave it open.
-func OpenUntilDone(st DirectiveState) bool { return !st.Ended() }
+func OpenUntilDone(st DirectiveState) bool { return !st.Ended() && !st.Replied }
 
 // Replies is the strict rule (#214) for whether m replies to the directive d.
 // Since version 2 a reply no longer closes the directive; the progress view,
