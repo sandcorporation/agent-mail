@@ -1,4 +1,4 @@
-//go:build !linux
+//go:build !linux && !windows
 
 package server
 
@@ -11,8 +11,8 @@ import (
 
 type nodeBackend = term.Backend
 
-// newNodeBackend refuses: this release hosts terminals on Linux (tmux) only;
-// Windows waits for the ConPTY backend.
-func newNodeBackend(string, int, string) (nodeBackend, string, string, error) {
-	return nil, "", "", fmt.Errorf("node: terminal hosting runs on Linux (tmux) in this release; %s is not supported yet", runtime.GOOS)
+// newNodeBackend refuses: terminals are hosted on Linux (tmux) and Windows
+// (ConPTY) only.
+func newNodeBackend(backendOptions) (nodeBackend, backendInfo, error) {
+	return nil, backendInfo{}, fmt.Errorf("node: terminal hosting runs on Linux (tmux) and Windows (ConPTY); %s is not supported", runtime.GOOS)
 }

@@ -33,3 +33,28 @@ jobs:
       - run: go build ./cmd/switchboard
       - run: GOOS=windows go build ./... && GOOS=windows go vet ./...
       - run: bash scripts/ci/promote_test.sh
+  windows:
+    # ConPTY backend and keeper against real Windows. The ConPTY output of
+    # each golden scene is uploaded as the conpty-recordings artifact (the
+    # source of internal/term/testdata/conpty).
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: ConPTY backend and keeper
+        shell: bash
+        run: go test -count=1 -v ./internal/term/conpty/ -args -conpty.record="$RUNNER_TEMP/conpty"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: conpty-recordings
+          path: ${{ runner.temp }}/conpty
+          if-no-files-found: ignore
+      - name: Question source of truth (server e2e)
+        shell: bash
+        run: bash scripts/ci/question_sot.sh
+      - run: go test ./...
+      - run: go vet ./...

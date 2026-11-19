@@ -169,17 +169,35 @@ func prepareNode(v, name, tokenFile, endpoint, backendDir string) (*nodePart, er
 	if err != nil {
 		return nil, err
 	}
-	instance := instanceFor(tokenFile)
-	b, backendName, socket, err := newNodeBackend(instance, cfg.History, backendDir)
+	b, info, err := newNodeBackend(backendOptions{instance: instanceFor(tokenFile), history: cfg.History, dir: backendDir, version: v})
 	if err != nil {
 		return nil, err
 	}
 	cfg.Endpoint = endpoint
+	cfg.Term = info.term
 	if name == "" {
 		name = cfg.Machine
 	}
-	return &nodePart{cfg: cfg, backend: b, backendName: backendName, socket: socket, endpoint: endpoint,
-		hello: wire.NodeHello{Name: name, Machine: cfg.Machine, OS: runtime.GOOS, Version: v, Backend: backendName}}, nil
+	return &nodePart{cfg: cfg, backend: b, backendName: info.name, socket: info.socket, endpoint: endpoint,
+		hello: wire.NodeHello{Name: name, Machine: cfg.Machine, OS: runtime.GOOS, Version: v, Backend: info.name}}, nil
+}
+
+// backendOptions is what the node's terminal backend is built from.
+type backendOptions struct {
+	// instance names the backend's server (tmux socket, keeper pipe).
+	instance string
+	history  int
+	// dir holds the backend's files (empty: the user cache directory).
+	dir string
+	// version is this switchboard's version (the keeper must match it).
+	version string
+}
+
+// backendInfo describes the backend the node got.
+type backendInfo struct {
+	name   string // tmux or conpty
+	socket string // tmux socket name or keeper pipe
+	term   string // TERM given to children ("": the backend's own)
 }
 
 // link builds the node over its backend with token as its credential.
@@ -193,9 +211,9 @@ func (p *nodePart) link(token string) (*node.Link, error) {
 	return &node.Link{Node: n, Host: p.endpoint, Token: token, Hello: p.hello}, nil
 }
 
-// instanceFor names a node's backend server after its token file, so one
-// installation keeps one tmux server across restarts and two installations
-// on a machine never share one.
+// instanceFor names a node's backend server (tmux server, Windows keeper)
+// after its token file, so one installation keeps one across restarts and
+// two installations on a machine never share one.
 func instanceFor(tokenFile string) string {
 	sum := sha256.Sum256([]byte(tokenFile))
 	return "n" + hex.EncodeToString(sum[:6])
