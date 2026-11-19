@@ -31,7 +31,7 @@ func TestOIDCPublicClientCodeFlow(t *testing.T) {
 	if p.exchanges != 1 {
 		t.Fatalf("exchanges=%d", p.exchanges)
 	}
-	if !strings.Contains(buf.String(), "oidc: public client (PKCE)") {
+	if !strings.Contains(buf.String(), "admin auth: oidc (public client, PKCE)") {
 		t.Fatalf("mode not logged: %s", buf)
 	}
 
@@ -53,7 +53,7 @@ func TestOIDCConfidentialClientSendsSecret(t *testing.T) {
 	if code := loginOnce(t, p); code != 200 {
 		t.Fatalf("confidential client callback=%d", code)
 	}
-	if !strings.Contains(buf.String(), "oidc: confidential client") {
+	if !strings.Contains(buf.String(), "admin auth: oidc (confidential client)") {
 		t.Fatalf("mode not logged: %s", buf)
 	}
 

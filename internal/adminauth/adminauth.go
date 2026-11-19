@@ -116,15 +116,33 @@ func Configure(c *Config, getenv func(string) string) error {
 	c.Mode = mode
 	c.insecureCookie = getenv(config.EnvPrefix+"INSECURE_COOKIE") == "1"
 	c.TrustForwarded = getenv(config.EnvPrefix+"TRUST_FORWARDED") == "1"
-	switch {
-	case mode == "" && c.ProxyToken != "":
-		log.Printf("deprecated: admin access through the proxy secret (ADMIN_PROXY_TOKEN) without %sADMIN_AUTH; set %sADMIN_AUTH to move to admin login", config.EnvPrefix, config.EnvPrefix)
-	case mode == "":
-		log.Printf("admin access denied: %sADMIN_AUTH is not set", config.EnvPrefix)
-	case c.ProxyToken != "":
-		log.Printf("%sADMIN_AUTH=%s: the proxy secret (ADMIN_PROXY_TOKEN) is ignored", config.EnvPrefix, mode)
-	}
+	log.Print(StartLine(c))
 	return nil
+}
+
+// StartLine is the one line up and serve log at start-up for the admin
+// access in force: "admin auth: " and builtin, oidc (public client, PKCE),
+// oidc (confidential client), proxy secret (deprecated) or off. The install
+// documents and their tests look for these words.
+func StartLine(c *Config) string {
+	p := config.EnvPrefix
+	var line string
+	switch {
+	case c.Mode == "" && c.ProxyToken != "":
+		return "admin auth: proxy secret (deprecated: ADMIN_PROXY_TOKEN without " + p + "ADMIN_AUTH; set " + p + "ADMIN_AUTH to move to admin login)"
+	case c.Mode == "":
+		return "admin auth: off (" + p + "ADMIN_AUTH is not set; admin access is denied)"
+	case c.Mode == modeOIDC && c.oidc != nil && c.oidc.clientSecret == "":
+		line = "admin auth: oidc (public client, PKCE)"
+	case c.Mode == modeOIDC:
+		line = "admin auth: oidc (confidential client)"
+	default:
+		line = "admin auth: " + c.Mode
+	}
+	if c.ProxyToken != "" {
+		line += " (the proxy secret ADMIN_PROXY_TOKEN is ignored)"
+	}
+	return line
 }
 
 // EffectiveMode is the mode in force: the configured one, the transition

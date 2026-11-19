@@ -146,11 +146,6 @@ func configureOIDC(getenv func(string) string) (*oidcLogin, error) {
 		return nil, errors.New(config.EnvPrefix + "ADMIN_AUTH=oidc: invalid " + strings.Join(invalid, ", "))
 	}
 	o.redirectURL = public + oidcCallbackPath
-	if o.clientSecret == "" {
-		log.Printf("oidc: public client (PKCE)")
-	} else {
-		log.Printf("oidc: confidential client")
-	}
 	o.flowKey = make([]byte, 32)
 	if _, err := rand.Read(o.flowKey); err != nil {
 		return nil, err

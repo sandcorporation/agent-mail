@@ -95,6 +95,21 @@ function sbwait([int]$seconds, [scriptblock]$ok) {
   for ($i = 0; $i -lt $seconds; $i++) { if (& $ok) { return }; Start-Sleep 1 }
   throw "timed out after ${seconds}s: $ok"
 }
+function sbstop {
+  Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+  $upcmd = [regex]::Escape("$data\up.cmd")
+  for ($i = 0; $i -lt 60; $i++) {
+    $task = Get-ScheduledTask -TaskName 'switchboard-pc' -ErrorAction SilentlyContinue
+    $cmds = @(Get-CimInstance Win32_Process -Filter "Name = 'cmd.exe'" | Where-Object { $_.CommandLine -match $upcmd })
+    if ((-not $task -or $task.State -eq 'Ready') -and $cmds.Count -eq 0) { return }
+    Start-Sleep 1
+  }
+  throw "up.cmd still runs 60 s after up stopped (task switchboard-pc: $($task.State), cmd.exe: $($cmds.ProcessId)); leave up.cmd as it is"
+}
+function sbstarted {
+  (Select-String -Path "$data\up.log" -Pattern 'admin auth: .*' | Select-Object -Last 1).Matches[0].Value
+  'version ' + (Invoke-RestMethod "http://127.0.0.1:$port/health" -TimeoutSec 5).version
+}
 function Get-SbTotp([string]$secret) {
   $alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
   $bits = -join ($secret.ToUpper().TrimEnd('=').ToCharArray() | ForEach-Object { [Convert]::ToString($alphabet.IndexOf($_), 2).PadLeft(5, '0') })
@@ -200,7 +215,10 @@ If it fails: `up exited: …` or `timed out` waiting for health → look the mes
 
 ### W6. Start, and start at sign-in
 
+Every block that writes `up.cmd` starts with `sbstop`: it stops `up` and waits until the task `switchboard-pc` is `Ready` and no `cmd.exe` runs `up.cmd`. cmd.exe reads a batch file by position while it runs, so an `up.cmd` rewritten under a running one can start the old `up` again with the old settings, and `Start-ScheduledTask` does nothing while the task still runs.
+
 ```powershell
+sbstop
 @"
 @echo off
 set SWITCHBOARD_ADMIN_AUTH=builtin
@@ -212,15 +230,16 @@ set "SWITCHBOARD_HOSTING_AGENT=$agent"
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -WindowStyle Hidden -Command `"& '$data\up.cmd'`""
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
 $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
-Register-ScheduledTask -TaskName 'switchboard-pc' -Action $action -Trigger $trigger -Settings $settings | Out-Null
+Register-ScheduledTask -TaskName 'switchboard-pc' -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
 Start-ScheduledTask -TaskName 'switchboard-pc'
 sbwait 60 { Test-SbHealth }
 Select-String -Path "$data\up.log" -Pattern 'terminal hosting is on', 'conpty backend', 'switchboard listening on 127.0.0.1:'
+sbstarted
 ```
 
-Check: health answers within 60 s and `Select-String` shows the three lines (`terminal hosting is on`, `node local: conpty backend, socket …`, `switchboard listening on 127.0.0.1:8090`). The task runs at every sign-in of this user, with no time limit and without administrator rights.
+Check: health answers within 60 s and `Select-String` shows the three lines (`terminal hosting is on`, `node local: conpty backend, socket …`, `switchboard listening on 127.0.0.1:8090`). `sbstarted` prints `admin auth: builtin` and `version` with the tag from W2. The task runs at every sign-in of this user, with no time limit and without administrator rights.
 
-If it fails: `Register-ScheduledTask` says `Access is denied` → use the Startup folder instead and start it now:
+If it fails: `sbstop` says `up.cmd still runs` → leave `up.cmd` as it is, end the task (`Stop-ScheduledTask -TaskName 'switchboard-pc'`; stop the `cmd.exe` it names) and run the block again. `sbstarted` prints another mode or an older version → an old `up` is running; run the block again. `Register-ScheduledTask` says `Access is denied` → use the Startup folder instead and start it now:
 
 ```powershell
 Set-Content "$([Environment]::GetFolderPath('Startup'))\switchboard-pc.cmd" "@start `"`" /min `"$data\up.cmd`"" -Encoding Ascii
@@ -263,7 +282,7 @@ The session survives a restart of `up`:
 
 ```powershell
 $before = sbget $id
-Get-NetTCPConnection -LocalPort $port -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+sbstop
 Start-ScheduledTask -TaskName 'switchboard-pc'
 sbwait 60 { Test-SbHealth }
 sbwait 60 { (sbget $id).runtime.state -eq 'running' }
@@ -292,7 +311,7 @@ If it fails: state `crashloop` → the agent exits right after start; open its t
 Stop `up` only (sessions keep running in the keeper; the next start adopts them):
 
 ```powershell
-Get-NetTCPConnection -LocalPort $port -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+sbstop
 ```
 
 Stop or start one session: `sbpc host stop $id`, `sbpc host start $id` (while `up` runs).
@@ -300,20 +319,21 @@ Stop or start one session: `sbpc host stop $id`, `sbpc host start $id` (while `u
 Update: run W2 for the new version, then:
 
 ```powershell
-Get-NetTCPConnection -LocalPort $port -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+sbstop
 Move-Item -Force $sb "$data\bin\switchboard.old.exe"
 Expand-Archive "$dl\$asset" -DestinationPath "$data\bin" -Force
 & $sb version
 Start-ScheduledTask -TaskName 'switchboard-pc'
 sbwait 60 { Test-SbHealth }
+sbstarted
 sbwait 180 { (sbget $id).runtime.state -eq 'running' }
 Select-String -Path "$data\up.log" -Pattern 'node: keeper' | Select-Object -Last 1
 Remove-Item "$data\bin\switchboard.old.exe" -ErrorAction SilentlyContinue
 ```
 
-Check: `version` prints the new tag; the session is `running` again. The new `up` replaces the keeper of the old version and relaunches every session with `--resume`, so each conversation continues. A running `switchboard.exe` can be renamed but not overwritten, hence the `Move-Item`; when the last `Remove-Item` cannot delete the old file, run it again later.
+Check: `version` prints the new tag, and `sbstarted` prints the admin auth line of `up.cmd` and `version` with the new tag; the session is `running` again. `sbstop` waits for the task to be `Ready`: a start while the old `up.cmd` is still exiting is dropped (`MultipleInstances IgnoreNew`). The new `up` replaces the keeper of the old version and relaunches every session with `--resume`, so each conversation continues. A running `switchboard.exe` can be renamed but not overwritten, hence the `Move-Item`; when the last `Remove-Item` cannot delete the old file, run it again later.
 
-If it fails: health times out → `Get-Content "$data\up.log" -Tail 20`. To go back, stop `up`, move `switchboard.old.exe` back to `switchboard.exe` and start the task.
+If it fails: health times out → `Get-Content "$data\up.log" -Tail 20`. `sbstarted` prints the old version → the task did not start the new `up`; run `sbstop`, then `Start-ScheduledTask -TaskName 'switchboard-pc'`. To go back, run `sbstop`, move `switchboard.old.exe` back to `switchboard.exe` and start the task.
 
 Uninstall (removes the sessions, the task, the keeper and the data directory; conversations of the agent stay in its own folders):
 
@@ -655,7 +675,7 @@ At the provider, register the instance as a public client (native or desktop app
 | ID token signing | an algorithm the provider's discovery lists in `id_token_signing_alg_values_supported` (RS256, ES256, EdDSA, …) | same |
 | Settings | no `SWITCHBOARD_OIDC_CLIENT_SECRET*` | `SWITCHBOARD_OIDC_CLIENT_SECRET_FILE` |
 
-Then note the issuer and the client ID (and, for a confidential client, copy the client secret). `up.log` says which kind is in force at start: `oidc: public client (PKCE)` or `oidc: confidential client`.
+Then note the issuer and the client ID (and, for a confidential client, copy the client secret). `up.log` says which kind is in force at start: `admin auth: oidc (public client, PKCE)` or `admin auth: oidc (confidential client)`.
 
 | Provider | `SWITCHBOARD_OIDC_ISSUER` |
 | --- | --- |
@@ -673,6 +693,7 @@ Windows (fill in the first three lines):
 $issuer = 'https://id.example/realms/home'
 $clientId = '<client-id>'
 $admins = 'you@example.com'
+sbstop
 @"
 @echo off
 set SWITCHBOARD_ADMIN_AUTH=oidc
@@ -685,9 +706,9 @@ set "SWITCHBOARD_CONFIG_DIR=%~dp0config"
 set "SWITCHBOARD_HOSTING_AGENT=$agent"
 "%~dp0bin\switchboard.exe" up --data "%~dp0." --port $port >> "%~dp0up.log" 2>&1
 "@ | Set-Content "$data\up.cmd" -Encoding Ascii
-Get-NetTCPConnection -LocalPort $port -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
 Start-ScheduledTask -TaskName 'switchboard-pc'
 sbwait 60 { Test-SbHealth }
+sbstarted
 curl.exe -sS -o NUL -w '%{redirect_url}\n' "http://127.0.0.1:$port/auth/login"
 ```
 
@@ -723,14 +744,16 @@ EOF
 systemctl --user daemon-reload
 systemctl --user restart switchboard-pc.service
 sbwait 60 sbhealth
+grep -o 'admin auth: .*' "$SBDATA/up.log" | tail -n 1
+curl -fsS "http://127.0.0.1:$SBPORT/health"; echo
 curl -sS -o /dev/null -w '%{redirect_url}\n' "http://127.0.0.1:$SBPORT/auth/login"
 ```
 
 For a confidential client, keep the secret in a file in the data directory, not in `up.cmd` or the unit, and add one setting to the block before running it. Windows: run `[Net.NetworkCredential]::new('', (Read-Host 'Client secret' -AsSecureString)).Password | Set-Content "$data\oidc-client-secret"` and add the line `set "SWITCHBOARD_OIDC_CLIENT_SECRET_FILE=%~dp0oidc-client-secret"` to `up.cmd`. Linux: run `(umask 077; read -rsp 'Client secret: ' s; echo; printf '%s\n' "$s" > "$SBDATA/oidc-client-secret")` and add the line `Environment=SWITCHBOARD_OIDC_CLIENT_SECRET_FILE=$SBDATA/oidc-client-secret` to the unit.
 
-Check: the last line prints the provider's authorization address with `redirect_uri=http%3A%2F%2F127.0.0.1%3A8090%2Fauth%2Fcallback`. Opening `http://127.0.0.1:8090/` then shows one 로그인 button, which goes to the provider and back signed in.
+Check: the mode line is `admin auth: oidc (public client, PKCE)` (`admin auth: oidc (confidential client)` with a secret), the version (`sbstarted` on Windows, `/health` on Linux) is the tag from W2 / L2, and the last line prints the provider's authorization address with `redirect_uri=http%3A%2F%2F127.0.0.1%3A8090%2Fauth%2Fcallback`. Opening `http://127.0.0.1:8090/` then shows one 로그인 button, which goes to the provider and back signed in.
 
-If it fails: health times out → `up.log` names the missing or invalid `SWITCHBOARD_OIDC_*` setting (never its value). The provider says the redirect URI does not match → register exactly the URI above, with `127.0.0.1` and the port. `403 login failed` with `code exchange failed` in `up.log` → the registration and the settings disagree on the client kind: a public client needs auth method `none` and no secret setting, a confidential client the secret file. `id token rejected` → the provider signs ID tokens with an algorithm its discovery does not list. `403 login failed` after the provider → `up.log` has the reason (`oidc: login refused: …`): `not on the allowlist (sub:…)` or `email not verified (sub:…)` → add that `sub:` entry to the admins line and run the block again; `state mismatch` or `no flow cookie` → the dashboard was opened at another address than `http://127.0.0.1:<port>/`. To go back to names and passwords, run W6 / L6 again.
+If it fails: the mode line still says `admin auth: builtin` → the old `up` is running; on Windows run the block again (it starts with `sbstop`). Health times out → `up.log` names the missing or invalid `SWITCHBOARD_OIDC_*` setting (never its value). The provider says the redirect URI does not match → register exactly the URI above, with `127.0.0.1` and the port. `403 login failed` with `code exchange failed` in `up.log` → the registration and the settings disagree on the client kind: a public client needs auth method `none` and no secret setting, a confidential client the secret file. `id token rejected` → the provider signs ID tokens with an algorithm its discovery does not list. `403 login failed` after the provider → `up.log` has the reason (`oidc: login refused: …`): `not on the allowlist (sub:…)` or `email not verified (sub:…)` → add that `sub:` entry to the admins line and run the block again; `state mismatch` or `no flow cookie` → the dashboard was opened at another address than `http://127.0.0.1:<port>/`. To go back to names and passwords, run W6 / L6 again; `sbstarted` then prints `admin auth: builtin`.
 
 Providers that only speak OAuth 2.0 (GitHub and similar) are not supported: they issue no ID token and have no issuer discovery.
 
@@ -747,7 +770,7 @@ Providers that only speak OAuth 2.0 (GitHub and similar) are not supported: they
 | `tmux 3.2 or newer is required for terminal hosting on Linux: …` | L1. |
 | `node: terminal hosting needs Windows 10 1809 (build 17763) or later; …` | This PC cannot host; see W1. |
 | `node local: node is revoked` | The node was removed in Settings. Uninstall (W9 / L9) and install again from W3 / L3. |
-| `up: listen tcp 127.0.0.1:8090: bind: …` | Another program holds the port (it may show no listener), or Windows reserves it. `up` exits at once and starts no keeper or tmux server. Pick a free port and change it in `env.ps1` and `up.cmd`, or in `env.sh` and the unit. |
+| `up: listen tcp 127.0.0.1:8090: bind: …` | Another program holds the port (it may show no listener), or Windows reserves it. `up` exits at once and starts no keeper or tmux server. Pick a free port and change it in `env.ps1` and `up.cmd` (run `sbstop` before changing `up.cmd`, then `Start-ScheduledTask`), or in `env.sh` and the unit. |
 | `401 login failed` from `sblogin` | Wrong password or a TOTP code already used; wait 30 s and run `sblogin` again. |
 
 ## Permission mode
