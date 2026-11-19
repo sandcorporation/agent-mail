@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -95,13 +96,18 @@ func Resolve(h Host) (Config, error) {
 }
 
 // Argv is the command for a record: --session-id on its first launch,
-// --resume after it, then the record's args. Never -p, never --continue.
+// --resume after it, the agent's permission-skip arguments when the record
+// skips permissions (#220), then the record's args. Never -p, never
+// --continue.
 func (c Config) Argv(r Record, launched bool) []string {
 	flag := "--session-id"
 	if launched {
 		flag = "--resume"
 	}
 	argv := []string{c.Agent, flag, r.AgentSessionID}
+	if r.SkipPermissions {
+		argv = append(argv, PermissionSkipArgs(AgentName(c.Agent), r.Args)...)
+	}
 	for _, a := range r.Args {
 		if refusedArg(a) {
 			continue
@@ -109,6 +115,58 @@ func (c Config) Argv(r Record, launched bool) []string {
 		argv = append(argv, a)
 	}
 	return argv
+}
+
+// agentPermissions is what one agent CLI needs to run without permission
+// prompts: the arguments to add, and the flags that already choose a
+// permission mode (a record carrying one gets nothing added).
+type agentPermissions struct {
+	skip  []string
+	modes []string
+}
+
+// permissionSkip maps an agent name (the CLI's file name without extension)
+// to its permission-skip arguments. Add an agent only after checking its
+// flags against that CLI's --help; an agent missing here gets nothing.
+var permissionSkip = map[string]agentPermissions{
+	// Claude Code 2.1.328 (claude --help, 2026-11-19). The first run with
+	// --dangerously-skip-permissions shows a one-time acceptance screen
+	// ("Bypass Permissions mode", default "No, exit"); the settings key
+	// skipDangerousModePermissionPrompt passed with --settings skips it
+	// without touching the user's settings files. With several --settings
+	// the last wins, so ours goes before the record's args: a --settings
+	// of the record's own replaces it.
+	"claude": {
+		skip:  []string{"--dangerously-skip-permissions", "--settings", `{"skipDangerousModePermissionPrompt":true}`},
+		modes: []string{"--dangerously-skip-permissions", "--permission-mode", "--allow-dangerously-skip-permissions"},
+	},
+}
+
+// AgentName is the agent CLI's name from its path: the file name, lower
+// case, without .exe, .cmd or .bat ("C:\x\claude.cmd" is "claude").
+func AgentName(path string) string {
+	name := strings.ToLower(path[strings.LastIndexAny(path, `/\`)+1:])
+	for _, ext := range []string{".exe", ".cmd", ".bat"} {
+		name = strings.TrimSuffix(name, ext)
+	}
+	return name
+}
+
+// PermissionSkipArgs are the arguments that make agent run without
+// permission prompts, or nothing when the agent is unknown or args already
+// choose a permission mode.
+func PermissionSkipArgs(agent string, args []string) []string {
+	p, ok := permissionSkip[agent]
+	if !ok {
+		return nil
+	}
+	for _, a := range args {
+		name, _, _ := strings.Cut(a, "=")
+		if slices.Contains(p.modes, name) {
+			return nil
+		}
+	}
+	return slices.Clone(p.skip)
 }
 
 // refusedArg drops flags that would break the launch contract; the host

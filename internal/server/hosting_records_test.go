@@ -207,6 +207,39 @@ func TestHostCLIManagesRecords(t *testing.T) {
 		t.Errorf("list table = %q", out)
 	}
 
+	// Permission mode (#220): host add skips by default, --ask-permissions
+	// and host set --skip-permissions change it.
+	if !h.SkipPermissions {
+		t.Errorf("host add did not skip permissions: %+v", h)
+	}
+	if code, out, stderr = hostCLI(t, dbPath, "set", id, "--skip-permissions", "off"); code != 0 || out != id+" permissions ask (from the next launch or restart)" {
+		t.Errorf("set off = %d %q %s", code, out, stderr)
+	}
+	if _, out, _ = hostCLI(t, dbPath, "list", "--json"); json.Unmarshal([]byte(out), &list) != nil || list[0].SkipPermissions {
+		t.Errorf("after set off %+v", list[0])
+	}
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"set", id}, "requires --skip-permissions on|off"},
+		{[]string{"set", id, "--skip-permissions", "yes"}, "wants on or off"},
+		{[]string{"set", "--skip-permissions", "on"}, "host set requires ID"},
+		{[]string{"set", id, "--skip-permissions", "on", "--ask-permissions"}, "--ask-permissions is for host add"},
+		{[]string{"stop", id, "--skip-permissions", "on"}, "--skip-permissions is for host set"},
+	} {
+		if code, _, stderr = hostCLI(t, dbPath, c.args...); code != 2 || !strings.Contains(stderr, c.want) {
+			t.Errorf("%q = %d %s", c.args, code, stderr)
+		}
+	}
+	asked := append(append([]string{}, add[:len(add)-3]...), "--ask-permissions")
+	asked[8] = `C:\work\asked`
+	if code, out, stderr = hostCLI(t, dbPath, append(asked, "--json")...); code != 0 || !strings.Contains(out, `"skip_permissions":false`) {
+		t.Errorf("add --ask-permissions = %d %q %s", code, out, stderr)
+	} else if code, _, stderr = hostCLI(t, dbPath, "remove", out[strings.Index(out, "hs_"):strings.Index(out, "hs_")+35]); code != 0 {
+		t.Errorf("remove asked = %d %s", code, stderr)
+	}
+
 	if code, out, stderr = hostCLI(t, dbPath, "stop", id); code != 0 || out != id+" stopped" {
 		t.Errorf("stop = %d %q %s", code, out, stderr)
 	}

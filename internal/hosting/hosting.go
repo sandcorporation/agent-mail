@@ -255,7 +255,7 @@ func (s *Service) Create(c wire.HostedSessionCreate) (wire.HostedSession, error)
 	h := wire.HostedSession{
 		ID: "hs_" + suffix, Node: c.Node, Base: c.Base, Label: c.Label, Parent: c.Parent, Profile: c.Profile,
 		Directory: c.Directory, AgentSessionID: sid, Args: c.Args, Env: c.Env, Restart: c.Restart, Desired: c.Desired,
-		Class: c.Class, AcceptingWork: true, Cols: defaultCols, Rows: defaultRows, CreatedAt: now, UpdatedAt: now, Runtime: unknownRuntime(),
+		Class: c.Class, AcceptingWork: true, SkipPermissions: c.SkipPermissions == nil || *c.SkipPermissions, Cols: defaultCols, Rows: defaultRows, CreatedAt: now, UpdatedAt: now, Runtime: unknownRuntime(),
 	}
 	args, _ := json.Marshal(h.Args)
 	env, _ := json.Marshal(h.Env)
@@ -271,8 +271,8 @@ func (s *Service) Create(c wire.HostedSessionCreate) (wire.HostedSession, error)
 			return wire.HostedSession{}, err
 		}
 	}
-	_, err = s.db.Exec(`INSERT INTO hosted_sessions(id,node,base,label,parent,profile,directory,agent_session_id,launched,args,env,restart,desired,class,cols,rows,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?)`,
-		h.ID, h.Node, h.Base, h.Label, h.Parent, h.Profile, h.Directory, h.AgentSessionID, string(args), string(env), h.Restart, h.Desired, h.Class, h.Cols, h.Rows, now, now)
+	_, err = s.db.Exec(`INSERT INTO hosted_sessions(id,node,base,label,parent,profile,directory,agent_session_id,launched,args,env,restart,desired,class,skip_permissions,cols,rows,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?)`,
+		h.ID, h.Node, h.Base, h.Label, h.Parent, h.Profile, h.Directory, h.AgentSessionID, string(args), string(env), h.Restart, h.Desired, h.Class, boolInt(h.SkipPermissions), h.Cols, h.Rows, now, now)
 	if err == nil {
 		h.AcceptingWork = s.acceptingWork(h.Class)
 	}
@@ -282,20 +282,28 @@ func (s *Service) Create(c wire.HostedSessionCreate) (wire.HostedSession, error)
 	return h, err
 }
 
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 func unknownRuntime() wire.HostedRuntime { return wire.HostedRuntime{State: StateUnknown} }
 
-const sessionColumns = `id,node,base,label,parent,profile,directory,agent_session_id,launched,args,env,restart,desired,class,cols,rows,restart_gen,start_gen,created_at,updated_at`
+const sessionColumns = `id,node,base,label,parent,profile,directory,agent_session_id,launched,args,env,restart,desired,class,skip_permissions,cols,rows,restart_gen,start_gen,created_at,updated_at`
 
 type rowScanner interface{ Scan(dest ...any) error }
 
 func scanSession(r rowScanner) (wire.HostedSession, error) {
 	var h wire.HostedSession
-	var launched int
+	var launched, skip int
 	var args, env string
-	if err := r.Scan(&h.ID, &h.Node, &h.Base, &h.Label, &h.Parent, &h.Profile, &h.Directory, &h.AgentSessionID, &launched, &args, &env, &h.Restart, &h.Desired, &h.Class, &h.Cols, &h.Rows, &h.RestartGen, &h.StartGen, &h.CreatedAt, &h.UpdatedAt); err != nil {
+	if err := r.Scan(&h.ID, &h.Node, &h.Base, &h.Label, &h.Parent, &h.Profile, &h.Directory, &h.AgentSessionID, &launched, &args, &env, &h.Restart, &h.Desired, &h.Class, &skip, &h.Cols, &h.Rows, &h.RestartGen, &h.StartGen, &h.CreatedAt, &h.UpdatedAt); err != nil {
 		return h, err
 	}
 	h.Launched = launched != 0
+	h.SkipPermissions = skip != 0
 	if json.Unmarshal([]byte(args), &h.Args) != nil || h.Args == nil {
 		h.Args = []string{}
 	}
@@ -389,6 +397,9 @@ func (s *Service) Update(id string, c wire.HostedSessionChange) (wire.HostedSess
 	if c.Class != nil {
 		h.Class = *c.Class
 	}
+	if c.SkipPermissions != nil {
+		h.SkipPermissions = *c.SkipPermissions
+	}
 	for _, err := range []error{checkLabel(h.Label), checkParent(h.Parent), checkArgs(h.Args), checkEnv(h.Env), checkRestart(h.Restart), checkDesired(h.Desired), checkClass(h.Class)} {
 		if err != nil {
 			return h, err
@@ -408,8 +419,8 @@ func (s *Service) Update(id string, c wire.HostedSessionChange) (wire.HostedSess
 	}
 	args, _ := json.Marshal(h.Args)
 	env, _ := json.Marshal(h.Env)
-	res, err := s.db.Exec(`UPDATE hosted_sessions SET label=?,parent=?,args=?,env=?,restart=?,desired=?,class=?,start_gen=start_gen+?,updated_at=? WHERE id=?`,
-		h.Label, h.Parent, string(args), string(env), h.Restart, h.Desired, h.Class, startBump(c), h.UpdatedAt, id)
+	res, err := s.db.Exec(`UPDATE hosted_sessions SET label=?,parent=?,args=?,env=?,restart=?,desired=?,class=?,skip_permissions=?,start_gen=start_gen+?,updated_at=? WHERE id=?`,
+		h.Label, h.Parent, string(args), string(env), h.Restart, h.Desired, h.Class, boolInt(h.SkipPermissions), startBump(c), h.UpdatedAt, id)
 	if err != nil {
 		return h, err
 	}

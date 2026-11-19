@@ -339,7 +339,7 @@ table.stack tbody tr:hover td{background:none}
 <div id="terminalsMsg" class="msg" role="status" aria-live="polite"></div>
 <div id="termLimit" class="toolbar"><span>구독 한도</span><strong id="termLimitText">-</strong><button type="button" id="termLimitBtn" aria-pressed="false">한도 걸기</button></div>
 <div id="termView" hidden><div class="toolbar"><button type="button" id="termBack">목록</button><h3 id="termTitle"></h3><span id="termStateText" class="muted"></span><span id="termConn" class="muted" role="status" aria-live="polite"></span><button type="button" id="termMode" aria-pressed="false">입력</button></div><div id="termScreen"></div><h3>기록</h3><div class="wide"><table class="stack"><thead><tr><th>시각</th><th>관리자</th><th>종류</th><th>바이트</th></tr></thead><tbody id="termLog"></tbody></table></div></div>
-<div class="wide" id="termListWrap"><table id="terminalsTbl" class="stack"><thead><tr><th>노드</th><th>역할</th><th>접속</th><th>라벨</th><th>분류</th><th>상태</th><th>일감</th><th>이후</th><th>폴더</th><th>재시작</th><th>마지막 종료</th><th></th></tr></thead><tbody id="terminals"></tbody></table></div>
+<div class="wide" id="termListWrap"><table id="terminalsTbl" class="stack"><thead><tr><th>노드</th><th>역할</th><th>접속</th><th>라벨</th><th>분류</th><th>권한</th><th>상태</th><th>일감</th><th>이후</th><th>폴더</th><th>재시작</th><th>마지막 종료</th><th></th></tr></thead><tbody id="terminals"></tbody></table></div>
 <form id="termForm" class="settings-form">
 <label>노드 <input id="termNode" required autocomplete="off" autocapitalize="off" spellcheck="false" value="local"></label>
 <label>역할 <input id="termBase" required autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="team/worker"></label>
@@ -349,6 +349,7 @@ table.stack tbody tr:hover td{background:none}
 <label>부모 <input id="termParent" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="team/boss"></label>
 <label>분류 <select id="termClass"><option value="execute">실행</option><option value="review">검토</option><option value="coordinator">조율</option><option value="lead">총괄</option></select></label>
 <label>재시작 <select id="termRestart"><option value="always">always</option><option value="on-failure">on-failure</option><option value="never">never</option></select></label>
+<label>권한 <select id="termPerms"><option value="skip">건너뜀</option><option value="ask">물음</option></select></label>
 <label>인자 <input id="termArgs" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="--model opus"></label>
 <div class="row"><button type="submit">추가</button><button type="button" id="termClear">비우기</button></div>
 </form>
@@ -908,7 +909,7 @@ async function loadSettings(){
   }catch(e){$('settingsNote').textContent=e.message}
 }
 // ---- 터미널 (hosting) ----
-const termCols=['노드','역할','접속','라벨','분류','상태','일감','이후','폴더','재시작','마지막 종료'];
+const termCols=['노드','역할','접속','라벨','분류','권한','상태','일감','이후','폴더','재시작','마지막 종료'];
 const termClass={lead:'총괄',coordinator:'조율',execute:'실행',review:'검토'};
 let termLimited=false;
 async function loadTermLimit(){
@@ -960,11 +961,11 @@ async function loadTerminals(){
       const want=v.desired==='stopped'&&st!=='stopped'&&st!=='node offline'?' → 멈춤':'';
       const tr=node('tr','',st==='node offline'?'offline':'');tr.dataset.id=v.id;
       const pr=v.presence||'';
-      cells(tr,termCols,[v.node,v.slot&&v.slot.role?v.slot.role:v.base,termPresence[pr]||pr||'-',v.label||'-',termClass[v.class]||v.class||'-',termStateText(st,rt)+want,v.accepting_work===false?'받지 않음':'받음',when(rt.since),v.directory,String(rt.restarts||0),rt.last_exit===null||rt.last_exit===undefined?'-':String(rt.last_exit)],
-        ['','',pr==='online'?'st-idle':pr?'st-offline':'','','',st==='running'?'st-idle':st==='node offline'||st==='unknown'?'st-offline':st==='crashloop'||st==='resume failed'?'st-error':'',v.accepting_work===false?'st-blocked':'','','dir','num','num']);
+      cells(tr,termCols,[v.node,v.slot&&v.slot.role?v.slot.role:v.base,termPresence[pr]||pr||'-',v.label||'-',termClass[v.class]||v.class||'-',v.skip_permissions?'건너뜀':'물음',termStateText(st,rt)+want,v.accepting_work===false?'받지 않음':'받음',when(rt.since),v.directory,String(rt.restarts||0),rt.last_exit===null||rt.last_exit===undefined?'-':String(rt.last_exit)],
+        ['','',pr==='online'?'st-idle':pr?'st-offline':'','','','',st==='running'?'st-idle':st==='node offline'||st==='unknown'?'st-offline':st==='crashloop'||st==='resume failed'?'st-error':'',v.accepting_work===false?'st-blocked':'','','dir','num','num']);
       if(v.slot&&v.slot.role)tr.children[1].title=v.base;
       if(v.id===termFocus){tr.classList.add('focus');setTimeout(()=>tr.scrollIntoView({block:'center'}),0)}
-      const dir=tr.children[8];dir.title=v.directory;dir.textContent='\u200e'+v.directory+'\u200e';
+      const dir=tr.children[9];dir.title=v.directory;dir.textContent='\u200e'+v.directory+'\u200e';
       const act=node('td','');
       const view=node('button','보기');view.type='button';view.onclick=()=>termOpen(v);act.append(view);
       if(v.desired==='stopped'){const b=node('button','시작');b.type='button';b.onclick=()=>termAct(v,'PUT','',{desired:'running'},v.base+' 시작');act.append(b)}
@@ -979,7 +980,7 @@ async function loadTerminals(){
       del.onclick=()=>{if(confirm(v.node+' '+v.base+' '+v.directory+' 세션을 지울까요?'))termAct(v,'DELETE','',undefined,v.base+' 삭제')};
       act.append(del);tr.append(act);body.append(tr);
     }
-    if(!rows.length)emptyRow(body,12,'터미널 없음');
+    if(!rows.length)emptyRow(body,13,'터미널 없음');
     if(termFocus&&!rows.some(v=>v.id===termFocus))setMsg($('terminalsMsg'),'터미널 '+termFocus+' 없음','err');
     $('terminalsNote').textContent=rows.length+'개';
   }catch(e){$('terminalsNote').textContent=e.message}
@@ -1123,7 +1124,7 @@ $('termBack').onclick=termClose;
 $('termForm').onsubmit=async e=>{
   e.preventDefault();
   const args=$('termArgs').value.split(/\s+/).filter(Boolean);
-  const rec={node:$('termNode').value.trim(),base:$('termBase').value.trim(),profile:$('termProfile').value.trim(),directory:$('termDir').value.trim(),label:$('termLabel').value.trim(),parent:$('termParent').value.trim(),restart:$('termRestart').value,class:$('termClass').value,args:args};
+  const rec={node:$('termNode').value.trim(),base:$('termBase').value.trim(),profile:$('termProfile').value.trim(),directory:$('termDir').value.trim(),label:$('termLabel').value.trim(),parent:$('termParent').value.trim(),restart:$('termRestart').value,class:$('termClass').value,skip_permissions:$('termPerms').value==='skip',args:args};
   try{await apiSend('POST','terminals',rec);setMsg($('terminalsMsg'),rec.base+' 추가','ok');$('termForm').reset();loadTerminals()}
   catch(err){setMsg($('terminalsMsg'),err.message,'err')}
 };

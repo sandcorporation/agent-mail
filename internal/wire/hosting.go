@@ -26,8 +26,11 @@ type HostedSession struct {
 	// AcceptingWork is false for an execute or review session while the
 	// subscription limit holds (HostingLimit): it takes no new work items.
 	AcceptingWork bool `json:"accepting_work"`
-	Cols          int  `json:"cols"`
-	Rows          int  `json:"rows"`
+	// SkipPermissions launches the agent with its permission-skip
+	// arguments (#220): on for new records, off for records made before.
+	SkipPermissions bool `json:"skip_permissions"`
+	Cols            int  `json:"cols"`
+	Rows            int  `json:"rows"`
 	// RestartGen and StartGen count Restart and Start requests; a node
 	// acts when one grows (Restart: stop and resume at once; Start: clear
 	// backoff and crash loop).
@@ -80,7 +83,7 @@ type HostedRuntime struct {
 
 // HostedSessionCreate is the body of POST /api/admin/terminals and what
 // `host add` sends. Empty Restart means "always", empty Desired "running",
-// empty Class "execute".
+// empty Class "execute", nil SkipPermissions true.
 type HostedSessionCreate struct {
 	Node      string            `json:"node"`
 	Base      string            `json:"base"`
@@ -93,6 +96,10 @@ type HostedSessionCreate struct {
 	Restart   string            `json:"restart"`
 	Desired   string            `json:"desired"`
 	Class     string            `json:"class"`
+	// SkipPermissions is nil for the default (skip); `host add
+	// --ask-permissions` sends false. `host set --skip-permissions` sends it
+	// with the set action.
+	SkipPermissions *bool `json:"skip_permissions,omitempty"`
 }
 
 // HostedSessionChange is the body of PUT /api/admin/terminals/{id}. A nil
@@ -105,6 +112,8 @@ type HostedSessionChange struct {
 	Restart *string            `json:"restart,omitempty"`
 	Desired *string            `json:"desired,omitempty"`
 	Class   *string            `json:"class,omitempty"`
+	// SkipPermissions applies at the next launch or restart.
+	SkipPermissions *bool `json:"skip_permissions,omitempty"`
 }
 
 // Session classes (#190). While the subscription limit holds, lead and
