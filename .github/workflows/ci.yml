@@ -22,6 +22,8 @@ jobs:
         run: sudo apt-get update -q && sudo apt-get install -y -q tmux && tmux -V
       - name: Question source of truth (server e2e)
         run: bash scripts/ci/question_sot.sh
+      - name: Hosting end to end (up, tmux)
+        run: bash scripts/ci/e2e.sh
       - name: tmux backend against real tmux
         env:
           SWITCHBOARD_TEST_TMUX: require
@@ -53,6 +55,9 @@ jobs:
           name: conpty-recordings
           path: ${{ runner.temp }}/conpty
           if-no-files-found: ignore
+      - name: Hosting end to end (up, ConPTY keeper)
+        shell: bash
+        run: bash scripts/ci/e2e.sh
       # The server suite is not Windows-clean yet (its SQLite test databases
       # stay open past TempDir cleanup); it runs on Linux in the test job.
       - name: Terminal packages
