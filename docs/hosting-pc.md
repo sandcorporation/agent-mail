@@ -75,7 +75,7 @@ Check: `version` prints the tag from W2. `up --help` lists `--data DIR` and `--p
 
 If it fails: `up --help` prints the general help instead → the release predates terminal hosting; use a newer release. The `$probe` line prints `Only one usage of each socket address` or `forbidden by its access permissions` → another program holds the port, or Windows reserves it, even when no listener shows for it; set `$port` to another port (`8091`, …), run the block again, and use that port everywhere below. `$agent` is empty → back to W1.
 
-Save the values and helpers for later windows:
+Save the values for later windows:
 
 ```powershell
 @"
@@ -84,6 +84,11 @@ Save the values and helpers for later windows:
 `$sb = '$sb'
 `$agent = '$agent'
 "@ | Set-Content "$data\env.ps1"
+```
+
+The helpers block writes the helpers to `$data\sb.ps1` and makes `env.ps1` load them. It touches no value, so it can run again at any time; W9 runs it before an update, and an `env.ps1` from docs before v0.17.0 gets `sbstop` and `sbstarted` from it:
+
+```powershell
 @'
 function sbpc {
   $env:SWITCHBOARD_CONFIG_DIR = "$data\config"; $env:DB_PATH = "$data\switchboard.db"
@@ -130,14 +135,15 @@ function sblogin {
 function sblist { $r = Invoke-RestMethod "http://127.0.0.1:$port/api/admin/terminals" -WebSession $global:sbweb; $r }
 function sbget([string]$id) { sblist | Where-Object id -eq $id }
 function sbterm { sblist | Select-Object id, @{ n = 'state'; e = { $_.runtime.state } }, @{ n = 'pid'; e = { $_.runtime.pid } }, @{ n = 'run'; e = { $_.runtime.run } }, agent_session_id, @{ n = 'slot'; e = { $_.slot.role } }, presence | Format-Table -AutoSize }
-'@ | Add-Content "$data\env.ps1"
+'@ | Set-Content "$data\sb.ps1"
+if (-not (Select-String -Path "$data\env.ps1" -Pattern 'sb\.ps1' -Quiet)) { Add-Content "$data\env.ps1" '. "$data\sb.ps1"' }
 . "$data\env.ps1"
 sbpc version
 ```
 
 Check: `sbpc version` prints the same tag as `& $sb version`.
 
-If it fails: a parse error in `env.ps1` → delete `$data\env.ps1` and run this block again unchanged.
+If it fails: a parse error in `env.ps1` or `sb.ps1` → delete `$data\env.ps1`, run both blocks again unchanged.
 
 ### W4. Admin
 
@@ -215,9 +221,10 @@ If it fails: `up exited: …` or `timed out` waiting for health → look the mes
 
 ### W6. Start, and start at sign-in
 
-Every block that writes `up.cmd` starts with `sbstop`: it stops `up` and waits until the task `switchboard-pc` is `Ready` and no `cmd.exe` runs `up.cmd`. cmd.exe reads a batch file by position while it runs, so an `up.cmd` rewritten under a running one can start the old `up` again with the old settings, and `Start-ScheduledTask` does nothing while the task still runs.
+Every block that writes `up.cmd` starts with `sbstop` (its first line stops the block when `env.ps1` predates `sbstop`; run the helpers block of W3 then): it stops `up` and waits until the task `switchboard-pc` is `Ready` and no `cmd.exe` runs `up.cmd`. cmd.exe reads a batch file by position while it runs, so an `up.cmd` rewritten under a running one can start the old `up` again with the old settings, and `Start-ScheduledTask` does nothing while the task still runs.
 
 ```powershell
+if (-not (Get-Command sbstop -ErrorAction SilentlyContinue)) { throw 'sbstop is missing: this env.ps1 predates it; run the helpers block of W3, then this block again' }
 sbstop
 @"
 @echo off
@@ -282,6 +289,7 @@ The session survives a restart of `up`:
 
 ```powershell
 $before = sbget $id
+if (-not (Get-Command sbstop -ErrorAction SilentlyContinue)) { throw 'sbstop is missing: this env.ps1 predates it; run the helpers block of W3, then this block again' }
 sbstop
 Start-ScheduledTask -TaskName 'switchboard-pc'
 sbwait 60 { Test-SbHealth }
@@ -311,14 +319,16 @@ If it fails: state `crashloop` → the agent exits right after start; open its t
 Stop `up` only (sessions keep running in the keeper; the next start adopts them):
 
 ```powershell
+if (-not (Get-Command sbstop -ErrorAction SilentlyContinue)) { throw 'sbstop is missing: this env.ps1 predates it; run the helpers block of W3, then this block again' }
 sbstop
 ```
 
 Stop or start one session: `sbpc host stop $id`, `sbpc host start $id` (while `up` runs).
 
-Update: run W2 for the new version, then:
+Update: run W2 for the new version, run the helpers block of W3 again (it brings `sbstop` and the other helpers up to date; an `env.ps1` from docs before v0.17.0 has no `sbstop`), then:
 
 ```powershell
+if (-not (Get-Command sbstop -ErrorAction SilentlyContinue)) { throw 'sbstop is missing: this env.ps1 predates it; run the helpers block of W3, then this block again' }
 sbstop
 Move-Item -Force $sb "$data\bin\switchboard.old.exe"
 Expand-Archive "$dl\$asset" -DestinationPath "$data\bin" -Force
@@ -333,7 +343,7 @@ Remove-Item "$data\bin\switchboard.old.exe" -ErrorAction SilentlyContinue
 
 Check: `version` prints the new tag, and `sbstarted` prints the admin auth line of `up.cmd` and `version` with the new tag; the session is `running` again. `sbstop` waits for the task to be `Ready`: a start while the old `up.cmd` is still exiting is dropped (`MultipleInstances IgnoreNew`). The new `up` replaces the keeper of the old version and relaunches every session with `--resume`, so each conversation continues. A running `switchboard.exe` can be renamed but not overwritten, hence the `Move-Item`; when the last `Remove-Item` cannot delete the old file, run it again later.
 
-If it fails: health times out → `Get-Content "$data\up.log" -Tail 20`. `sbstarted` prints the old version → the task did not start the new `up`; run `sbstop`, then `Start-ScheduledTask -TaskName 'switchboard-pc'`. To go back, run `sbstop`, move `switchboard.old.exe` back to `switchboard.exe` and start the task.
+If it fails: `sbstop is missing` → the helpers block of W3 did not run in this window; run it, then this block again (nothing was changed yet). Health times out → `Get-Content "$data\up.log" -Tail 20`. `sbstarted` prints the old version → the task did not start the new `up`; run `sbstop`, then `Start-ScheduledTask -TaskName 'switchboard-pc'`. To go back, run `sbstop`, move `switchboard.old.exe` back to `switchboard.exe` and start the task.
 
 Uninstall (removes the sessions, the task, the keeper and the data directory; conversations of the agent stay in its own folders):
 
@@ -693,6 +703,7 @@ Windows (fill in the first three lines):
 $issuer = 'https://id.example/realms/home'
 $clientId = '<client-id>'
 $admins = 'you@example.com'
+if (-not (Get-Command sbstop -ErrorAction SilentlyContinue)) { throw 'sbstop is missing: this env.ps1 predates it; run the helpers block of W3, then this block again' }
 sbstop
 @"
 @echo off
@@ -770,7 +781,7 @@ Providers that only speak OAuth 2.0 (GitHub and similar) are not supported: they
 | `tmux 3.2 or newer is required for terminal hosting on Linux: …` | L1. |
 | `node: terminal hosting needs Windows 10 1809 (build 17763) or later; …` | This PC cannot host; see W1. |
 | `node local: node is revoked` | The node was removed in Settings. Uninstall (W9 / L9) and install again from W3 / L3. |
-| `up: listen tcp 127.0.0.1:8090: bind: …` | Another program holds the port (it may show no listener), or Windows reserves it. `up` exits at once and starts no keeper or tmux server. Pick a free port and change it in `env.ps1` and `up.cmd` (run `sbstop` before changing `up.cmd`, then `Start-ScheduledTask`), or in `env.sh` and the unit. |
+| `up: listen tcp 127.0.0.1:8090: bind: …` | Another program holds the port (it may show no listener), or Windows reserves it. `up` exits at once and starts no keeper or tmux server. Pick a free port and change it in `env.ps1` and `up.cmd` (run `sbstop` before changing `up.cmd`, then `Start-ScheduledTask`; when `sbstop` is not recognized, run the helpers block of W3 first), or in `env.sh` and the unit. |
 | `401 login failed` from `sblogin` | Wrong password or a TOTP code already used; wait 30 s and run `sblogin` again. |
 
 ## Permission mode

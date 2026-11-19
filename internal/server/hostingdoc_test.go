@@ -8,8 +8,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -524,8 +526,12 @@ esac
 // provider and W6 again (the way back): both rewrite up.cmd, and up.log
 // must show exactly one start per block, in the new mode (#240: a batch
 // file rewritten under a running cmd.exe restarted the old up). Then the
-// doc's Get-SbTotp is compared with the server's TOTP. W1, W2 (network)
-// and W7 to W9 (a real agent) are not run.
+// doc's Get-SbTotp is compared with the server's TOTP. Last, the W3 block
+// of the v0.16.0 docs rewrites env.ps1 without sbstop (#243), and a second
+// PowerShell (a new window, errors not stopping it, as at a prompt) loads
+// that env.ps1 and runs the W9 update to a build with another version: the
+// helpers block first, when W9 says to run it again. W1, W2 (network), W7,
+// W8 and the session lines of W9 (a real agent) are not run.
 func TestE2E_HostingDocWindows(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("the Windows variant runs on Windows")
@@ -539,8 +545,14 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 	}
 	b := e2eBackendFor(t)
 	var blocks []string
-	var w6, oidcBlock string
+	var w6, oidcBlock, helpers, update string
 	for _, d := range readDocBlocks(t) {
+		if d.section == "Windows" && strings.HasPrefix(d.step, "W3.") && slices.Contains(d.lines, sbHelpersLine) {
+			helpers = "Write-Output '>>> W3. helpers'\n" + strings.Join(d.lines, "\n")
+		}
+		if d.section == "Windows" && strings.HasPrefix(d.step, "W9.") && slices.Contains(d.lines, "Move-Item -Force $sb \"$data\\bin\\switchboard.old.exe\"") {
+			update = "Write-Output '>>> W9. update'\n" + strings.Join(d.lines, "\n")
+		}
 		if d.section == "Windows" && strings.HasPrefix(d.step, "W6.") && w6 == "" {
 			w6 = "Write-Output '>>> W6.'\n" + strings.Join(d.lines, "\n")
 		}
@@ -559,11 +571,28 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 			blocks = append(blocks, pre+"Write-Output '>>> "+d.step+"'\n"+strings.Join(d.lines, "\n"))
 		}
 	}
-	if len(blocks) != 6 {
-		t.Fatalf("W3 to W5 have %d blocks, want 6", len(blocks))
+	if len(blocks) != 7 {
+		t.Fatalf("W3 to W5 have %d blocks, want 7", len(blocks))
 	}
-	if w6 == "" || oidcBlock == "" {
-		t.Fatal("no W6 or Windows OIDC sign-in block")
+	if w6 == "" || oidcBlock == "" || helpers == "" || update == "" {
+		t.Fatal("no W6, Windows OIDC sign-in, W3 helpers or W9 update block")
+	}
+	// The session waits of W9 need W7's session; the rest runs as written.
+	const sessionWait = "sbwait 180 { (sbget $id).runtime.state -eq 'running' }\n"
+	if !strings.Contains(update, sessionWait) {
+		t.Fatalf("the W9 update block has no line %q", sessionWait)
+	}
+	update = strings.Replace(update, sessionWait, "", 1)
+	// W9 names the helpers block as its first step; without that sentence
+	// the update runs on the old env.ps1 alone.
+	if refresh := "run the helpers block of W3 again"; strings.Contains(docStepText(t, "W9."), refresh) {
+		update = helpers + "\n" + update
+	} else {
+		t.Logf("W9 does not say %q: the update runs without the helpers block", refresh)
+	}
+	oldEnv, err := os.ReadFile(filepath.Join("testdata", "hosting-pc-env-v0.16.0.ps1"))
+	if err != nil {
+		t.Fatal(err)
 	}
 	idp := newFakeIdP(t)
 	for _, r := range [][2]string{{"$issuer = 'https://id.example/realms/home'\n", "$issuer = '" + idp.srv.URL + "'\n"}, {"$clientId = '<client-id>'\n", "$clientId = '" + idp.clientID + "'\n"}} {
@@ -630,7 +659,8 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 		"$env:PATH = '" + agentDir + ";' + $env:PATH\n" +
 		"$dl = '" + dl + "'\n$asset = '" + asset + "'\n" +
 		body + "\n'TOTP ' + (Get-SbTotp '" + secret + "')\n" +
-		"'LEFT[' + ((Get-ChildItem Env: | Where-Object Name -match '^(SWITCHBOARD|AGENT_MAIL)_(PROFILE|ROLE)$').Name -join ',') + ']'\n"
+		"'LEFT[' + ((Get-ChildItem Env: | Where-Object Name -match '^(SWITCHBOARD|AGENT_MAIL)_(PROFILE|ROLE)$').Name -join ',') + ']'\n" +
+		"Write-Output '>>> W3 of v0.16.0'\n" + strings.ReplaceAll(string(oldEnv), "\r\n", "\n")
 	file := filepath.Join(root, "doc.ps1")
 	if err := os.WriteFile(file, []byte(script), 0o600); err != nil {
 		t.Fatal(err)
@@ -705,6 +735,114 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 	if !slices.ContainsFunc(ok, func(s string) bool { return strings.Contains(string(out), s) }) {
 		t.Errorf("Get-SbTotp printed none of %v", ok)
 	}
+	if t.Failed() {
+		return
+	}
+
+	// W9 update in a new window on the v0.16.0 env.ps1, to a build with
+	// another version (W2 for the new version: the zip at the same path).
+	newBin := e2eBuild(t, filepath.Join(root, "build-new"), "e2e-new")
+	if err := os.WriteFile(filepath.Join(dl, asset), hostingDocZip(t, newBin), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	update = "$env:LOCALAPPDATA = '" + filepath.Join(root, "local") + "'\n" +
+		"$dl = '" + dl + "'\n$asset = '" + asset + "'\n" +
+		". \"$env:LOCALAPPDATA\\switchboard-pc\\env.ps1\"\n" +
+		"'SBSTOP BEFORE ' + [bool](Get-Command sbstop -ErrorAction SilentlyContinue)\n" +
+		update + "\n"
+	file = filepath.Join(root, "update.ps1")
+	if err := os.WriteFile(file, []byte(update), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	upd := exec.Command(ps, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", file)
+	upd.Env = cmd.Env
+	out, err = upd.CombinedOutput()
+	upLog, _ = os.ReadFile(filepath.Join(data, "up.log"))
+	_, swapErr := os.Stat(filepath.Join(data, "bin", "switchboard.old.exe"))
+	t.Logf("W9 update output:\n%s", out)
+	if err != nil {
+		t.Fatalf("W9 update on the v0.16.0 env.ps1: %v (binary swapped: %v)\n%s\nup.log:\n%s", err, swapErr == nil, out, upLog)
+	}
+	if !hasLine(string(out), "SBSTOP BEFORE False") {
+		t.Errorf("the v0.16.0 env.ps1 defined sbstop: not the old install this step stands for")
+	}
+	modes = nil
+	for _, l := range strings.Split(string(upLog), "\n") {
+		if _, m, ok := strings.Cut(strings.TrimRight(l, "\r"), "admin auth: "); ok {
+			modes = append(modes, m)
+		}
+	}
+	if want := []string{"builtin", "oidc (public client, PKCE)", "builtin", "builtin"}; !slices.Equal(modes, want) {
+		t.Errorf("after W9, up.log admin auth lines %q, want %q (one new start)\nup.log:\n%s", modes, want, upLog)
+	}
+	if !hasLine(string(out), "version e2e-new") {
+		t.Errorf("W9 output has no line %q (sbstarted)", "version e2e-new")
+	}
+	resp, err := http.Get("http://127.0.0.1:" + port + "/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var health struct {
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
+		t.Fatal(err)
+	}
+	if health.Version != "e2e-new" {
+		t.Errorf("/health version %q after W9, want %q", health.Version, "e2e-new")
+	}
+}
+
+// sbHelpersLine is the line of the W3 helpers block that writes sb.ps1.
+const sbHelpersLine = `'@ | Set-Content "$data\sb.ps1"`
+
+// sbstopGuard is the line before every sbstop in a block: it stops the
+// block when env.ps1 predates sbstop (#243).
+const sbstopGuard = "if (-not (Get-Command sbstop -ErrorAction SilentlyContinue)) { throw 'sbstop is missing: this env.ps1 predates it; run the helpers block of W3, then this block again' }"
+
+// TestHostingDocGuardsSbstop pins the guard before every sbstop in the
+// PowerShell blocks, so a block run on an env.ps1 from older docs stops
+// before it changes anything (#243).
+func TestHostingDocGuardsSbstop(t *testing.T) {
+	n := 0
+	for _, b := range readDocBlocks(t) {
+		if b.lang != "powershell" {
+			continue
+		}
+		for i, l := range b.lines {
+			if l != "sbstop" {
+				continue
+			}
+			n++
+			if i == 0 || b.lines[i-1] != sbstopGuard {
+				t.Errorf("%s %s: sbstop without the guard line before it", b.section, b.step)
+			}
+		}
+	}
+	if n == 0 {
+		t.Fatal("no sbstop line in the PowerShell blocks")
+	}
+}
+
+// docStepText is the text of the ### step with prefix step, up to the next
+// heading.
+func docStepText(t *testing.T, step string) string {
+	t.Helper()
+	b, err := os.ReadFile(hostingDoc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := strings.ReplaceAll(string(b), "\r\n", "\n")
+	i := strings.Index(s, "\n### "+step)
+	if i < 0 {
+		t.Fatalf("no step %s in %s", step, hostingDoc)
+	}
+	s = s[i+1:]
+	if j := strings.Index(s[1:], "\n#"); j >= 0 {
+		s = s[:j+1]
+	}
+	return s
 }
 
 // hostingDocZip is a release zip holding bin as "switchboard.exe".
