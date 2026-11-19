@@ -458,18 +458,23 @@ func (s *Service) AnswerQuestion(ctx context.Context, id, by string, answers []w
 		}
 		body := wire.AnswerText(v)
 		first := v.Questions[0].Header
-		box, held, e := s.answerBox(tx, v, now)
+		box, w, e := s.answerBox(tx, v, now)
 		if e != nil {
 			return e
 		}
-		if held != nil {
-			if e = mail.HoldForHandoff(tx, *held, v.Asker, fmt.Sprintf("[질문 답] %s %s", id, first), body, id, now); e != nil {
-				return e
-			}
-		} else if box != "" {
-			if e = mail.InsertSystemMail(tx, box, fmt.Sprintf("[질문 답] %s %s", id, first), body, id, "normal", "", now); e != nil {
-				return e
-			}
+		answer := fmt.Sprintf("[질문 답] %s %s", id, first)
+		switch {
+		case w != nil && box == "":
+			e = mail.HoldForHandoff(tx, *w, v.Asker, answer, body, id, now)
+		case w != nil:
+			e = mail.InsertHandoffMail(tx, box, *w, answer, body, id, now)
+		case box != "":
+			e = mail.InsertSystemMail(tx, box, answer, body, id, "normal", "", now)
+		}
+		if e != nil {
+			return e
+		}
+		if box != "" {
 			told = append(told, box)
 		}
 		watchers, e := questionWatchers(tx, v.Asker, v.AskerBase)

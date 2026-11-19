@@ -31,16 +31,20 @@ const (
 )
 
 type sotHarness struct {
-	t   *testing.T
-	s   *Server
-	url string
+	t     *testing.T
+	s     *Server
+	url   string
+	clock *fakeClock
 }
 
 // newSOT is questionServer with an asker partner-a/coordinator and a boss
 // team/boss of another base, behind a real HTTP test server.
 func newSOT(t *testing.T) *sotHarness {
 	t.Helper()
-	s := questionServer(t)
+	s, clock := permissionServer(t)
+	if _, err := s.db.Exec(`UPDATE question_settings SET can_ask=1 WHERE target='default'`); err != nil {
+		t.Fatal(err)
+	}
 	s.admin.ProxyToken = "proxy-secret"
 	if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES('team/boss',?,'now'),('partner-a/coordinator',?,'now')`, sotBossToken, sotAskerToken); err != nil {
 		t.Fatal(err)
@@ -48,7 +52,7 @@ func newSOT(t *testing.T) *sotHarness {
 	s.bossRoles = map[string]bool{sotBoss: true}
 	ts := httptest.NewServer(secureHeaders(http.HandlerFunc(s.api)))
 	t.Cleanup(ts.Close)
-	return &sotHarness{t: t, s: s, url: ts.URL}
+	return &sotHarness{t: t, s: s, url: ts.URL, clock: clock}
 }
 
 func (h *sotHarness) fail(format string, a ...any) {
@@ -372,9 +376,16 @@ func TestQuestionSingleSourceOfTruth_OwnerQuestionPanelAnswer(t *testing.T) {
 // slot registers a session of the asker's base at dir with label.
 func (h *sotHarness) slot(dir, label string) wire.SlotGrant {
 	h.t.Helper()
-	code, body := h.as("POST", "/api/slots/register", sotAskerToken, sotAsker, wire.SlotRequest{Machine: "box-1", Directory: dir, Label: label})
+	return h.session("register", sotAsker, dir, label, "")
+}
+
+// session posts a register or heartbeat of session id at dir with label as
+// role and returns the grant.
+func (h *sotHarness) session(action, role, dir, label, id string) wire.SlotGrant {
+	h.t.Helper()
+	code, body := h.as("POST", "/api/slots/"+action, sotAskerToken, role, wire.SlotRequest{Machine: "box-1", Directory: dir, Label: label, SessionID: id})
 	if code != 200 {
-		h.fail("register %s: %d %s", dir, code, body)
+		h.fail("%s %s: %d %s", action, dir, code, body)
 	}
 	var g wire.SlotGrant
 	if err := json.Unmarshal(body, &g); err != nil {
@@ -511,4 +522,118 @@ func TestQuestionSingleSourceOfTruth_LiveAskerKeepsAnswer(t *testing.T) {
 	if d := h.delivery(v.ID); d != "" {
 		h.fail("admin list delivery %q for a delivered answer, want none", d)
 	}
+}
+
+// crashed is a session of the asker's base at /work/q (session s1, label)
+// that asked and then died without a release, and its restart in the same
+// folder: the plugin marks the directory with the new session id because the
+// old session still holds /work/q, so the restart gets another number.
+func (h *sotHarness) crashed(label string) (asked, restarted wire.SlotGrant, v wire.QuestionView) {
+	h.t.Helper()
+	h.slot("/work/a", "")
+	asked = h.session("register", sotAsker, "/work/q", label, "1a2b3c4d-s1")
+	v = h.ask(sotAskerToken, asked.Role)
+	restarted = h.session("register", sotAsker, "/work/q #52abcdef", label, "52abcdef-s2")
+	if restarted.Number == asked.Number {
+		h.fail("restarted session got %s, want another number than %s", restarted.Role, asked.Role)
+	}
+	return asked, restarted, v
+}
+
+// outliveLease moves the clock past the lease of every slot that did not
+// heartbeat, keeping g live with heartbeats on the way.
+func (h *sotHarness) outliveLease(g wire.SlotGrant, label string) {
+	h.t.Helper()
+	half := h.s.presenceCfg.SlotLease/2 + time.Minute
+	h.clock.add(half)
+	h.session("heartbeat", g.Role, g.Directory, label, "")
+	h.clock.add(half)
+	h.session("heartbeat", g.Role, g.Directory, label, "")
+}
+
+// 13. The asking session crashed and restarted in the same folder under a
+// session-marked directory: while the dead lease lives the answer stays in
+// the asking slot; once it ends the unread answer moves to the restarted
+// session, once.
+func TestQuestionSingleSourceOfTruth_CrashedAskerAnswerMovesAfterLease(t *testing.T) {
+	h := newSOT(t)
+	asked, restarted, v := h.crashed("")
+	h.panelAnswer(sotBossToken, sotBoss, v.ID, 200)
+	h.wantAnswerMail(sotAskerToken, asked.Role, v.ID, 1)
+	h.outliveLease(restarted, "")
+	h.noAnswerMail(asked.Role, v.ID)
+	h.wantAnswerMail(sotAskerToken, restarted.Role, v.ID, 1)
+	h.session("heartbeat", restarted.Role, restarted.Directory, "", "")
+	h.wantAnswerMail(sotAskerToken, restarted.Role, v.ID, 1)
+}
+
+// read marks the answer mail for id in role's inbox read.
+func (h *sotHarness) read(role, id string) {
+	h.t.Helper()
+	code, body := h.as("GET", "/api/messages?box=inbox", sotAskerToken, role, nil)
+	if code != 200 {
+		h.fail("inbox of %s: %d %s", role, code, body)
+	}
+	var msgs []wire.Message
+	if err := json.Unmarshal(body, &msgs); err != nil {
+		h.t.Fatal(err)
+	}
+	for _, m := range msgs {
+		if m.TaskID == id {
+			if code, body := h.as("GET", fmt.Sprintf("/api/messages/%d", m.ID), sotAskerToken, role, nil); code != 200 {
+				h.fail("read %d as %s: %d %s", m.ID, role, code, body)
+			}
+			return
+		}
+	}
+	h.fail("no answer mail for %s in %s to read", id, role)
+}
+
+// 14. The crashed session read the answer before it died: the answer stays
+// where it was read and the restarted session gets no copy.
+func TestQuestionSingleSourceOfTruth_ReadAnswerStaysAfterLease(t *testing.T) {
+	h := newSOT(t)
+	asked, restarted, v := h.crashed("")
+	h.panelAnswer(sotBossToken, sotBoss, v.ID, 200)
+	h.read(asked.Role, v.ID)
+	h.outliveLease(restarted, "")
+	h.noAnswerMail(restarted.Role, v.ID)
+	h.wantAnswerMail(sotAskerToken, asked.Role, v.ID, 1)
+}
+
+// 15. Two live sessions in the same folder (the second under a
+// session-marked directory): the server cannot tell this from a crash, so
+// the asking session gets the answer and keeps it while it heartbeats.
+func TestQuestionSingleSourceOfTruth_LiveSessionsInOneFolderAskerKeepsAnswer(t *testing.T) {
+	h := newSOT(t)
+	asked, sibling, v := h.crashed("")
+	h.panelAnswer(sotBossToken, sotBoss, v.ID, 200)
+	half := h.s.presenceCfg.SlotLease/2 + time.Minute
+	for i := 0; i < 3; i++ {
+		h.clock.add(half)
+		h.session("heartbeat", asked.Role, asked.Directory, "", "")
+		h.session("heartbeat", sibling.Role, sibling.Directory, "", "")
+	}
+	h.noAnswerMail(sibling.Role, v.ID)
+	h.wantAnswerMail(sotAskerToken, asked.Role, v.ID, 1)
+}
+
+// 16. A session in the asker's folder (session-marked) with another label is
+// another task: when the asking lease ends it does not get the answer; the
+// next session with the asker's label does.
+func TestQuestionSingleSourceOfTruth_OtherLabelInSameFolderNeverGetsAnswer(t *testing.T) {
+	h := newSOT(t)
+	asked := h.session("register", sotAsker, "/work/q", "issue-1", "1a2b3c4d-s1")
+	v := h.ask(sotAskerToken, asked.Role)
+	other := h.session("register", sotAsker, "/work/q #52abcdef", "issue-2", "52abcdef-s2")
+	h.panelAnswer(sotBossToken, sotBoss, v.ID, 200)
+	h.outliveLease(other, "issue-2")
+	h.noAnswerMail(asked.Role, v.ID)
+	h.noAnswerMail(other.Role, v.ID)
+	if d := h.delivery(v.ID); d != wire.DeliveryWaiting {
+		h.fail("admin list delivery %q after the asking lease ended, want %q", d, wire.DeliveryWaiting)
+	}
+	same := h.slot("/work/e", "issue-1")
+	h.noAnswerMail(other.Role, v.ID)
+	h.wantAnswerMail(sotAskerToken, same.Role, v.ID, 1)
 }
