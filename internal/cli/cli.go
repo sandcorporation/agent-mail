@@ -144,6 +144,7 @@ var commands = []command{
 		}},
 	{name: "ack", args: "ID", nargs: 1, summary: "Acknowledge a message", options: []option{optJSON, optProfile}},
 	{name: "complete", args: "ID", nargs: 1, summary: "Mark a message complete", options: []option{optJSON, optProfile}},
+	{name: "close", args: "ID", nargs: 1, summary: "Close a directive you sent: it needs no answer (no longer open, never reminded)", options: []option{optJSON, optProfile}},
 	{name: "slots", summary: "List the leased numbered slots under the active role's base",
 		options: []option{optJSON, optProfile}},
 	{name: "slot", args: "ACTION", nargs: 1, synopsis: "(ACTION: register | heartbeat | takeover | release)",
@@ -453,6 +454,21 @@ func dispatch(args []string) (int, error) {
 		}
 		req, _ := http.NewRequest(method, u, nil)
 		return doRequest(c, req, p.bool("--json"))
+	case "close":
+		if p.bool("--json") {
+			req, _ := http.NewRequest("POST", endpoint(c, "/api/messages/"+p.pos[0]+"/close"), nil)
+			return doRequest(c, req, true)
+		}
+		b, e := slotCall(c, "POST", "/api/messages/"+p.pos[0]+"/close", nil)
+		if e != nil {
+			return 0, e
+		}
+		var out wire.Closed
+		if e = json.Unmarshal(b, &out); e != nil {
+			return 0, fmt.Errorf("unexpected response from server: %v", e)
+		}
+		fmt.Printf("#%d closed\n", out.ID)
+		return ExitOK, nil
 	case "reply":
 		body, e := inputBody(p)
 		if e != nil {
