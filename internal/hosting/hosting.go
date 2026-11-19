@@ -197,13 +197,16 @@ func (s *Service) validate(c *wire.HostedSessionCreate) error {
 	if c.Desired == "" {
 		c.Desired = DesiredRunning
 	}
+	if c.Class == "" {
+		c.Class = wire.ClassExecute
+	}
 	if c.Args == nil {
 		c.Args = []string{}
 	}
 	if c.Env == nil {
 		c.Env = map[string]string{}
 	}
-	for _, err := range []error{checkLabel(c.Label), checkParent(c.Parent), checkArgs(c.Args), checkEnv(c.Env), checkRestart(c.Restart), checkDesired(c.Desired)} {
+	for _, err := range []error{checkLabel(c.Label), checkParent(c.Parent), checkArgs(c.Args), checkEnv(c.Env), checkRestart(c.Restart), checkDesired(c.Desired), checkClass(c.Class)} {
 		if err != nil {
 			return err
 		}
@@ -252,7 +255,7 @@ func (s *Service) Create(c wire.HostedSessionCreate) (wire.HostedSession, error)
 	h := wire.HostedSession{
 		ID: "hs_" + suffix, Node: c.Node, Base: c.Base, Label: c.Label, Parent: c.Parent, Profile: c.Profile,
 		Directory: c.Directory, AgentSessionID: sid, Args: c.Args, Env: c.Env, Restart: c.Restart, Desired: c.Desired,
-		Cols: defaultCols, Rows: defaultRows, CreatedAt: now, UpdatedAt: now, Runtime: unknownRuntime(),
+		Class: c.Class, AcceptingWork: true, Cols: defaultCols, Rows: defaultRows, CreatedAt: now, UpdatedAt: now, Runtime: unknownRuntime(),
 	}
 	args, _ := json.Marshal(h.Args)
 	env, _ := json.Marshal(h.Env)
@@ -263,8 +266,16 @@ func (s *Service) Create(c wire.HostedSessionCreate) (wire.HostedSession, error)
 	if dup > 0 {
 		return wire.HostedSession{}, ErrDuplicate
 	}
-	_, err = s.db.Exec(`INSERT INTO hosted_sessions(id,node,base,label,parent,profile,directory,agent_session_id,launched,args,env,restart,desired,cols,rows,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?)`,
-		h.ID, h.Node, h.Base, h.Label, h.Parent, h.Profile, h.Directory, h.AgentSessionID, string(args), string(env), h.Restart, h.Desired, h.Cols, h.Rows, now, now)
+	if h.Desired == DesiredRunning {
+		if err := s.checkCap(h.Node, ""); err != nil {
+			return wire.HostedSession{}, err
+		}
+	}
+	_, err = s.db.Exec(`INSERT INTO hosted_sessions(id,node,base,label,parent,profile,directory,agent_session_id,launched,args,env,restart,desired,class,cols,rows,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?)`,
+		h.ID, h.Node, h.Base, h.Label, h.Parent, h.Profile, h.Directory, h.AgentSessionID, string(args), string(env), h.Restart, h.Desired, h.Class, h.Cols, h.Rows, now, now)
+	if err == nil {
+		h.AcceptingWork = s.acceptingWork(h.Class)
+	}
 	if err != nil && strings.Contains(err.Error(), "UNIQUE") {
 		return wire.HostedSession{}, ErrDuplicate
 	}
@@ -273,7 +284,7 @@ func (s *Service) Create(c wire.HostedSessionCreate) (wire.HostedSession, error)
 
 func unknownRuntime() wire.HostedRuntime { return wire.HostedRuntime{State: StateUnknown} }
 
-const sessionColumns = `id,node,base,label,parent,profile,directory,agent_session_id,launched,args,env,restart,desired,cols,rows,restart_gen,start_gen,created_at,updated_at`
+const sessionColumns = `id,node,base,label,parent,profile,directory,agent_session_id,launched,args,env,restart,desired,class,cols,rows,restart_gen,start_gen,created_at,updated_at`
 
 type rowScanner interface{ Scan(dest ...any) error }
 
@@ -281,7 +292,7 @@ func scanSession(r rowScanner) (wire.HostedSession, error) {
 	var h wire.HostedSession
 	var launched int
 	var args, env string
-	if err := r.Scan(&h.ID, &h.Node, &h.Base, &h.Label, &h.Parent, &h.Profile, &h.Directory, &h.AgentSessionID, &launched, &args, &env, &h.Restart, &h.Desired, &h.Cols, &h.Rows, &h.RestartGen, &h.StartGen, &h.CreatedAt, &h.UpdatedAt); err != nil {
+	if err := r.Scan(&h.ID, &h.Node, &h.Base, &h.Label, &h.Parent, &h.Profile, &h.Directory, &h.AgentSessionID, &launched, &args, &env, &h.Restart, &h.Desired, &h.Class, &h.Cols, &h.Rows, &h.RestartGen, &h.StartGen, &h.CreatedAt, &h.UpdatedAt); err != nil {
 		return h, err
 	}
 	h.Launched = launched != 0
@@ -292,6 +303,7 @@ func scanSession(r rowScanner) (wire.HostedSession, error) {
 		h.Env = map[string]string{}
 	}
 	h.Runtime = unknownRuntime()
+	h.AcceptingWork = true
 	return h, nil
 }
 
@@ -310,7 +322,17 @@ func (s *Service) List() ([]wire.HostedSession, error) {
 		}
 		out = append(out, h)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	limit, err := s.Limit()
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].AcceptingWork = AcceptsWork(out[i].Class, limit.Limited)
+	}
+	return out, nil
 }
 
 // Get returns one record.
@@ -360,14 +382,24 @@ func (s *Service) Update(id string, c wire.HostedSessionChange) (wire.HostedSess
 	if c.Restart != nil {
 		h.Restart = *c.Restart
 	}
+	wasStopped := h.Desired == DesiredStopped
 	if c.Desired != nil {
 		h.Desired = *c.Desired
 	}
-	for _, err := range []error{checkLabel(h.Label), checkParent(h.Parent), checkArgs(h.Args), checkEnv(h.Env), checkRestart(h.Restart), checkDesired(h.Desired)} {
+	if c.Class != nil {
+		h.Class = *c.Class
+	}
+	for _, err := range []error{checkLabel(h.Label), checkParent(h.Parent), checkArgs(h.Args), checkEnv(h.Env), checkRestart(h.Restart), checkDesired(h.Desired), checkClass(h.Class)} {
 		if err != nil {
 			return h, err
 		}
 	}
+	if wasStopped && h.Desired == DesiredRunning {
+		if err := s.checkCap(h.Node, h.ID); err != nil {
+			return h, err
+		}
+	}
+	h.AcceptingWork = s.acceptingWork(h.Class)
 	h.UpdatedAt = s.clock().UnixMilli()
 	if c.Desired != nil && *c.Desired == DesiredRunning {
 		// Start, even of a record that should already run: its node clears
@@ -376,8 +408,8 @@ func (s *Service) Update(id string, c wire.HostedSessionChange) (wire.HostedSess
 	}
 	args, _ := json.Marshal(h.Args)
 	env, _ := json.Marshal(h.Env)
-	res, err := s.db.Exec(`UPDATE hosted_sessions SET label=?,parent=?,args=?,env=?,restart=?,desired=?,start_gen=start_gen+?,updated_at=? WHERE id=?`,
-		h.Label, h.Parent, string(args), string(env), h.Restart, h.Desired, startBump(c), h.UpdatedAt, id)
+	res, err := s.db.Exec(`UPDATE hosted_sessions SET label=?,parent=?,args=?,env=?,restart=?,desired=?,class=?,start_gen=start_gen+?,updated_at=? WHERE id=?`,
+		h.Label, h.Parent, string(args), string(env), h.Restart, h.Desired, h.Class, startBump(c), h.UpdatedAt, id)
 	if err != nil {
 		return h, err
 	}
@@ -420,6 +452,11 @@ func (s *Service) NewConversation(id string) (wire.HostedSession, error) {
 	sid, err := newSessionID()
 	if err != nil {
 		return h, err
+	}
+	if h.Desired != DesiredRunning {
+		if err := s.checkCap(h.Node, h.ID); err != nil {
+			return h, err
+		}
 	}
 	h.UpdatedAt = s.clock().UnixMilli()
 	bump := 0

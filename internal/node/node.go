@@ -9,6 +9,7 @@
 package node
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sandcorporation/switchboard/internal/config"
 	"github.com/sandcorporation/switchboard/internal/term"
 	"github.com/sandcorporation/switchboard/internal/wire"
 )
@@ -45,6 +47,9 @@ const (
 	ObservedCrashLoop = "crashloop"
 	// ObservedResumeFailed waits for the host's new conversation id.
 	ObservedResumeFailed = "resume failed"
+	// ObservedWaiting is a record that should run while the node already
+	// runs Config.Max sessions; it starts when one stops (#190).
+	ObservedWaiting = "waiting"
 	// ObservedRelaunching is a session whose terminal holder was replaced,
 	// until it is launched again with resume.
 	ObservedRelaunching = "relaunching"
@@ -146,6 +151,13 @@ type Node struct {
 	// relaunchAll clears failures at the next reconcile with records
 	// (RestartSessions before the first assign).
 	relaunchAll bool
+	// active counts live sessions during a reconcile pass, against
+	// Config.Max.
+	active int
+	// limits is the usage-limit message each session's screen shows, by
+	// record id; lastScan is when screens were last read (#190).
+	limits   map[string]*limitSeen
+	lastScan time.Time
 }
 
 type state struct {
@@ -198,7 +210,10 @@ func New(cfg Config, backend term.Backend) (*Node, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	return &Node{cfg: cfg, backend: backend, states: map[string]*state{}}, nil
+	if cfg.Max <= 0 {
+		cfg.Max = config.DefaultHostingMax
+	}
+	return &Node{cfg: cfg, backend: backend, states: map[string]*state{}, limits: map[string]*limitSeen{}}, nil
 }
 
 // Assign replaces the node's records with the host's full list. The node
@@ -214,6 +229,11 @@ func (n *Node) Assign(recs []Record) {
 	for id := range n.states {
 		if !ids[id] {
 			delete(n.states, id)
+		}
+	}
+	for id := range n.limits {
+		if !ids[id] {
+			delete(n.limits, id)
 		}
 	}
 }
@@ -357,16 +377,24 @@ func (n *Node) Reconcile(ctx context.Context) error {
 	for _, r := range n.records {
 		assigned[TerminalName(r.ID)] = true
 	}
+	n.active = 0
 	for _, in := range infos {
+		if assigned[in.Name] && in.Alive {
+			n.active++
+		}
 		if !strings.HasPrefix(in.Name, NamePrefix) || assigned[in.Name] {
 			continue
 		}
 		errs = append(errs, n.drop(ctx, in))
 	}
-	for _, r := range n.records {
+	// Oldest-created first, so waiting records start in that order.
+	order := slices.Clone(n.records)
+	slices.SortStableFunc(order, func(a, b Record) int { return cmp.Compare(a.CreatedAt, b.CreatedAt) })
+	for _, r := range order {
 		in, ok := byName[TerminalName(r.ID)]
 		errs = append(errs, n.reconcile(ctx, r, in, ok))
 	}
+	n.scanLimits(ctx, byName)
 	return errors.Join(errs...)
 }
 
@@ -411,6 +439,9 @@ func (n *Node) reconcile(ctx context.Context, r Record, in term.Info, exists boo
 			if err := n.remove(ctx, name, in.Alive); err != nil {
 				return err
 			}
+			if in.Alive {
+				n.active--
+			}
 			if !in.Alive && !in.StartedAt.Equal(s.seen) {
 				code := in.ExitCode
 				s.LastExit, s.seen = &code, in.StartedAt
@@ -420,7 +451,7 @@ func (n *Node) reconcile(ctx context.Context, r Record, in term.Info, exists boo
 			s.Observed, s.PID = ObservedStopped, 0
 			return nil
 		}
-		return n.launch(ctx, r, s)
+		return n.start(ctx, r, s)
 	}
 	if exists {
 		// A session in the backend means the record was launched before,
@@ -438,6 +469,7 @@ func (n *Node) reconcile(ctx context.Context, r Record, in term.Info, exists boo
 		if err := n.backend.Stop(ctx, name, StopGrace); err != nil {
 			return fmt.Errorf("node: stop %s: %w", name, err)
 		}
+		n.active--
 		s.Observed, s.PID = ObservedStopped, 0
 		return nil
 	case exists:
@@ -459,14 +491,14 @@ func (n *Node) reconcile(ctx context.Context, r Record, in term.Info, exists boo
 		if err := n.backend.Forget(ctx, name); err != nil && !errors.Is(err, term.ErrNoSession) {
 			return fmt.Errorf("node: forget %s: %w", name, err)
 		}
-		return n.launch(ctx, r, s)
+		return n.start(ctx, r, s)
 	case running:
 		// Never launched here, or its holder (keeper, tmux server) is gone:
 		// launch with resume when the conversation exists.
 		if n.held(s, now) {
 			return nil
 		}
-		return n.launch(ctx, r, s)
+		return n.start(ctx, r, s)
 	default:
 		s.Observed, s.PID = ObservedStopped, 0
 		return nil
@@ -542,6 +574,21 @@ func restarts(policy string, code int) bool {
 	default:
 		return true
 	}
+}
+
+// start launches a record that should run when the node runs fewer than
+// Config.Max sessions; otherwise the record waits (a later pass starts it
+// when one stops).
+func (n *Node) start(ctx context.Context, r Record, s *state) error {
+	if n.active >= n.cfg.Max {
+		s.Observed, s.PID, s.NextAttemptAt = ObservedWaiting, 0, time.Time{}
+		return nil
+	}
+	if err := n.launch(ctx, r, s); err != nil {
+		return err
+	}
+	n.active++
+	return nil
 }
 
 func (n *Node) launch(ctx context.Context, r Record, s *state) error {

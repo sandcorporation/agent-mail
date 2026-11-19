@@ -120,6 +120,10 @@ func EnvFrom(getenv func(string) string, name string) (value, from string) {
 	return getenv(EnvPrefix + name), EnvPrefix + name
 }
 
+// DefaultHostingMax is the running-session cap per node when
+// SWITCHBOARD_HOSTING_MAX is unset (#190).
+const DefaultHostingMax = 4
+
 // Node-side hosting variables (#173), read with EnvFrom.
 const (
 	// HostingAgentName names the agent CLI the node launches (default
@@ -130,6 +134,9 @@ const (
 	HostingMachineName = "HOSTING_MACHINE"
 	// HostingHistoryName is the scrollback lines kept per session.
 	HostingHistoryName = "HOSTING_HISTORY"
+	// HostingMaxName caps the sessions a node runs at once (#190, default
+	// DefaultHostingMax); the node tells the host in its hello.
+	HostingMaxName = "HOSTING_MAX"
 	// FakeAgentName set to "1" turns a test binary into the fake agent.
 	FakeAgentName = "FAKE_AGENT"
 	// FakeAgentDirName is where the fake agent keeps its transcripts.

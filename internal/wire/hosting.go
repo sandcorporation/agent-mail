@@ -20,8 +20,14 @@ type HostedSession struct {
 	Env            map[string]string `json:"env"`
 	Restart        string            `json:"restart"`
 	Desired        string            `json:"desired"`
-	Cols           int               `json:"cols"`
-	Rows           int               `json:"rows"`
+	// Class is what the session does: "lead", "coordinator", "execute"
+	// (default) or "review" (#190).
+	Class string `json:"class"`
+	// AcceptingWork is false for an execute or review session while the
+	// subscription limit holds (HostingLimit): it takes no new work items.
+	AcceptingWork bool `json:"accepting_work"`
+	Cols          int  `json:"cols"`
+	Rows          int  `json:"rows"`
 	// RestartGen and StartGen count Restart and Start requests; a node
 	// acts when one grows (Restart: stop and resume at once; Start: clear
 	// backoff and crash loop).
@@ -49,7 +55,8 @@ type HostedRuntime struct {
 }
 
 // HostedSessionCreate is the body of POST /api/admin/terminals and what
-// `host add` sends. Empty Restart means "always", empty Desired "running".
+// `host add` sends. Empty Restart means "always", empty Desired "running",
+// empty Class "execute".
 type HostedSessionCreate struct {
 	Node      string            `json:"node"`
 	Base      string            `json:"base"`
@@ -61,6 +68,7 @@ type HostedSessionCreate struct {
 	Env       map[string]string `json:"env"`
 	Restart   string            `json:"restart"`
 	Desired   string            `json:"desired"`
+	Class     string            `json:"class"`
 }
 
 // HostedSessionChange is the body of PUT /api/admin/terminals/{id}. A nil
@@ -72,6 +80,45 @@ type HostedSessionChange struct {
 	Env     *map[string]string `json:"env,omitempty"`
 	Restart *string            `json:"restart,omitempty"`
 	Desired *string            `json:"desired,omitempty"`
+	Class   *string            `json:"class,omitempty"`
+}
+
+// Session classes (#190). While the subscription limit holds, lead and
+// coordinator sessions keep taking work; execute and review sessions do not.
+const (
+	ClassLead        = "lead"
+	ClassCoordinator = "coordinator"
+	ClassExecute     = "execute"
+	ClassReview      = "review"
+)
+
+// HostingLimit is GET /api/admin/terminals/limit and `host limit`: whether
+// the agent subscription's usage limit holds (#190). Source is "operator"
+// (set by hand) or "screen" (a session showed the limit message). ResetAt
+// is the reset time the message gave, when it gave one. ClearedAt is when
+// the limit last cleared: work items queued before it go first (see
+// hosting.ResumeOrder).
+type HostingLimit struct {
+	Limited   bool   `json:"limited"`
+	Source    string `json:"source,omitempty"`
+	Since     *int64 `json:"since"`
+	ResetAt   *int64 `json:"reset_at"`
+	ClearedAt *int64 `json:"cleared_at"`
+}
+
+// HostingLimitChange is the body of PUT /api/admin/terminals/limit: the
+// operator sets or clears the limit.
+type HostingLimitChange struct {
+	Limited bool `json:"limited"`
+}
+
+// NodeLimit is the usage limit as a node sees it on its sessions' screens,
+// sent with every state frame. Since is when the newest showing began;
+// ResetAt is the latest reset time the messages gave (nil when none did).
+type NodeLimit struct {
+	Limited bool   `json:"limited"`
+	Since   int64  `json:"since,omitempty"`
+	ResetAt *int64 `json:"reset_at,omitempty"`
 }
 
 // NodeView is one row of GET /api/admin/nodes. It never carries the token or
@@ -173,6 +220,8 @@ type NodeFrame struct {
 	Cols     int               `json:"cols,omitempty"`
 	Rows     int               `json:"rows,omitempty"`
 	Notice   *NodeNotice       `json:"notice,omitempty"`
+	// Limit rides on state frames (#190).
+	Limit *NodeLimit `json:"limit,omitempty"`
 }
 
 // NodeHello is what a node says about itself when it attaches.
@@ -182,6 +231,8 @@ type NodeHello struct {
 	OS      string `json:"os"`
 	Version string `json:"version"`
 	Backend string `json:"backend"`
+	// Max is the node's running-session cap (SWITCHBOARD_HOSTING_MAX).
+	Max int `json:"max,omitempty"`
 }
 
 // HostedNodeState is one record's observed state as its node reports it.

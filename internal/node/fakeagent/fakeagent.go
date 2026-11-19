@@ -13,6 +13,7 @@
 // (with "=value" unless the name looks secret), keeps a transcript per
 // --session-id under SWITCHBOARD_FAKE_AGENT_DIR so --resume of an unknown id
 // fails like the real CLI, then reads input lines: "exit N" exits with N,
+// "limit [RESET]" prints the usage-limit message (LimitMessage),
 // "draw <scene>" paints SWITCHBOARD_FAKE_AGENT_SCENES/<scene>.vt, anything
 // else is echoed as "echo <line>".
 package fakeagent
@@ -146,6 +147,8 @@ func Run(args, environ []string, in io.Reader, out io.Writer) int {
 				continue
 			}
 			return n
+		case "limit":
+			fmt.Fprintf(out, "%s\r\n", LimitMessage(strings.TrimSpace(arg)))
 		case "draw":
 			if err := draw(out, scenes, strings.TrimSpace(arg)); err != nil {
 				fmt.Fprintf(out, "error: %v\r\n", err)
@@ -205,4 +208,13 @@ func draw(out io.Writer, dir, name string) error {
 		}
 	}
 	return nil
+}
+
+// LimitMessage is what "limit [RESET]" prints: the agent's usage-limit
+// message, with "resets RESET" when RESET is given (#190).
+func LimitMessage(reset string) string {
+	if reset == "" {
+		return "Claude usage limit reached."
+	}
+	return "5-hour limit reached ∙ resets " + reset
 }

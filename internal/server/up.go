@@ -188,7 +188,7 @@ func prepareNode(v, name, tokenFile, endpoint, backendDir string) (*nodePart, er
 		name = cfg.Machine
 	}
 	return &nodePart{cfg: cfg, backend: b, backendName: info.name, socket: info.socket, endpoint: endpoint,
-		hello: wire.NodeHello{Name: name, Machine: cfg.Machine, OS: runtime.GOOS, Version: v, Backend: info.name}}, nil
+		hello: wire.NodeHello{Name: name, Machine: cfg.Machine, OS: runtime.GOOS, Version: v, Backend: info.name, Max: cfg.Max}}, nil
 }
 
 // backendOptions is what the node's terminal backend is built from.
