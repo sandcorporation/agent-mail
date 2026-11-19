@@ -122,6 +122,9 @@ func run(v string, ln net.Listener, setupDir string, attach attachFunc) {
 	if e = adminauth.Configure(&s.admin, os.Getenv); e != nil {
 		log.Fatal(e)
 	}
+	if e = s.logRemindStart(); e != nil {
+		log.Fatal(e)
+	}
 	if setupDir != "" {
 		if e = s.openSetup(setupDir); e != nil {
 			log.Fatal(e)
@@ -477,6 +480,8 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 		s.mail().AdminList(w, r)
 	case "decisions":
 		s.asks().DecisionsAPI(w, r, nil)
+	case "settings":
+		s.settingsAPI(w, r)
 	default:
 		http.NotFound(w, r)
 	}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/sandcorporation/switchboard/internal/config"
@@ -85,6 +86,59 @@ func configureRemind(c *RemindConfig, getenv func(string) string) error {
 		c.Max = n
 	}
 	return nil
+}
+
+// RemindStatus is the reminder settings in force, as the start-up line and
+// GET /api/admin/settings report them (#223). Since is when the first sweep
+// with reminders on ran (remind_state), nil before that.
+type RemindStatus struct {
+	On           bool       `json:"on"`
+	After        string     `json:"after"`
+	AfterSeconds int64      `json:"after_seconds"`
+	Max          int        `json:"max"`
+	Since        *time.Time `json:"since"`
+}
+
+// RemindStatus reads the reminder settings and remind_state.
+func (s *Service) RemindStatus(ctx context.Context) (RemindStatus, error) {
+	c := s.cfg.Remind
+	st := RemindStatus{On: c.On, After: shortDuration(c.after()), AfterSeconds: int64(c.after() / time.Second), Max: c.max()}
+	var enabledMS int64
+	switch err := s.db.QueryRowContext(ctx, `SELECT enabled_at FROM remind_state WHERE id=1`).Scan(&enabledMS); {
+	case err == nil:
+		t := fromMS(enabledMS)
+		st.Since = &t
+	case !errors.Is(err, sql.ErrNoRows):
+		return st, err
+	}
+	return st, nil
+}
+
+// StartLine is the one start-up log line for directive reminders:
+// "directive reminders: on (after 2h, max 3, since <RFC 3339 time or first
+// sweep>)" or "directive reminders: off".
+func (st RemindStatus) StartLine() string {
+	if !st.On {
+		return "directive reminders: off"
+	}
+	since := "first sweep"
+	if st.Since != nil {
+		since = st.Since.UTC().Format(time.RFC3339)
+	}
+	return fmt.Sprintf("directive reminders: on (after %s, max %d, since %s)", st.After, st.Max, since)
+}
+
+// shortDuration drops the zero minutes and seconds of a duration: 2h, 1h30m,
+// 45s.
+func shortDuration(d time.Duration) string {
+	t := d.String()
+	if strings.HasSuffix(t, "m0s") {
+		t = strings.TrimSuffix(t, "0s")
+	}
+	if strings.HasSuffix(t, "h0m") {
+		t = strings.TrimSuffix(t, "0m")
+	}
+	return t
 }
 
 // RemindSubject and RemindBody are a reminder's text.
