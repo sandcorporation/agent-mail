@@ -118,6 +118,8 @@ docker compose exec switchboard switchboard admin totp-reset alice  # new secret
 docker compose exec switchboard switchboard admin disable alice
 ```
 
+A hosting PC instance (`switchboard up`, builtin mode) without any admin also opens a first-run setup page, `http://127.0.0.1:<port>/setup` ([Hosting instance on a PC](docs/hosting-pc.md), W4/L4); the plain server never does. It answers only loopback requests (loopback peer, listener and `Host`, no forwarding header), needs the one-time code in `<data>/setup-code` (printed once in the log; five wrong codes in a row replace it), and creates the admin only after one TOTP code from the QR code shown is confirmed. The first admin, from the page or `admin create`, removes the code file and turns `/setup` into `404`.
+
 Passwords need at least 12 characters and are stored as argon2id hashes. `passwd`, `totp-reset` and `disable` end that admin's sessions; `--json` prints `{"name","action"[,"secret","otpauth_uri"]}`. `POST /auth/login` (`{"name","password","code"}`) accepts the TOTP code (RFC 6238: SHA-1, 30 s, 6 digits) of the current step ±1, never the same step twice, and allows 5 failures per 15 minutes per name and per client IP; every failure, including the rate limit, is the same `401 login failed`. Success sets the `sb_session` cookie (`HttpOnly`, `SameSite=Strict`, `Secure` unless `SWITCHBOARD_INSECURE_COOKIE=1` for plain-http local use). Sessions (`admin_sessions`, only a SHA-256 of the cookie is stored) last 12 hours from the last request. `POST /auth/logout` ends the session; `GET /api/admin/me` returns `{"user","mode"}`. Login and logout need the same write guard as admin writes (below). Behind a reverse proxy every client has the proxy's address; set `SWITCHBOARD_TRUST_FORWARDED=1` when the proxy sets `X-Forwarded-For` (its last entry is then the client IP), and only then.
 
 **OIDC mode**
@@ -126,6 +128,7 @@ Passwords need at least 12 characters and are stored as argon2id hashes. `passwd
 |---|---|
 | `SWITCHBOARD_OIDC_ISSUER` | Issuer URL; discovery is `<issuer>/.well-known/openid-configuration`, fetched on the first login. |
 | `SWITCHBOARD_OIDC_CLIENT_ID` / `SWITCHBOARD_OIDC_CLIENT_SECRET` | The confidential client registered at the provider. |
+| `SWITCHBOARD_OIDC_CLIENT_SECRET_FILE` | A file holding the client secret (surrounding white space trimmed), instead of `SWITCHBOARD_OIDC_CLIENT_SECRET`; setting both stops the server at start. |
 | `SWITCHBOARD_OIDC_ADMINS` | Comma-separated; each entry is an email (`admin@example.com`) or `sub:<subject>`. |
 | `SWITCHBOARD_OIDC_SCOPES` | Default `openid email profile`; must include `openid`. |
 | `SWITCHBOARD_PUBLIC_URL` | The dashboard's public origin, e.g. `https://mail.example`. |

@@ -12,7 +12,7 @@ Values used below:
 | Port | `8090` | `8090` |
 | Node | `local` | `local` |
 | Roles / profiles | `team/boss` / `pc-boss`, `team/worker` / `pc-worker` | same |
-| Admin | `pcadmin` | `pcadmin` |
+| Admins | the person's own (setup page, W4/L4), `pcadmin` (checks) | same |
 | Session directory | `%USERPROFILE%\work\app` | `~/work/app` |
 | Start at sign-in | Task Scheduler task `switchboard-pc` | systemd user unit `switchboard-pc.service` |
 
@@ -126,17 +126,43 @@ If it fails: a parse error in `env.ps1` → delete `$data\env.ps1` and run this 
 
 ### W4. Admin
 
+The first admin is made on the instance's setup page. It answers only on `127.0.0.1`, only while the instance has no admin, and needs the one-time code in `$data\setup-code`.
+
+```powershell
+$env:SWITCHBOARD_ADMIN_AUTH = 'builtin'; $env:SWITCHBOARD_INSECURE_COOKIE = '1'; $env:SWITCHBOARD_HOSTING_AGENT = $agent
+$setup = Start-Process $sb -ArgumentList 'up', '--data', "`"$data`"", '--port', $port -RedirectStandardOutput "$data\admin-setup.out" -RedirectStandardError "$data\admin-setup.log" -WindowStyle Hidden -PassThru
+Remove-Item Env:SWITCHBOARD_ADMIN_AUTH, Env:SWITCHBOARD_INSECURE_COOKIE, Env:SWITCHBOARD_HOSTING_AGENT
+$setup.Id | Set-Content "$data\admin-setup.pid"
+sbwait 60 { if ($setup.HasExited) { throw "up exited: $(Get-Content "$data\admin-setup.log" -Tail 3)" }; Test-SbHealth }
+(Invoke-WebRequest "http://127.0.0.1:$port/setup" -UseBasicParsing).StatusCode
+"http://127.0.0.1:$port/setup"
+Get-Content "$data\setup-code"
+```
+
+Check: prints `200`, then the setup address and a code like `ABCD-EFGH-JKLM-NPQR`.
+
+If it fails: `up exited: …` or `timed out` → look the message up under [Refusals](#refusals). `404` or no `setup-code` → this data directory already has an admin; continue with the next block.
+
+The person at this PC opens the setup address in a browser on this PC and enters the code, a name and a password (12 or more characters) of their own, scans the QR code with an authenticator app and enters the 6-digit code the app shows. The admin exists only after that code is accepted; the browser is then signed in to the dashboard. Five wrong setup codes in a row replace the code (read `setup-code` again).
+
+Then the admin for the checks in this procedure (`pcadmin`; also the way to make the first admin with nobody at the screen):
+
 ```powershell
 New-SbToken | Set-Content "$data\admin.password"
 $env:DB_PATH = "$data\switchboard.db"
 Get-Content "$data\admin.password" | & $sb admin create pcadmin --json | Set-Content "$data\admin.json"
 Remove-Item Env:DB_PATH
 (Get-Content "$data\admin.json" -Raw | ConvertFrom-Json).action
+try { (Invoke-WebRequest "http://127.0.0.1:$port/setup" -UseBasicParsing).StatusCode } catch { [int]$_.Exception.Response.StatusCode }
+Test-Path "$data\setup-code"
+Stop-Process -Id (Get-Content "$data\admin-setup.pid")
+sbwait 30 { -not (Test-SbHealth) }
+Remove-Item "$data\admin-setup.pid"
 ```
 
-Check: prints `create`. `$data\admin.json` holds `secret` and `otpauth_uri` (shown only this once); `$data\admin.password` holds the password. Both stay inside the data directory, which only this user can read.
+Check: prints `create`, `404` (the setup page is closed for good) and `False` (the code file is gone). `$data\admin.json` holds `secret` and `otpauth_uri` (shown only this once); `$data\admin.password` holds the password. Both stay inside the data directory, which only this user can read.
 
-If it fails: `admin "pcadmin" already exists` → this data directory was set up before; continue with W5 if `admin.json` and `admin.password` are both there, otherwise run W9 uninstall and start again at W3. `DB_PATH` errors → the `$env:DB_PATH` line was skipped; run the block again.
+If it fails: `admin "pcadmin" already exists` → this data directory was set up before; stop the instance (`Stop-Process -Id (Get-Content "$data\admin-setup.pid")`) and continue with W5 if `admin.json` and `admin.password` are both there, otherwise run W9 uninstall and start again at W3. `DB_PATH` errors → the `$env:DB_PATH` line was skipped; run the block again.
 
 ### W5. Roles and profiles
 
@@ -404,16 +430,41 @@ If it fails: `grep` prints nothing → the release predates terminal hosting; us
 
 ### L4. Admin
 
+The first admin is made on the instance's setup page. It answers only on `127.0.0.1`, only while the instance has no admin, and needs the one-time code in `$SBDATA/setup-code`.
+
+```sh
+SWITCHBOARD_ADMIN_AUTH=builtin SWITCHBOARD_INSECURE_COOKIE=1 SWITCHBOARD_HOSTING_AGENT="$AGENT" \
+  "$SB" up --data "$SBDATA" --port "$SBPORT" >> "$SBDATA/admin-setup.log" 2>&1 &
+echo $! > "$SBDATA/admin-setup.pid"
+sbwait 60 sbhealth
+curl -sS -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:$SBPORT/setup"
+echo "http://127.0.0.1:$SBPORT/setup"
+cat "$SBDATA/setup-code"
+```
+
+Check: prints `200`, then the setup address and a code like `ABCD-EFGH-JKLM-NPQR`.
+
+If it fails: `timed out` → `tail -n 20 "$SBDATA/admin-setup.log"` and look the message up under [Refusals](#refusals). `404` or no `setup-code` → this data directory already has an admin; continue with the next block.
+
+The person at this PC opens the setup address in a browser on this PC and enters the code, a name and a password (12 or more characters) of their own, scans the QR code with an authenticator app and enters the 6-digit code the app shows. The admin exists only after that code is accepted; the browser is then signed in to the dashboard. Five wrong setup codes in a row replace the code (read `setup-code` again).
+
+Then the admin for the checks in this procedure (`pcadmin`; also the way to make the first admin with nobody at the screen):
+
 ```sh
 head -c 24 /dev/urandom | base64 > "$SBDATA/admin.password"
 sbpc admin create pcadmin --json < "$SBDATA/admin.password" > "$SBDATA/admin.json"
 python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["action"])' "$SBDATA/admin.json"
 stat -c '%a %n' "$SBDATA/admin.password" "$SBDATA/admin.json"
+curl -sS -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:$SBPORT/setup"
+ls "$SBDATA/setup-code" 2>/dev/null || echo 'no setup-code'
+kill "$(cat "$SBDATA/admin-setup.pid")"
+sbwait 30 eval '! sbhealth 2>/dev/null'
+rm -f "$SBDATA/admin-setup.pid"
 ```
 
-Check: prints `create`, and `600` for both files. `admin.json` holds `secret` and `otpauth_uri` (shown only this once).
+Check: prints `create`, `600` for both files, `404` (the setup page is closed for good) and `no setup-code`. `admin.json` holds `secret` and `otpauth_uri` (shown only this once).
 
-If it fails: `admin "pcadmin" already exists` → continue with L5 if both files are there, otherwise uninstall (L9) and start again at L3.
+If it fails: `admin "pcadmin" already exists` → stop the instance (`kill "$(cat "$SBDATA/admin-setup.pid")"`) and continue with L5 if both files are there, otherwise uninstall (L9) and start again at L3.
 
 ### L5. Roles and profiles
 
@@ -588,9 +639,102 @@ If it fails: `sbwait` times out → the sessions did not stop; `sbterm` shows wh
 
 Reinstall: a removed node (revoked in the dashboard, Settings) cannot come back in the same data directory; `up` stops with `node local: node is revoked`. Uninstall as above and start again at L3.
 
+## OIDC sign-in
+
+Instead of names, passwords and TOTP, the instance can sign admins in with an OpenID Connect provider of the installer's choice. Do this after W8 / L8: the checks there sign in as `pcadmin`, which the oidc mode no longer accepts (`sblogin` gets `401`).
+
+At the provider, register a web application (confidential client) with:
+
+| Setting | Value |
+| --- | --- |
+| Redirect URI | `http://127.0.0.1:8090/auth/callback` (the instance's port) |
+| Grant | authorization code, with PKCE `S256` |
+| Scopes | `openid email profile` (`openid` is required; `email` is what an email entry below needs) |
+
+Then note the issuer and the client ID, and copy the client secret.
+
+| Provider | `SWITCHBOARD_OIDC_ISSUER` |
+| --- | --- |
+| Google | `https://accounts.google.com` |
+| Microsoft Entra ID | `https://login.microsoftonline.com/<tenant-id>/v2.0` |
+| Self-hosted (Keycloak, Authentik, …) | its issuer, e.g. `https://auth.example/realms/<realm>` or `https://auth.example/application/o/<app>/` |
+
+`SWITCHBOARD_OIDC_ADMINS` is the allow list, comma separated. An entry is an email, matched against the ID token's `email` claim only when the token also says `email_verified: true`, or `sub:<subject>`, matched against the `sub` claim. Providers that send no `email_verified` (Entra ID among them) need `sub:` entries. A refused sign-in logs its subject in `up.log` (`oidc: login refused: "not on the allowlist (sub:…)"`); add that entry and restart `up` to let that account in. Removing an entry and restarting ends that admin's sessions.
+
+The client secret stays in a file in the data directory (`SWITCHBOARD_OIDC_CLIENT_SECRET_FILE`), not in `up.cmd` or the unit. Open the dashboard at `http://127.0.0.1:8090/` exactly (not `localhost`): the redirect URI and the sign-in cookies are tied to that address.
+
+Windows (fill in the first three lines):
+
+```powershell
+$issuer = 'https://accounts.google.com'
+$clientId = '<client-id>'
+$admins = 'you@example.com'
+[Net.NetworkCredential]::new('', (Read-Host 'Client secret' -AsSecureString)).Password | Set-Content "$data\oidc-client-secret"
+@"
+@echo off
+set SWITCHBOARD_ADMIN_AUTH=oidc
+set SWITCHBOARD_INSECURE_COOKIE=1
+set "SWITCHBOARD_PUBLIC_URL=http://127.0.0.1:$port"
+set "SWITCHBOARD_OIDC_ISSUER=$issuer"
+set "SWITCHBOARD_OIDC_CLIENT_ID=$clientId"
+set "SWITCHBOARD_OIDC_CLIENT_SECRET_FILE=%~dp0oidc-client-secret"
+set "SWITCHBOARD_OIDC_ADMINS=$admins"
+set "SWITCHBOARD_CONFIG_DIR=%~dp0config"
+set "SWITCHBOARD_HOSTING_AGENT=$agent"
+"%~dp0bin\switchboard.exe" up --data "%~dp0." --port $port >> "%~dp0up.log" 2>&1
+"@ | Set-Content "$data\up.cmd" -Encoding Ascii
+Get-NetTCPConnection -LocalPort $port -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+Start-ScheduledTask -TaskName 'switchboard-pc'
+sbwait 60 { Test-SbHealth }
+curl.exe -sS -o NUL -w '%{redirect_url}\n' "http://127.0.0.1:$port/auth/login"
+```
+
+Linux (fill in the first three lines):
+
+```sh
+SBISSUER='https://accounts.google.com'
+SBCLIENTID='<client-id>'
+SBADMINS='you@example.com'
+(umask 077; read -rsp 'Client secret: ' s; echo; printf '%s\n' "$s" > "$SBDATA/oidc-client-secret")
+cat > "$HOME/.config/systemd/user/switchboard-pc.service" <<EOF
+[Unit]
+Description=switchboard hosting instance on this PC
+
+[Service]
+Environment=SWITCHBOARD_ADMIN_AUTH=oidc
+Environment=SWITCHBOARD_INSECURE_COOKIE=1
+Environment=SWITCHBOARD_PUBLIC_URL=http://127.0.0.1:$SBPORT
+Environment=SWITCHBOARD_OIDC_ISSUER=$SBISSUER
+Environment=SWITCHBOARD_OIDC_CLIENT_ID=$SBCLIENTID
+Environment=SWITCHBOARD_OIDC_CLIENT_SECRET_FILE=$SBDATA/oidc-client-secret
+Environment=SWITCHBOARD_OIDC_ADMINS=$SBADMINS
+Environment=SWITCHBOARD_CONFIG_DIR=$SBDATA/config
+Environment=SWITCHBOARD_HOSTING_AGENT=$AGENT
+Environment=PATH=$PATH
+ExecStart=$SB up --data $SBDATA --port $SBPORT
+StandardOutput=append:$SBDATA/up.log
+StandardError=append:$SBDATA/up.log
+KillMode=process
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+EOF
+systemctl --user daemon-reload
+systemctl --user restart switchboard-pc.service
+sbwait 60 sbhealth
+curl -sS -o /dev/null -w '%{redirect_url}\n' "http://127.0.0.1:$SBPORT/auth/login"
+```
+
+Check: the last line prints the provider's authorization address with `redirect_uri=http%3A%2F%2F127.0.0.1%3A8090%2Fauth%2Fcallback`. Opening `http://127.0.0.1:8090/` then shows one 로그인 button, which goes to the provider and back signed in.
+
+If it fails: health times out → `up.log` names the missing or invalid `SWITCHBOARD_OIDC_*` setting (never its value). The provider says the redirect URI does not match → register exactly the URI above, with `127.0.0.1` and the port. `403 login failed` after the provider → `up.log` has the reason (`oidc: login refused: …`): `not on the allowlist (sub:…)` or `email not verified (sub:…)` → add that `sub:` entry to the admins line and run the block again; `state mismatch` or `no flow cookie` → the dashboard was opened at another address than `http://127.0.0.1:<port>/`. To go back to names and passwords, run W6 / L6 again.
+
+Providers that only speak OAuth 2.0 (GitHub and similar) are not supported: they issue no ID token and have no issuer discovery.
+
 ## Refusals
 
-| Message (in `up.log`, `setup.log` or on the console) | Fix |
+| Message (in `up.log`, `admin-setup.log`, `setup.log` or on the console) | Fix |
 | --- | --- |
 | `SWITCHBOARD_HOSTING=on refused: SWITCHBOARD_ADMIN_AUTH must be builtin or oidc (got unset)` | `up` was started without `SWITCHBOARD_ADMIN_AUTH=builtin`; start it through `up.cmd` / the unit, or set the variable as in W5 / L5. |
 | `SWITCHBOARD_HOSTING=on refused: LISTEN_ADDR … is not a loopback address (127.0.0.0/8, ::1 or localhost)` | Hosting runs only on loopback. Start it with `switchboard up`, which listens on `127.0.0.1`; do not run the plain server with `SWITCHBOARD_HOSTING=on`. |

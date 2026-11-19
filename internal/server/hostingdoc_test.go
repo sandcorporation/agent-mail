@@ -263,10 +263,16 @@ func TestE2E_HostingDocLinux(t *testing.T) {
 	var script strings.Builder
 	script.WriteString("set -euo pipefail\n")
 	inherited := false
+	l4 := 0
 	for _, b := range readDocBlocks(t) {
 		if b.section == "Linux" {
 			if b.lang != "sh" {
 				t.Fatalf("Linux block in %q, want sh", b.lang)
+			}
+			if strings.HasPrefix(b.step, "L4.") {
+				if l4++; l4 == 2 {
+					script.WriteString(personAtSetupPageSh)
+				}
 			}
 			if strings.HasPrefix(b.step, "L5.") && !inherited {
 				// What an agent session's shell carries; L5 clears it.
@@ -384,7 +390,7 @@ func TestE2E_HostingDocLinux(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the Linux variant failed: %v\n%s\nup.log:\n%s", err, out, upLog)
 	}
-	for _, want := range append(docPrints(t, "L4."), docPrints(t, "L5.")[0]) {
+	for _, want := range append(docPrints(t, "L4."), docPrints(t, "L5.")[0], "PERSON person", "404", "no setup-code") {
 		if !hasLine(string(out), want) {
 			t.Errorf("output has no line %q (the doc's check):\n%s", want, out)
 		}
@@ -536,11 +542,14 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 				// What an agent session's window carries; W5 clears it.
 				pre = "$env:SWITCHBOARD_PROFILE = 'elsewhere'; $env:SWITCHBOARD_ROLE = 'team/other'; $env:AGENT_MAIL_PROFILE = 'elsewhere'\n"
 			}
+			if strings.HasPrefix(d.step, "W4.") && strings.Contains(strings.Join(blocks, "\n"), ">>> W4.") {
+				pre = personAtSetupPagePS
+			}
 			blocks = append(blocks, pre+"Write-Output '>>> "+d.step+"'\n"+strings.Join(d.lines, "\n"))
 		}
 	}
-	if len(blocks) != 5 {
-		t.Fatalf("W3 to W5 have %d blocks, want 5", len(blocks))
+	if len(blocks) != 6 {
+		t.Fatalf("W3 to W5 have %d blocks, want 6", len(blocks))
 	}
 	root, err := os.MkdirTemp("", "sbdocw")
 	if err != nil {
@@ -615,7 +624,7 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("W3 to W5: %v\n%s\nsetup.log:\n%s", err, out, setupLog)
 	}
-	for _, want := range append(docPrints(t, "W4."), "LEFT[]") {
+	for _, want := range append(docPrints(t, "W4."), "LEFT[]", "PERSON person", "404", "False") {
 		if !hasLine(string(out), want) {
 			t.Errorf("output has no line %q", want)
 		}
@@ -670,3 +679,25 @@ func hostingDocZip(t *testing.T, bin string) []byte {
 	}
 	return buf.Bytes()
 }
+
+// personAtSetupPageSh and personAtSetupPagePS stand in for the person at the
+// browser between the two L4/W4 blocks: the setup page's own requests with
+// the code from the file, then the TOTP code of the secret it got back.
+const personAtSetupPageSh = `echo '>>> person at the setup page'
+SBCODE="$(cat "$SBDATA/setup-code")"
+SBBEGUN="$(curl -fsS -H 'Content-Type: application/json' -H 'X-Switchboard-Dashboard: 1' -d "{\"code\":\"$SBCODE\",\"name\":\"person\",\"password\":\"person password 12\"}" "http://127.0.0.1:$SBPORT/setup/begin")"
+SBPTOTP="$(printf '%s' "$SBBEGUN" | python3 -c 'import base64,hashlib,hmac,json,struct,sys,time
+s=json.load(sys.stdin)["secret"]; k=base64.b32decode(s+"="*(-len(s)%8))
+h=hmac.new(k,struct.pack(">Q",int(time.time())//30),hashlib.sha1).digest(); o=h[19]&15
+print("%06d"%((struct.unpack(">I",h[o:o+4])[0]&0x7fffffff)%1000000))')"
+curl -fsS -H 'Content-Type: application/json' -H 'X-Switchboard-Dashboard: 1' -d "{\"code\":\"$SBCODE\",\"totp\":\"$SBPTOTP\"}" "http://127.0.0.1:$SBPORT/setup/confirm" |
+  python3 -c 'import json,sys; print("PERSON " + json.load(sys.stdin)["user"])'
+`
+
+const personAtSetupPagePS = `Write-Output '>>> person at the setup page'
+$sbcode = (Get-Content "$data\setup-code").Trim()
+$sbh = @{ 'X-Switchboard-Dashboard' = '1' }
+$sbbegun = Invoke-RestMethod -Method Post "http://127.0.0.1:$port/setup/begin" -ContentType 'application/json' -Headers $sbh -Body (@{ code = $sbcode; name = 'person'; password = 'person password 12' } | ConvertTo-Json)
+$sbdone = Invoke-RestMethod -Method Post "http://127.0.0.1:$port/setup/confirm" -ContentType 'application/json' -Headers $sbh -Body (@{ code = $sbcode; totp = (Get-SbTotp $sbbegun.secret) } | ConvertTo-Json)
+'PERSON ' + $sbdone.user
+`

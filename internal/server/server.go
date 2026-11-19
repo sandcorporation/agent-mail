@@ -55,6 +55,7 @@ type Server struct {
 	joinLimits  adminauth.Limiter   // failed POST /api/join per client IP (identity.Service.Join)
 	live        live.Bus            // dashboard change stream (internal/live, served by live.go)
 	publicURL   string              // SWITCHBOARD_PUBLIC_URL; a WebSocket Origin it also accepts
+	setup       *adminauth.Setup    // first-run admin setup; only up opens it (setup.go), nil answers 404
 	hosting     bool                // SWITCHBOARD_HOSTING=on (hosting.go); off answers every hosting route 404
 	hubOnce     sync.Once
 	nodeHub     *hosting.Hub  // the node channel (hosting.go), built on first use
@@ -66,16 +67,17 @@ var version = "dev"
 
 // Run reads the settings from the environment, opens the database and serves
 // until SIGINT or SIGTERM. v is the build version.
-func Run(v string) { run(v, nil, nil) }
+func Run(v string) { run(v, nil, "", nil) }
 
 // attachFunc starts more work on a server about to serve (up's node); ctx
 // ends at shutdown.
 type attachFunc func(ctx context.Context, s *Server) error
 
 // run is Run; ln, when set, is the listener already bound to LISTEN_ADDR
-// (up binds it first), and attach, when set, runs after the listener is
-// bound.
-func run(v string, ln net.Listener, attach attachFunc) {
+// (up binds it first), setupDir, when set, is up's data directory, where the
+// first-run admin setup keeps its code, and attach, when set, runs after the
+// listener is bound.
+func run(v string, ln net.Listener, setupDir string, attach attachFunc) {
 	version = v
 	hostingOn, e := hostingStart(os.Getenv)
 	if e != nil {
@@ -119,6 +121,11 @@ func run(v string, ln net.Listener, attach attachFunc) {
 	s.discord = insight.ConfigureDiscord(os.Getenv)
 	if e = adminauth.Configure(&s.admin, os.Getenv); e != nil {
 		log.Fatal(e)
+	}
+	if setupDir != "" {
+		if e = s.openSetup(setupDir); e != nil {
+			log.Fatal(e)
+		}
 	}
 	for _, pair := range strings.Split(config.EnvAlias("TOKENS"), ",") {
 		p := strings.SplitN(strings.TrimSpace(pair), "=", 2)
@@ -186,6 +193,8 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("/health", health)
 	mux.HandleFunc("/api/", s.api)
 	mux.HandleFunc("/auth/", s.authAPI)
+	mux.HandleFunc("/setup", s.setupAPI)
+	mux.HandleFunc("/setup/", s.setupAPI)
 	mux.HandleFunc(dashboard.AssetsPrefix, s.assets)
 	mux.HandleFunc("/", s.root)
 	return secureHeaders(mux)

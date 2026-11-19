@@ -67,6 +67,13 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 		}}})
 	})
 	mux.HandleFunc("/token", p.token)
+	// authorize plays a user who signs in at once: a code for the standard
+	// claims, sent back to the redirect URI with the state.
+	mux.HandleFunc("/authorize", func(w http.ResponseWriter, r *http.Request) {
+		code, state := p.issue(t, p.srv.URL+"/authorize?"+r.URL.RawQuery, time.Now(), nil)
+		q := r.URL.Query()
+		http.Redirect(w, r, q.Get("redirect_uri")+"?"+url.Values{"code": {code}, "state": {state}}.Encode(), http.StatusFound)
+	})
 	p.srv = httptest.NewServer(mux)
 	t.Cleanup(p.srv.Close)
 	return p
@@ -436,7 +443,7 @@ func TestOIDCLogsNoSecrets(t *testing.T) {
 			t.Fatalf("log has %q:\n%s", secret, out)
 		}
 	}
-	if !strings.Contains(out, "nonce mismatch") || !strings.Contains(out, "not on the allowlist") {
+	if !strings.Contains(out, "nonce mismatch") || !strings.Contains(out, "not on the allowlist (sub:user-1)") {
 		t.Fatalf("log:\n%s", out)
 	}
 }

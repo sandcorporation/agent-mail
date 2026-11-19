@@ -109,3 +109,46 @@ func TestHostingNameGuardMatches(t *testing.T) {
 		}
 	}
 }
+
+// upRE matches a command line that runs `switchboard up`.
+var upRE = regexp.MustCompile(`\bswitchboard(\.exe)?["']?\s*,?\s*["']?up\b`)
+
+// TestOperationsConfigNeverRunsUp keeps the operations instance on the
+// plain server (Run): only `up` opens the first-run admin setup page (#221),
+// so the image starts `switchboard` with no subcommand and no compose file
+// overrides that.
+func TestOperationsConfigNeverRunsUp(t *testing.T) {
+	root := repoRoot(t)
+	commandRE := regexp.MustCompile(`(?m)^\s*(command|entrypoint):`)
+	for _, f := range operationsFiles(t, root) {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rel, _ := filepath.Rel(root, f)
+		if m := upRE.FindString(string(b)); m != "" {
+			t.Errorf("%s runs %q: the operations instance never runs up", rel, m)
+		}
+		if strings.HasPrefix(filepath.Base(f), "compose") && commandRE.Match(b) {
+			t.Errorf("%s overrides the image command: the operations instance runs the image's entrypoint", rel)
+		}
+	}
+	b, err := os.ReadFile(filepath.Join(root, "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "CMD") {
+			t.Errorf("Dockerfile has %q: the image runs `switchboard` with no subcommand", line)
+		}
+		if strings.HasPrefix(line, "ENTRYPOINT") && line != `ENTRYPOINT ["switchboard"]` {
+			t.Errorf("Dockerfile has %q, want ENTRYPOINT [\"switchboard\"]", line)
+		}
+	}
+	for s, want := range map[string]bool{`switchboard up --data /x`: true, `["switchboard", "up"]`: true, `switchboard.exe up`: true, "docker compose -p switchboard-x up -d": false, "switchboard update": false} {
+		if upRE.MatchString(s) != want {
+			t.Errorf("upRE(%q) = %v", s, !want)
+		}
+	}
+}

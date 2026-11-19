@@ -48,6 +48,7 @@ const (
 	TOTPStep       = 30 // seconds per TOTP code
 	totpDigits     = 6
 	minPasswordLen = 12
+	maxPasswordLen = 1024 // bytes; the login request refuses a longer password
 )
 
 // dummyHash is checked when the name is unknown, so a missing user costs the
@@ -292,8 +293,20 @@ func readNewPassword(stdin io.Reader, stderr io.Writer) (string, error) {
 		}
 		pw = strings.TrimRight(line, "\r\n")
 	}
-	if len([]rune(pw)) < minPasswordLen {
-		return "", fmt.Errorf("password must be at least %d characters", minPasswordLen)
+	if err := checkNewPassword(pw); err != nil {
+		return "", err
 	}
 	return pw, nil
+}
+
+// checkNewPassword is the password policy of `admin create` and the setup
+// page.
+func checkNewPassword(pw string) error {
+	if len([]rune(pw)) < minPasswordLen {
+		return fmt.Errorf("password must be at least %d characters", minPasswordLen)
+	}
+	if len(pw) > maxPasswordLen {
+		return fmt.Errorf("password must be at most %d bytes", maxPasswordLen)
+	}
+	return nil
 }
