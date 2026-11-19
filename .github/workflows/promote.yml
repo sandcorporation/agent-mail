@@ -7,7 +7,12 @@
 #            If production is already newer (an older run finished late) it skips instead of failing.
 # production only moves forward. Roll back with a revert PR on main, or for emergencies the Jenkins ROLLBACK_SHA parameter.
 #
-# Security (public repository): main pushes only, GitHub-hosted runners only, actions pinned by SHA, no extra secrets.
+# Manual run (workflow_dispatch): re-runs a promote that GitHub never started for a main push, e.g.
+#   gh workflow run promote.yml --ref main
+# It promotes the current main head, the same as a push would.
+#
+# Security (public repository): main pushes and manual runs on main only (every job checks github.ref, so a dispatch
+# on any other ref does nothing), GitHub-hosted runners only, actions pinned by SHA, no extra secrets.
 # No default permissions; contents: write only in the promote job. A GITHUB_TOKEN push does not trigger other workflows,
 # but the repository webhook (Jenkins) does see it.
 name: promote
@@ -18,22 +23,27 @@ on:
     # Documentation-only pushes do not rebuild, promote or redeploy. The next code push promotes main as a whole.
     paths-ignore:
       - '**.md'
+  # Only main is promoted; the jobs below skip on any other ref.
+  workflow_dispatch:
 
 permissions: {}
 
 jobs:
   check:
+    if: github.ref == 'refs/heads/main'
     uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
 
   image:
+    if: github.ref == 'refs/heads/main'
     uses: ./.github/workflows/image.yml
     permissions:
       contents: read
       packages: write
 
   promote:
+    if: github.ref == 'refs/heads/main'
     needs: [check, image]
     runs-on: ubuntu-latest
     timeout-minutes: 5
