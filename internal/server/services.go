@@ -90,3 +90,18 @@ func (s *Server) progressAPI(w http.ResponseWriter, r *http.Request, allowed boo
 func (s *Server) progress() (wire.ProgressReport, error) {
 	return s.presence().Progress(s.insight().Limits().Pending, insight.NewBaseResolver(s.db).Of)
 }
+
+// migrateAnsweredRule runs presence.MigrateAnsweredRule at start-up and logs
+// one line when it wrote the stored version.
+func (s *Server) migrateAnsweredRule(logf func(string, ...any)) error {
+	m, err := s.presence().MigrateAnsweredRule(insight.NewBaseResolver(s.db).Of)
+	if err != nil || !m.Changed {
+		return err
+	}
+	if m.From == 0 {
+		logf("answered rule: version %d stored (none before); %d directives marked as needing no reply", m.To, m.Marked)
+	} else {
+		logf("answered rule: version %d -> %d; %d directives opened by the new rule marked as needing no reply", m.From, m.To, m.Marked)
+	}
+	return nil
+}

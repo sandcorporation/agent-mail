@@ -139,6 +139,9 @@ func run(v string, ln net.Listener, setupDir string, attach attachFunc) {
 	if e = s.ids().LoadGroups(); e != nil {
 		log.Fatal("cannot load groups")
 	}
+	if e = s.migrateAnsweredRule(log.Printf); e != nil {
+		log.Fatalf("answered rule: %v", e)
+	}
 	if old := config.OldEnvNames(); len(old) > 0 {
 		log.Printf("old environment names in use (rename AGENT_MAIL_* to SWITCHBOARD_*): %s", strings.Join(old, ", "))
 	}

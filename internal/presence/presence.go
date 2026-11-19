@@ -15,6 +15,7 @@ import (
 
 	"github.com/sandcorporation/switchboard/internal/config"
 	"github.com/sandcorporation/switchboard/internal/identity"
+	"github.com/sandcorporation/switchboard/internal/mail"
 	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
@@ -43,6 +44,17 @@ type Config struct {
 	Missed    int            // heartbeats a session may miss; 0 means defaultPresenceMissed
 	Retain    *time.Duration // how long offline sessions stay listed; nil means defaultPresenceRetain
 	Remind    RemindConfig   // directive reminders (remind.go)
+	// Rule is the answered rule open directives follow; the zero value means
+	// mail.CurrentAnsweredRule. Only tests set another (a later version).
+	Rule mail.AnsweredRule
+}
+
+// rule is the answered rule in force (Config.Rule, else the current one).
+func (s *Service) rule() mail.AnsweredRule {
+	if s.cfg != nil && s.cfg.Rule.Replies != nil {
+		return s.cfg.Rule
+	}
+	return mail.CurrentAnsweredRule
 }
 
 // Service is the presence rules over the slots and presence_log tables. It

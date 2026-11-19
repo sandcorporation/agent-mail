@@ -114,7 +114,10 @@ func Init(db *sql.DB) error {
 	if e = migrateHostingPermissions(db); e != nil {
 		return e
 	}
-	return migrateRemind(db)
+	if e = migrateRemind(db); e != nil {
+		return e
+	}
+	return migrateAnsweredRule(db)
 }
 
 func HasColumn(db *sql.DB, table, column string) (bool, error) {
@@ -549,5 +552,14 @@ func migrateRemind(db *sql.DB) error {
 		}
 	}
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS remind_state(id INTEGER PRIMARY KEY CHECK(id=1), enabled_at INTEGER NOT NULL)`)
+	return err
+}
+
+// migrateAnsweredRule adds answered_rule, whose one row records the version
+// of the answered rule (mail.AnsweredRuleVersion) the stored directives were
+// last settled under. The row is written at start-up by
+// presence.MigrateAnsweredRule, never here.
+func migrateAnsweredRule(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS answered_rule(id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL, updated_at TEXT NOT NULL)`)
 	return err
 }
