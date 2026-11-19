@@ -57,7 +57,12 @@ func newUpRig(t *testing.T) *upRig {
 	r.tmuxDir = d
 	r.socket = "switchboard-" + instanceFor(filepath.Join(r.dir, upNodeToken))
 	t.Cleanup(func() {
-		_ = exec.Command("tmux", "-L", r.socket, "kill-server").Run()
+		// t.Setenv's own cleanup has already restored TMUX_TMPDIR by now
+		// (cleanups run last first), so name the directory explicitly or
+		// the server is left running with its socket removed.
+		kill := exec.Command("tmux", "-L", r.socket, "kill-server")
+		kill.Env = append(os.Environ(), "TMUX_TMPDIR="+d)
+		_ = kill.Run()
 		_ = os.RemoveAll(d)
 	})
 	t.Setenv("TMUX_TMPDIR", d)
