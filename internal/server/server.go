@@ -81,53 +81,53 @@ func run(v string, ln net.Listener, setupDir string, attach attachFunc) {
 	version = v
 	hostingOn, e := hostingStart(os.Getenv)
 	if e != nil {
-		log.Fatal(e)
+		fatal(e)
 	}
 	db, e := store.Open(config.Env("DB_PATH", "/data/mail.db"))
 	if e != nil {
-		log.Fatal(e)
+		fatal(e)
 	}
 	s := &Server{db: db, tokens: map[string]string{}, admin: adminauth.Config{ProxyToken: config.EnvAlias("ADMIN_PROXY_TOKEN")}, done: make(chan struct{}), publicURL: strings.TrimRight(config.EnvAlias("PUBLIC_URL"), "/"), hosting: hostingOn}
 	if v, from := config.EnvAliasFrom(os.Getenv, "SSE_KEEPALIVE"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil || d <= 0 {
-			log.Fatal(from + " must be a positive duration such as 20s")
+			fatal(from + " must be a positive duration such as 20s")
 		}
 		s.mailCfg.KeepAlive = d
 	}
 	if v, from := config.EnvAliasFrom(os.Getenv, "POLL_MAX"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n <= 0 {
-			log.Fatal(from + " must be a positive whole number of seconds such as 55")
+			fatal(from + " must be a positive whole number of seconds such as 55")
 		}
 		s.mailCfg.PollMax = time.Duration(n) * time.Second
 	}
 	if v, from := config.EnvAliasFrom(os.Getenv, "SLOT_LEASE"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil || d < time.Second {
-			log.Fatal(from + " must be a duration of at least 1s such as 3m")
+			fatal(from + " must be a duration of at least 1s such as 3m")
 		}
 		s.presenceCfg.SlotLease = d
 	}
 	if e = presence.Configure(&s.presenceCfg, os.Getenv); e != nil {
-		log.Fatal(e)
+		fatal(e)
 	}
 	if e = configureStall(s, os.Getenv); e != nil {
-		log.Fatal(e)
+		fatal(e)
 	}
 	if e = configureAlerts(s, os.Getenv); e != nil {
-		log.Fatal(e)
+		fatal(e)
 	}
 	s.discord = insight.ConfigureDiscord(os.Getenv)
 	if e = adminauth.Configure(&s.admin, os.Getenv); e != nil {
-		log.Fatal(e)
+		fatal(e)
 	}
 	if e = s.logRemindStart(); e != nil {
-		log.Fatal(e)
+		fatal(e)
 	}
 	if setupDir != "" {
 		if e = s.openSetup(setupDir); e != nil {
-			log.Fatal(e)
+			fatal(e)
 		}
 	}
 	for _, pair := range strings.Split(config.EnvAlias("TOKENS"), ",") {
@@ -137,13 +137,13 @@ func run(v string, ln net.Listener, setupDir string, attach attachFunc) {
 		}
 	}
 	if e = migrateConfiguredRoles(s); e != nil {
-		log.Fatal("cannot migrate configured roles")
+		fatal("cannot migrate configured roles")
 	}
 	if e = s.ids().LoadGroups(); e != nil {
-		log.Fatal("cannot load groups")
+		fatal("cannot load groups")
 	}
 	if e = s.migrateAnsweredRule(log.Printf); e != nil {
-		log.Fatalf("answered rule: %v", e)
+		fatalf("answered rule: %v", e)
 	}
 	if old := config.OldEnvNames(); len(old) > 0 {
 		log.Printf("old environment names in use (rename AGENT_MAIL_* to SWITCHBOARD_*): %s", strings.Join(old, ", "))
@@ -158,38 +158,44 @@ func run(v string, ln net.Listener, setupDir string, attach attachFunc) {
 	srv.RegisterOnShutdown(func() { close(s.done) })
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	logConsoleEvents()
 	stopped := make(chan struct{})
 	waitSweeper := s.startSweeper()
 	if ln == nil {
 		if ln, e = net.Listen("tcp", addr); e != nil {
-			log.Fatal(e)
+			fatal(e)
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if s.hosting {
-		go s.hostingHub().Run(ctx, hosting.SyncInterval)
+		goSafe("hosting hub", func() { s.hostingHub().Run(ctx, hosting.SyncInterval) })
 	}
 	if attach != nil {
 		if e = attach(ctx, s); e != nil {
-			log.Fatal(e)
+			fatal(e)
 		}
 	}
-	go func() {
-		<-stop
+	var why string
+	goSafe("shutdown", func() {
+		sig := <-stop
+		why = "stopped by signal " + sig.String()
+		log.Printf("signal %s: shutting down", sig)
 		cancel()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(ctx)
 		close(stopped)
-	}()
+	})
 	log.Printf("switchboard listening on %s", addr)
 	if e = srv.Serve(ln); e != nil && !errors.Is(e, http.ErrServerClosed) {
-		log.Fatal(e)
+		fatal(e)
 	}
 	<-stopped
 	waitSweeper()
 	_ = db.Close()
+	log.Printf("exit 0: %s", why)
+	_ = os.Stderr.Sync()
 }
 
 // handler is the server's HTTP handler: health, API, admin sign-in and the

@@ -87,7 +87,7 @@ func configureStall(s *Server, getenv func(string) string) error {
 func (s *Server) startSweeper() func() {
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go func() {
+	goSafe("stall sweep", func() {
 		defer wg.Done()
 		t := time.NewTicker(s.sweepInterval())
 		defer t.Stop()
@@ -103,7 +103,7 @@ func (s *Server) startSweeper() func() {
 				s.publishSweep(res)
 			}
 		}
-	}()
+	})
 	return wg.Wait
 }
 

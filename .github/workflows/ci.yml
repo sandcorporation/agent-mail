@@ -62,6 +62,12 @@ jobs:
         run: bash scripts/ci/e2e.sh
       # The server suite is not Windows-clean yet (its SQLite test databases
       # stay open past TempDir cleanup); it runs on Linux in the test job.
+      - name: Exit paths leave a line (#257)
+        shell: bash
+        run: go test -count=1 -v -run '^TestExitPathsLeaveALine$' ./internal/server/
+      - name: Exit repro under the scheduled task (#257, temporary)
+        shell: powershell
+        run: ./scripts/ci/exit_repro.ps1
       - name: Terminal packages
         run: go test -count=1 ./internal/term/...
       - run: go build ./...
