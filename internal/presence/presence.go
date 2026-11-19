@@ -42,6 +42,7 @@ type Config struct {
 	Interval  time.Duration  // expected heartbeat interval; 0 means defaultPresenceInterval
 	Missed    int            // heartbeats a session may miss; 0 means defaultPresenceMissed
 	Retain    *time.Duration // how long offline sessions stay listed; nil means defaultPresenceRetain
+	Remind    RemindConfig   // directive reminders (remind.go)
 }
 
 // Service is the presence rules over the slots and presence_log tables. It
@@ -91,7 +92,7 @@ func Configure(c *Config, getenv func(string) string) error {
 		}
 		c.Retain = &d
 	}
-	return nil
+	return configureRemind(&c.Remind, getenv)
 }
 
 func (s *Service) heartbeatInterval() time.Duration {

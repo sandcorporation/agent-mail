@@ -31,6 +31,8 @@ func sameIDs(got, want []int64) bool {
 
 // (c) A report sent as new mail names the directives it answers: "#<id>" in
 // its subject or body, from the recipient base to the sender base or a boss.
+// The metrics count it as an answer (mail.Answers); the progress view does
+// not (mail.Replies, #214), so every directive here stays open.
 func TestProgressAnsweredByMention(t *testing.T) {
 	s, clock := slotServer(t)
 	s.bossRoles = map[string]bool{"hq/boss": true, "hq/chief": true}
@@ -62,10 +64,10 @@ func TestProgressAnsweredByMention(t *testing.T) {
 	early := mailAt(t, s, flowRow{sender: "hq/boss", recipient: "team/worker", subject: "early", at: at.Add(30 * time.Minute)})
 	mailAt(t, s, flowRow{sender: "team/worker", recipient: "hq/boss", subject: fmt.Sprintf("Re #%d", early), at: at.Add(29 * time.Minute)})
 
-	if got, want := openIDs(t, s), []int64{longer, otherBase, sideways, early}; !sameIDs(got, want) {
-		t.Fatalf("open %v, want %v (answered %d %d %d)", got, want, a, b, inBody)
+	if got, want := openIDs(t, s), []int64{a, b, inBody, longer, otherBase, sideways, early}; !sameIDs(got, want) {
+		t.Fatalf("open %v, want %v (a mention is no reply)", got, want)
 	}
-	// Metrics first reply follows the same rule: a, b and inBody are answered.
+	// Metrics first reply keeps the loose rule: a, b and inBody are answered.
 	if fr := mustMetrics(t, s, 7).FirstReply; fr.Answered != 3 {
 		t.Fatalf("first_reply %+v, want 3 answered", fr.LatencyStats)
 	}
@@ -167,7 +169,8 @@ func TestCLIReplyDirective(t *testing.T) {
 
 // mixedFixture is 30 messages of directives, reports, acks and completions
 // as they occur in use. Under the rule before #138 (thread, reply_to,
-// task_id; every boss mail a directive) 15 stay open; under the new rule 5.
+// task_id; every boss mail a directive) 15 stay open; under #138's rule 5;
+// under the strict reply rule (#214) 11.
 func TestProgressMixedFixture(t *testing.T) {
 	s, clock := slotServer(t)
 	s.bossRoles = map[string]bool{"hq/boss": true}
@@ -187,7 +190,7 @@ func TestProgressMixedFixture(t *testing.T) {
 	d1, d2 := boss("team/worker", "build A"), boss("team/worker", "build B")                                                   // 1, 2
 	r3 := m(flowRow{sender: "team/worker", recipient: "hq/boss", subject: fmt.Sprintf("Re #%d·#%d", d1, d2)})                  // 3
 	ackA := ack("team/worker", r3, "ok")                                                                                       // 4
-	m(flowRow{sender: "hq/boss", recipient: "team/worker", subject: "task C", task: "T-3"})                                    // 5
+	c5 := m(flowRow{sender: "hq/boss", recipient: "team/worker", subject: "task C", task: "T-3"})                              // 5
 	m(flowRow{sender: "team/worker", recipient: "hq/boss", subject: "C done", task: "T-3"})                                    // 6
 	d4 := boss("team/worker", "fix D")                                                                                         // 7
 	m(flowRow{sender: "team/worker", recipient: "hq/boss", subject: "re", thread: d4, reply: d4})                              // 8
@@ -219,8 +222,11 @@ func TestProgressMixedFixture(t *testing.T) {
 	if n != 30 {
 		t.Fatalf("fixture has %d messages", n)
 	}
-	_ = []int64{d1, d2, ackA, ackB, d10, ackC, d12, ackD, ackE} // open under the old rule only
-	if got, want := openIDs(t, s), []int64{d6, d8, d9, more, d11}; !sameIDs(got, want) {
+	_ = []int64{ackA, ackB, ackC, ackD, ackE} // open under the rule before #138 only
+	// Under mail.Replies (#214) only the thread reply 8 answers (7) and the
+	// completion closes 9 and 29: reports by task (6) or by #id (3, 12, 20,
+	// 25) leave their directives open.
+	if got, want := openIDs(t, s), []int64{d1, d2, c5, d6, d7, d8, d9, more, d10, d11, d12}; !sameIDs(got, want) {
 		t.Fatalf("open %v (%d), want %v", got, len(got), want)
 	}
 }

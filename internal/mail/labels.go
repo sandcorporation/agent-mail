@@ -158,13 +158,13 @@ func moveHeld(tx *sql.Tx, ids []int64, box string, now time.Time) error {
 // messageCols is the column list scanMessage reads, for a query with the
 // messages table aliased m. status is the expression for the status column.
 func messageCols(status string) string {
-	return `m.id,m.sender,m.recipient,m.subject,m.body,m.created_at,COALESCE(m.task_id,''),COALESCE(m.thread_id,0),COALESCE(m.reply_to,0),` + status + `,COALESCE(m.priority,'normal'),COALESCE(m.addressed_to,''),COALESCE(m.held_id,0),COALESCE(m.held_at,''),COALESCE(m.delivered_at,''),m.directive`
+	return `m.id,m.sender,m.recipient,m.subject,m.body,m.created_at,COALESCE(m.task_id,''),COALESCE(m.thread_id,0),COALESCE(m.reply_to,0),` + status + `,COALESCE(m.priority,'normal'),COALESCE(m.addressed_to,''),COALESCE(m.held_id,0),COALESCE(m.held_at,''),COALESCE(m.delivered_at,''),m.directive,m.no_reply`
 }
 
 func scanMessage(sc interface{ Scan(...any) error }) (wire.Message, error) {
 	var m wire.Message
 	var created, held, delivered string
-	err := sc.Scan(&m.ID, &m.Sender, &m.Recipient, &m.Subject, &m.Body, &created, &m.TaskID, &m.ThreadID, &m.ReplyTo, &m.Status, &m.Priority, &m.AddressedTo, &m.HeldID, &held, &delivered, &m.Directive)
+	err := sc.Scan(&m.ID, &m.Sender, &m.Recipient, &m.Subject, &m.Body, &created, &m.TaskID, &m.ThreadID, &m.ReplyTo, &m.Status, &m.Priority, &m.AddressedTo, &m.HeldID, &held, &delivered, &m.Directive, &m.NoReply)
 	m.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 	m.HeldAt, m.DeliveredAt = optTime(held), optTime(delivered)
 	return m, err

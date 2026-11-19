@@ -9,8 +9,9 @@ import (
 )
 
 // answeredFixture writes boss directives to team/worker (#63) and returns the
-// ids that must stay open in the progress view, the ids the metrics count as
-// answered, and the total number of directives.
+// ids that must stay open in the progress view (mail.Replies, #214), the
+// number the metrics count as answered (mail.Answers), and the total number
+// of directives.
 func answeredFixture(t *testing.T, s *Server, at time.Time) (open []int64, answered int, total int) {
 	t.Helper()
 	s.bossRoles = map[string]bool{"hq/boss": true, "hq/chief": true}
@@ -22,8 +23,9 @@ func answeredFixture(t *testing.T, s *Server, at time.Time) (open []int64, answe
 	thread := d("thread reply", "", "read", 0)
 	mailAt(t, s, flowRow{sender: "team/worker-2", recipient: "hq/boss", at: at.Add(time.Minute), thread: thread, reply: thread})
 	answered++
-	// A task_id report to any boss role answers, even outside the thread.
-	d("task report", "T-2", "read", time.Minute)
+	// A task_id report to any boss role answers for the metrics, even outside
+	// the thread; the progress view keeps the directive open.
+	task := d("task report", "T-2", "read", time.Minute)
 	mailAt(t, s, flowRow{sender: "team/worker", recipient: "hq/chief", task: "T-2", at: at.Add(2 * time.Minute)})
 	answered++
 	// A reply from another base does not.
@@ -38,7 +40,7 @@ func answeredFixture(t *testing.T, s *Server, at time.Time) (open []int64, answe
 	mailAt(t, s, flowRow{sender: identity.LegacySystemSender, recipient: "hq/boss", task: "T-5", at: at.Add(6 * time.Minute), thread: system})
 	// A completed directive stays hidden without any reply.
 	d("completed", "", "complete", 5*time.Minute)
-	return []int64{other, before, system}, answered, total
+	return []int64{task, other, before, system}, answered, total
 }
 
 func TestProgressAnsweredDirectivesHidden(t *testing.T) {

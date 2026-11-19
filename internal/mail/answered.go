@@ -63,9 +63,9 @@ func (m FlowMail) mentions(id int64) bool {
 	return false
 }
 
-// Answers is the one rule (#63, #138) for whether m answers the directive d.
-// The progress view's open_directives and the metrics first_reply both use
-// it.
+// Answers is the loose rule (#63, #138) for whether m answers the directive
+// d. The metrics first_reply uses it. The progress view's open_directives and
+// the directive reminders use the strict rule, Replies (#214).
 //
 // m answers d when it is sent no earlier than d, not by the system, by a
 // role of d's recipient base, and either
@@ -90,6 +90,51 @@ func Answers(d, m FlowMail, base func(string) string, isBoss func(string) bool) 
 		return false
 	}
 	return (d.TaskID != "" && m.TaskID == d.TaskID) || m.mentions(d.ID)
+}
+
+// Replies is the strict rule (#214) for whether m answers the directive d:
+// the progress view's open_directives and the directive reminders use it.
+//
+// m replies to d when it is sent no earlier than d, not by the system, by a
+// role of d's recipient base to a role of d's sender base, and either has
+// reply_to = d or is in d's thread (same thread root, or a thread rooted at
+// d). A mention of #<d's id> or a shared task id in other mail does not
+// count: that is Answers' rule (b) and (c), which only the metrics keep.
+func Replies(d, m FlowMail, base func(string) string) bool {
+	if m.ID == d.ID || identity.IsSystemSender(m.Sender) || m.Created.Before(d.Created) || base(m.Sender) != base(d.Recipient) || base(m.Recipient) != base(d.Sender) {
+		return false
+	}
+	return m.ReplyTo == d.ID || m.ThreadID == d.ID || m.Thread() == d.Thread()
+}
+
+// ReplyCandidates loads the mail that could reply to any of ds under Replies:
+// mail in their threads or threads rooted at them (idx_thread). A reply
+// always carries a thread_id (Send sets it from reply_to), so this covers
+// reply_to too. Ids are chunked to stay under SQLite's variable limit.
+func ReplyCandidates(db *sql.DB, ds []FlowMail) ([]FlowMail, error) {
+	threadSet := map[int64]bool{}
+	for _, d := range ds {
+		threadSet[d.Thread()], threadSet[d.ID] = true, true
+	}
+	var threads []any
+	for id := range threadSet {
+		threads = append(threads, id)
+	}
+	var out []FlowMail
+	const chunk = 500
+	for i := 0; i < len(threads); i += chunk {
+		part := append([]any{}, threads[i:min(i+chunk, len(threads))]...)
+		rows, err := db.Query(`SELECT `+FlowCols+` FROM messages WHERE thread_id IN (`+placeholders(len(part))+`) AND sender NOT IN (?,?)`, append(part, identity.SystemSender, identity.LegacySystemSender)...)
+		if err != nil {
+			return nil, err
+		}
+		ms, err := ScanFlowMail(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ms...)
+	}
+	return out, nil
 }
 
 // FlowCols is the column list ScanFlowMail reads, for queries on messages

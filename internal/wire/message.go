@@ -25,6 +25,7 @@ type Message struct {
 	HeldAt         *time.Time `json:"held_at,omitempty"`      // when the message was held for a label
 	DeliveredAt    *time.Time `json:"delivered_at,omitempty"` // when held mail moved to a session
 	Directive      bool       `json:"directive,omitempty"`    // a reply that carries new work (reply --directive); plain sends are directives anyway
+	NoReply        bool       `json:"no_reply,omitempty"`     // needs no answer (send/reply --no-reply): never an open directive
 	IdempotencyKey string     `json:"-"`
 }
 

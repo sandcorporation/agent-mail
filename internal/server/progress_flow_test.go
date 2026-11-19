@@ -42,14 +42,15 @@ func TestProgressDirectivesFollowFlow(t *testing.T) {
 		return m(flowRow{sender: "hq/boss", recipient: to, task: task, subject: subject})
 	}
 
-	// T-A: directive, then a "Re #id" report without the task id: done.
+	// T-A: directive, then a "Re #id" report without the task id: a mention
+	// is no reply (#214), waiting.
 	a := boss("team/worker", "T-A", "build A")
 	m(flowRow{sender: "team/worker", recipient: "hq/boss", subject: fmt.Sprintf("Re #%d", a)})
 	// T-B: directive the recipient only read: waiting.
-	boss("team/worker", "T-B", "build B")
-	// T-C: two directives, only the first answered by #id: waiting.
+	b := boss("team/worker", "T-B", "build B")
+	// T-C: two directives, the first named by #id: both waiting.
 	c1 := boss("team/worker", "T-C", "C part 1")
-	boss("team/worker", "T-C", "C part 2")
+	c2 := boss("team/worker", "T-C", "C part 2")
 	m(flowRow{sender: "team/worker", recipient: "hq/boss", subject: "part 1 done", body: fmt.Sprintf("#%d", c1)})
 	// T-D: directive completed by its recipient (no answer mail): done.
 	m(flowRow{sender: "hq/boss", recipient: "team/worker", task: "T-D", subject: "deploy D", status: "complete"})
@@ -61,37 +62,44 @@ func TestProgressDirectivesFollowFlow(t *testing.T) {
 	// T-F: directive answered in its thread: done.
 	f := boss("team/worker", "T-F", "fix F")
 	m(flowRow{sender: "team/worker", recipient: "hq/boss", subject: "fixed", thread: f, reply: f})
-	// T-G: directive answered by a report with the task id; the boss's plain
-	// ack is not a directive: done.
-	boss("ops/lead", "T-G", "check G")
+	// T-G: a report with the task id is no reply (#214): waiting; the boss's
+	// plain ack is not a directive.
+	gd := boss("ops/lead", "T-G", "check G")
 	g := m(flowRow{sender: "ops/lead", recipient: "hq/boss", task: "T-G", subject: "checked"})
 	m(flowRow{sender: "hq/boss", recipient: "ops/lead", task: "T-G", subject: "thanks", thread: g, reply: g})
 	// T-H: report, then a reply --directive asking for more, unanswered: waiting.
 	h := m(flowRow{sender: "ops/lead", recipient: "hq/boss", task: "T-H", subject: "H draft"})
-	m(flowRow{sender: "hq/boss", recipient: "ops/lead", task: "T-H", subject: "also tests", thread: h, reply: h, directive: true})
+	hd := m(flowRow{sender: "hq/boss", recipient: "ops/lead", task: "T-H", subject: "also tests", thread: h, reply: h, directive: true})
 
-	want := []string{"ops:T-H", "team:T-B", "team:T-C"}
+	want := []string{"ops:T-G", "ops:T-H", "team:T-A", "team:T-B", "team:T-C", "team:T-C"}
 	if got := openDirectiveTasks(t, s); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("open directives %v, want %v", got, want)
 	}
 
-	// Answering the rest closes them.
-	m(flowRow{sender: "team/worker", recipient: "hq/boss", task: "T-B", subject: "B done"})
-	m(flowRow{sender: "team/worker", recipient: "hq/boss", task: "T-C", subject: "C done"})
-	m(flowRow{sender: "ops/lead", recipient: "hq/boss", task: "T-H", subject: "tests added"})
+	// Replying to the rest closes them.
+	for _, id := range []int64{a, b, c1, c2} {
+		m(flowRow{sender: "team/worker", recipient: "hq/boss", subject: "done", thread: id, reply: id})
+	}
+	m(flowRow{sender: "ops/lead", recipient: "hq/boss", subject: "checked", thread: gd, reply: gd})
+	m(flowRow{sender: "ops/lead", recipient: "hq/boss", subject: "tests added", thread: h, reply: hd})
 	if got := openDirectiveTasks(t, s); len(got) != 0 {
 		t.Fatalf("open directives after answers %v", got)
 	}
 }
 
-// The #139 mixed fixture: its one directive (T-3) was answered by a task_id report.
+// The #139 mixed fixture: its one directive (T-3) got a task_id report,
+// which is no reply (#214); a reply in its thread closes it.
 func TestProgressMixedFixtureDirectives(t *testing.T) {
 	s, clock := slotServer(t)
 	s.bossRoles = map[string]bool{"hq/boss": true}
 	at := clock.now().Add(-time.Hour)
-	mailAt(t, s, flowRow{sender: "hq/boss", recipient: "team/worker", subject: "task C", task: "T-3", at: at})
+	d := mailAt(t, s, flowRow{sender: "hq/boss", recipient: "team/worker", subject: "task C", task: "T-3", at: at})
 	mailAt(t, s, flowRow{sender: "team/worker", recipient: "hq/boss", subject: "C done", task: "T-3", at: at.Add(time.Minute)})
+	if got := openDirectiveTasks(t, s); strings.Join(got, ",") != "team:T-3" {
+		t.Fatalf("waiting %v, want team:T-3", got)
+	}
+	mailAt(t, s, flowRow{sender: "team/worker", recipient: "hq/boss", subject: "re", thread: d, reply: d, at: at.Add(2 * time.Minute)})
 	if got := openDirectiveTasks(t, s); len(got) != 0 {
-		t.Fatalf("waiting %v", got)
+		t.Fatalf("waiting %v after the reply", got)
 	}
 }
