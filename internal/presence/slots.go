@@ -192,6 +192,38 @@ func identityRow(tx *sql.Tx, base string, req wire.SlotRequest) (wire.SlotView, 
 	return v, err == nil, err
 }
 
+// endLeases hands off what the slots of base whose lease has ended still
+// hold unread for another session (mail.HandOffUnread), except the slot of
+// req's own identity, which renews its lease in this transaction. Every
+// register and heartbeat runs it first, so it sees an ended lease before the
+// number is given to another identity and before held mail is delivered; a
+// handoff can only be taken in such a transaction.
+func endLeases(tx *sql.Tx, base string, req wire.SlotRequest, now time.Time) error {
+	rows, err := tx.Query(`SELECT number FROM slots WHERE base=? AND lease_until<=? AND NOT (machine=? AND directory=?)`, base, ms(now), req.Machine, req.Directory)
+	if err != nil {
+		return err
+	}
+	var ended []int
+	for rows.Next() {
+		var n int
+		if err = rows.Scan(&n); err != nil {
+			rows.Close()
+			return err
+		}
+		ended = append(ended, n)
+	}
+	rows.Close()
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	for _, n := range ended {
+		if _, err = mail.HandOffUnread(tx, base, n, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // claimSlot registers (takeover=false) or takes slot 1 (takeover=true).
 //
 // Register: an identity that already has a row gets that number back, leased
@@ -208,6 +240,9 @@ func (s *Service) claimSlot(ctx context.Context, base string, req wire.SlotReque
 	var box, handed string
 	var moved int
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		if err := endLeases(tx, base, req, now); err != nil {
+			return err
+		}
 		own, has, err := identityRow(tx, base, req)
 		if err != nil {
 			return err
@@ -333,6 +368,11 @@ func (s *Service) renewSlot(ctx context.Context, base string, req wire.SlotReque
 		}
 		if !has {
 			return errNoSlot
+		}
+		if !release {
+			if err = endLeases(tx, base, req, now); err != nil {
+				return err
+			}
 		}
 		set, args := `lease_until=?`, []any{ms(until)}
 		if release {

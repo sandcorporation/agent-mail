@@ -144,6 +144,7 @@ func moveHeld(tx *sql.Tx, ids []int64, box string, now time.Time) error {
 			`UPDATE messages SET thread_id=? WHERE thread_id=?`,
 			`UPDATE messages SET reply_to=? WHERE reply_to=?`,
 			`UPDATE role_states SET message_id=? WHERE message_id=?`,
+			`UPDATE handoffs SET message_id=? WHERE message_id=?`,
 		} {
 			if _, err = tx.Exec(q, next, old); err != nil {
 				return err
