@@ -27,6 +27,7 @@ var hostingPaths = []struct{ method, path string }{
 	{"GET", "/api/admin/nodes"},
 	{"DELETE", "/api/admin/nodes/pc"},
 	{"GET", "/api/node/socket"},
+	{"POST", "/api/node/join"},
 }
 
 // unknownTwin is a route nobody serves, under the same prefix as path.
@@ -125,6 +126,7 @@ var hostingServed = map[string]bool{
 	"PUT /api/admin/terminals/7": true, "DELETE /api/admin/terminals/7": true,
 	"POST /api/admin/terminals/7/restart": true,
 	"GET /api/admin/nodes":                true,
+	"DELETE /api/admin/nodes/pc":          true,
 }
 
 func TestHostingOnStubsStayBehindAdminSignIn(t *testing.T) {

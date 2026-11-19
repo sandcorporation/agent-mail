@@ -17,7 +17,6 @@ import (
 	"syscall"
 
 	"github.com/sandcorporation/switchboard/internal/config"
-	"github.com/sandcorporation/switchboard/internal/hosting"
 	"github.com/sandcorporation/switchboard/internal/node"
 	"github.com/sandcorporation/switchboard/internal/wire"
 )
@@ -62,8 +61,11 @@ func Up(v, dataDir string, port int, nodeName string) error {
 		return err
 	}
 	run(v, func(ctx context.Context, s *Server) error {
-		token, err := s.hostingService().EnsureNodeToken(nodeName, tokenFile)
+		token, err := node.EnsureTokenFile(tokenFile)
 		if err != nil {
+			return fmt.Errorf("up: node %s: %w", nodeName, err)
+		}
+		if err = s.hostingService().RegisterLocalNode(nodeName, token); err != nil {
 			return fmt.Errorf("up: node %s: %w", nodeName, err)
 		}
 		link, err := part.link(token)
@@ -78,25 +80,30 @@ func Up(v, dataDir string, port int, nodeName string) error {
 }
 
 // Node is `switchboard node`: a node for this machine attached to the host at
-// hostURL with the token in tokenFile, until SIGINT or SIGTERM. Only a
-// loopback host is accepted in this release.
-func Node(v, hostURL, tokenFile string) error {
-	u, err := url.Parse(hostURL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return fmt.Errorf("node: --host %q is not an http:// or https:// URL", hostURL)
-	}
-	if !loopbackHost(u.Hostname()) {
-		return fmt.Errorf("node: --host %s is not a loopback address; nodes attach only to a host on this machine in this release", u.Hostname())
-	}
-	token, err := hosting.ReadTokenFile(tokenFile)
-	if err != nil {
-		return fmt.Errorf("node: token: %w", err)
+// hostURL with the token in tokenFile, until SIGINT or SIGTERM. With a join
+// code it first exchanges the code for a token and writes tokenFile (user
+// only; an existing file is never replaced). Only a loopback host is accepted
+// in this release.
+func Node(v, hostURL, tokenFile, joinCode string) error {
+	if err := checkNodeHost(hostURL); err != nil {
+		return err
 	}
 	abs, err := filepath.Abs(tokenFile)
 	if err != nil {
 		return err
 	}
-	part, err := prepareNode(v, "", abs, hostURL, "")
+	name := ""
+	if joinCode != "" {
+		if name, err = joinHost(context.Background(), hostURL, abs, joinCode); err != nil {
+			return err
+		}
+		log.Printf("node %s: joined; token saved to %s", name, abs)
+	}
+	token, err := node.ReadTokenFile(abs)
+	if err != nil {
+		return fmt.Errorf("node: token: %w", err)
+	}
+	part, err := prepareNode(v, name, abs, hostURL, "")
 	if err != nil {
 		return err
 	}
@@ -111,6 +118,35 @@ func Node(v, hostURL, tokenFile string) error {
 		return err
 	}
 	return nil
+}
+
+// checkNodeHost accepts an http(s) URL of a loopback host only: nodes on
+// other machines wait for the access-scope decision.
+func checkNodeHost(hostURL string) error {
+	u, err := url.Parse(hostURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("node: --host %q is not an http:// or https:// URL", hostURL)
+	}
+	if !loopbackHost(u.Hostname()) {
+		return fmt.Errorf("node: --host %s is not a loopback address; this release attaches nodes only to a host on this machine (access scope: spec #173 owner answers, decided again before #180)", u.Hostname())
+	}
+	return nil
+}
+
+// joinHost exchanges an invite code at hostURL for the node's token and
+// writes it to tokenFile, which must not exist yet. It returns the node name.
+func joinHost(ctx context.Context, hostURL, tokenFile, code string) (string, error) {
+	if _, err := os.Stat(tokenFile); err == nil {
+		return "", fmt.Errorf("node: %s already exists; run without --join to use it, or name another --token-file", tokenFile)
+	}
+	j, err := node.Join(ctx, hostURL, code)
+	if err != nil {
+		return "", err
+	}
+	if err = node.WriteTokenFile(tokenFile, j.Token); err != nil {
+		return "", fmt.Errorf("node %s: joined, but the token could not be saved: %w", j.Name, err)
+	}
+	return j.Name, nil
 }
 
 func loopbackHost(h string) bool {

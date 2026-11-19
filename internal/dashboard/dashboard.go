@@ -321,6 +321,11 @@ table.stack tbody tr:hover td{background:none}
 <div class="toolbar"><h2>역할</h2><button id="reloadRoles">새로 고침</button><span id="rolesNote" class="muted"></span></div>
 <div id="rolesMsg" class="msg" role="status" aria-live="polite"></div>
 <div class="wide"><table id="rolesTbl" class="stack"><thead><tr><th>역할</th><th>등록</th><th>끊은 때</th><th></th></tr></thead><tbody id="rolesTable"></tbody></table></div>
+<div id="nodesBox" hidden>
+<div class="toolbar"><h2>노드</h2><button id="reloadNodes">새로 고침</button><span id="nodesNote" class="muted"></span></div>
+<div id="nodesMsg" class="msg" role="status" aria-live="polite"></div>
+<div class="wide"><table id="nodesTbl" class="stack"><thead><tr><th>노드</th><th>기계</th><th>OS</th><th>버전</th><th>마지막 접속</th><th>끊은 때</th><th></th></tr></thead><tbody id="nodesTable"></tbody></table></div>
+</div>
 </section>
 <section id="panel-terminals" role="tabpanel" aria-labelledby="tab-terminals" tabindex="0" class="card" hidden>
 <div class="toolbar"><h2>터미널</h2><button id="reloadTerminals">새로 고침</button><span id="terminalsNote" class="muted"></span></div>
@@ -358,7 +363,8 @@ async function loadMe(){
     const r=await fetch('/api/admin/me',{credentials:'same-origin',headers:{'Accept':'application/json'}});
     if(!r.ok)return;
     const m=await r.json();adminMode=m.mode||'';hostingOn=m.hosting===true;
-    $('tab-terminals').hidden=!hostingOn;
+    $('tab-terminals').hidden=!hostingOn;$('nodesBox').hidden=!hostingOn;
+    if(hostingOn&&location.hash==='#settings')loadNodes();
     if(hostingOn&&location.hash==='#terminals')route();
     $('whoName').textContent=m.mode==='legacy'?'프록시':m.user;
     $('whoName').title=$('whoName').textContent;
@@ -897,7 +903,7 @@ async function loadTerminals(){
     for(const v of rows){
       const rt=v.runtime||{},st=rt.state||'unknown';
       const want=v.desired==='stopped'&&st!=='stopped'&&st!=='node offline'?' → 멈춤':'';
-      const tr=node('tr',st==='node offline'?'offline':'');
+      const tr=node('tr','',st==='node offline'?'offline':'');
       cells(tr,termCols,[v.node,v.base,v.label||'-',(termState[st]||st)+want,when(rt.since),v.directory,String(rt.restarts||0),rt.last_exit===null||rt.last_exit===undefined?'-':String(rt.last_exit)],
         ['','','',st==='running'?'st-idle':st==='node offline'||st==='unknown'?'st-offline':st==='crashloop'?'st-error':'','','dir','num','num']);
       const dir=tr.children[5];dir.title=v.directory;dir.textContent='\u200e'+v.directory+'\u200e';
@@ -963,7 +969,36 @@ async function loadRoles(){
   }catch(e){$('rolesNote').textContent=e.message}
 }
 $('reloadRoles').onclick=loadRoles;
-tabLoaders.settings=()=>{loadSettings();loadRoles()};
+// ---- 노드 (hosting) ----
+const nodeCols=['노드','기계','OS','버전','마지막 접속','끊은 때'];
+async function loadNodes(){
+  if(!hostingOn)return;
+  $('nodesNote').textContent='불러오는 중…';
+  try{
+    const rows=await api('nodes');
+    const body=$('nodesTable');body.replaceChildren();
+    for(const v of rows){
+      const tr=node('tr','',v.revoked_at?'offline':'');
+      cells(tr,nodeCols,[v.name,v.machine||'-',v.os||'-',v.version||'-',when(v.last_seen_at),v.revoked_at?when(v.revoked_at):'-'],['','','','','',v.revoked_at?'revoked':'']);
+      const act=node('td','');
+      if(!v.revoked_at){
+        const b=node('button','끊기');b.type='button';
+        b.onclick=async()=>{
+          if(!confirm(v.name+' 노드를 끊을까요? 연결이 바로 끊기고 이 노드의 토큰은 다시 쓸 수 없습니다.'))return;
+          try{await apiSend('DELETE','nodes/'+encodeURIComponent(v.name));setMsg($('nodesMsg'),v.name+' 노드를 끊었습니다.','ok');loadNodes()}
+          catch(e){setMsg($('nodesMsg'),e.message,'err')}
+        };
+        act.append(b);
+      }
+      tr.append(act);body.append(tr);
+    }
+    if(!rows.length)emptyRow(body,7,'노드 없음');
+    const off=rows.filter(v=>v.revoked_at).length;
+    $('nodesNote').textContent=rows.length+'개'+(off?' · 끊김 '+off:'');
+  }catch(e){$('nodesNote').textContent=e.message}
+}
+$('reloadNodes').onclick=loadNodes;
+tabLoaders.settings=()=>{loadSettings();loadRoles();loadNodes()};
 // ---- 권한 요청 ----
 // GET /api/admin/permissions?status=pending and ?status=closed; answers go to
 // POST /api/admin/permissions/{id}/answer, the same server function as

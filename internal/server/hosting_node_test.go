@@ -21,8 +21,10 @@ import (
 // nodeToken registers node name on s and returns its token.
 func nodeToken(t *testing.T, s *Server, name string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "node.token")
-	token, err := s.hostingService().EnsureNodeToken(name, path)
+	token, err := node.EnsureTokenFile(filepath.Join(t.TempDir(), "node.token"))
+	if err == nil {
+		err = s.hostingService().RegisterLocalNode(name, token)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +34,14 @@ func nodeToken(t *testing.T, s *Server, name string) string {
 func TestNodeTokenIsStoredHashedInAPrivateFile(t *testing.T) {
 	s, _, _ := signedInServer(t, true)
 	path := filepath.Join(t.TempDir(), "data", "node.token")
-	token, err := s.hostingService().EnsureNodeToken("local", path)
+	ensure := func() (string, error) {
+		token, err := node.EnsureTokenFile(path)
+		if err == nil {
+			err = s.hostingService().RegisterLocalNode("local", token)
+		}
+		return token, err
+	}
+	token, err := ensure()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,14 +53,14 @@ func TestNodeTokenIsStoredHashedInAPrivateFile(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT token_hash FROM nodes WHERE name='local'`).Scan(&stored); err != nil || stored == token || strings.Contains(stored, token) {
 		t.Fatalf("stored %q (%v)", stored, err)
 	}
-	again, err := s.hostingService().EnsureNodeToken("local", path)
+	again, err := ensure()
 	if err != nil || again != token {
 		t.Fatalf("second start: %q %v", again, err)
 	}
 	if _, err := s.db.Exec(`UPDATE nodes SET revoked_at=1 WHERE name='local'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.hostingService().EnsureNodeToken("local", path); err == nil {
+	if _, err := ensure(); err == nil {
 		t.Fatal("a revoked node started")
 	}
 }
@@ -65,7 +74,7 @@ func TestNodeTokenIsRefusedOutsideTheNodeChannel(t *testing.T) {
 		{"GET", "/api/messages"}, {"POST", "/api/messages"}, {"GET", "/api/watch"}, {"GET", "/api/presence"},
 		{"GET", "/api/whoami"}, {"GET", "/api/slots"}, {"GET", "/api/questions"},
 		{"GET", "/api/admin/terminals"}, {"POST", "/api/admin/terminals"}, {"GET", "/api/admin/nodes"},
-		{"GET", "/api/admin/roles"}, {"GET", "/api/admin/me"}, {"GET", "/api/admin/live"},
+		{"DELETE", "/api/admin/nodes/pc"}, {"GET", "/api/admin/roles"}, {"GET", "/api/admin/me"}, {"GET", "/api/admin/live"},
 	} {
 		for _, h := range []map[string]string{bearer, asRole} {
 			if got := send(t, base, p.method, p.path, nil, h); got.code != http.StatusUnauthorized {
@@ -190,6 +199,7 @@ func TestNodeChannelAssignsReportsAndGoesOffline(t *testing.T) {
 	}
 	eventually(t, "the CLI record running", func() bool { return terminals(t, base, cookie)[second.ID].Runtime.State == "running" })
 	// So does a record for another node: never.
+	nodeToken(t, s, "other")
 	if _, err := s.hostingService().Create(wire.HostedSessionCreate{Node: "other", Base: "b", Profile: "p", Directory: "/w"}); err != nil {
 		t.Fatal(err)
 	}

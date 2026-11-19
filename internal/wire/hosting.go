@@ -78,6 +78,19 @@ type NodeView struct {
 	RevokedAt  *int64 `json:"revoked_at"`
 }
 
+// NodeJoin is the body of POST /api/node/join: a one-time code from
+// `switchboard node invite`.
+type NodeJoin struct {
+	Code string `json:"code"`
+}
+
+// NodeJoined answers a valid NodeJoin once: the invited node's name and its
+// token, which the host keeps only as a hash.
+type NodeJoined struct {
+	Name  string `json:"name"`
+	Token string `json:"token"`
+}
+
 // Node channel (#173): one WebSocket from a node to GET /api/node/socket,
 // carrying NodeFrame JSON both ways.
 const (
