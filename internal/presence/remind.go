@@ -25,10 +25,14 @@ import (
 // the directive is still open one more gap after the last reminder, its
 // sender gets one notice.
 //
+// The schedule starts at the directive's send time, or at the time reminders
+// were first switched on when the directive is older (#268), so the first
+// reminder is due at max(sent, enabled_at) + T and switching on sends no
+// burst at once. Work stopped after a reply is the idle check's (idle.go).
+//
 // SWITCHBOARD_REMIND=on turns the sweep on; off (the default) it reads and
 // writes nothing. The first sweep with it on records the time in
-// remind_state; directives created before that time are never reminded, and
-// switching it off and on again keeps the first time.
+// remind_state; switching it off and on again keeps the first time.
 //
 // Every reminder and notice carries an idempotency key (remind:<id>:<n>,
 // remind-sender:<id>) on the messages table's UNIQUE(sender,idem), so
@@ -46,6 +50,17 @@ type RemindConfig struct {
 	On    bool          // SWITCHBOARD_REMIND=on
 	After time.Duration // SWITCHBOARD_REMIND_AFTER; 0 means defaultRemindAfter
 	Max   int           // SWITCHBOARD_REMIND_MAX; 0 means defaultRemindMax
+	// Idle is SWITCHBOARD_REMIND_IDLE (idle.go): 0 means defaultRemindIdle,
+	// negative means off.
+	Idle time.Duration
+}
+
+// idle is the idle-after-answer threshold; 0 or less is off.
+func (c RemindConfig) idle() time.Duration {
+	if c.Idle == 0 {
+		return defaultRemindIdle
+	}
+	return max(0, c.Idle)
 }
 
 func (c RemindConfig) after() time.Duration {
@@ -78,6 +93,16 @@ func configureRemind(c *RemindConfig, getenv func(string) string) error {
 		}
 		c.After = d
 	}
+	if v, from := config.EnvAliasFrom(getenv, "REMIND_IDLE"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || (d != 0 && d < time.Second) {
+			return errors.New(from + " must be 0 (off) or a duration of at least 1s such as 1h")
+		}
+		c.Idle = d
+		if d == 0 {
+			c.Idle = -1
+		}
+	}
 	if v, from := config.EnvAliasFrom(getenv, "REMIND_MAX"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 {
@@ -97,12 +122,17 @@ type RemindStatus struct {
 	AfterSeconds int64      `json:"after_seconds"`
 	Max          int        `json:"max"`
 	Since        *time.Time `json:"since"`
+	Idle         string     `json:"idle"`         // SWITCHBOARD_REMIND_IDLE, "off" when 0
+	IdleSeconds  int64      `json:"idle_seconds"` // 0 when off
 }
 
 // RemindStatus reads the reminder settings and remind_state.
 func (s *Service) RemindStatus(ctx context.Context) (RemindStatus, error) {
 	c := s.cfg.Remind
-	st := RemindStatus{On: c.On, After: shortDuration(c.after()), AfterSeconds: int64(c.after() / time.Second), Max: c.max()}
+	st := RemindStatus{On: c.On, After: shortDuration(c.after()), AfterSeconds: int64(c.after() / time.Second), Max: c.max(), Idle: "off"}
+	if d := c.idle(); d > 0 {
+		st.Idle, st.IdleSeconds = shortDuration(d), int64(d/time.Second)
+	}
 	var enabledMS int64
 	switch err := s.db.QueryRowContext(ctx, `SELECT enabled_at FROM remind_state WHERE id=1`).Scan(&enabledMS); {
 	case err == nil:
@@ -116,16 +146,17 @@ func (s *Service) RemindStatus(ctx context.Context) (RemindStatus, error) {
 
 // StartLine is the one start-up log line for directive reminders:
 // "directive reminders: on (after 2h, max 3, since <RFC 3339 time or first
-// sweep>)" or "directive reminders: off".
+// sweep>, idle 1h)" or "directive reminders: off (idle 1h)", idle being
+// SWITCHBOARD_REMIND_IDLE or "off".
 func (st RemindStatus) StartLine() string {
 	if !st.On {
-		return "directive reminders: off"
+		return fmt.Sprintf("directive reminders: off (idle %s)", st.Idle)
 	}
 	since := "first sweep"
 	if st.Since != nil {
 		since = st.Since.UTC().Format(time.RFC3339)
 	}
-	return fmt.Sprintf("directive reminders: on (after %s, max %d, since %s)", st.After, st.Max, since)
+	return fmt.Sprintf("directive reminders: on (after %s, max %d, since %s, idle %s)", st.After, st.Max, since, st.Idle)
 }
 
 // shortDuration drops the zero minutes and seconds of a duration: 2h, 1h30m,
@@ -156,6 +187,8 @@ func remindKey(id int64, n int) string {
 
 func remindSenderKey(id int64) string { return "remind-sender:" + strconv.FormatInt(id, 10) }
 
+func idleAfterKey(id int64) string { return "idle-after:" + strconv.FormatInt(id, 10) }
+
 // SweepReminders sends the due directive reminders and sender notices and
 // returns how many it sent. base maps a mailbox name to its base role. With
 // reminders off it returns at once without touching the database.
@@ -180,7 +213,7 @@ func (s *Service) SweepReminders(ctx context.Context, base func(string) string) 
 	}
 	sent := 0
 	for _, d := range open {
-		if d.Status != "read" || isBoss(d.Recipient) || d.At.Before(enabled) {
+		if d.Status != "read" || isBoss(d.Recipient) {
 			continue
 		}
 		n, last, noticed, err := s.remindersSent(ctx, d.ID)
@@ -192,6 +225,9 @@ func (s *Service) SweepReminders(ctx context.Context, base func(string) string) 
 		}
 		if last.IsZero() {
 			last = d.At
+			if last.Before(enabled) {
+				last = enabled
+			}
 		}
 		gap := c.after() << n // T, 2T, 4T, ... after the previous one
 		if now.Before(last.Add(gap)) {
@@ -215,6 +251,47 @@ func (s *Service) SweepReminders(ctx context.Context, base func(string) string) 
 		if stored {
 			sent++
 			s.wake(to)
+		}
+	}
+	n, err := s.sweepIdleAfterAnswer(ctx, now, enabled, base, isBoss)
+	return sent + n, err
+}
+
+// sweepIdleAfterAnswer tells the sender of each directive idle after its
+// answer (idle.go) once, not before SWITCHBOARD_REMIND_IDLE after the
+// reminders were switched on, so switching on sends no burst.
+func (s *Service) sweepIdleAfterAnswer(ctx context.Context, now, enabled time.Time, base func(string) string, isBoss func(string) bool) (int, error) {
+	idle := s.cfg.Remind.idle()
+	if idle <= 0 {
+		return 0, nil
+	}
+	live, err := s.liveSessions(now)
+	if err != nil {
+		return 0, err
+	}
+	stalls, err := s.idleAfterAnswer(now, live, base, isBoss)
+	if err != nil {
+		return 0, err
+	}
+	sent := 0
+	for _, st := range stalls {
+		if now.Before(enabled.Add(idle)) {
+			break
+		}
+		subject := fmt.Sprintf("[멈춤] #%d %s", st.ID, st.Subject)
+		body := fmt.Sprintf("#%d (%s) 는 답(reply)은 왔지만 complete 가 없고, 세션 %s 이(가) %s째 idle 이다. 끝났는지 확인하라", st.ID, st.Recipient, strings.Join(st.Sessions, ", "), shortDuration(now.Sub(st.Since).Truncate(time.Minute)))
+		var stored bool
+		err = store.InTx(ctx, s.db, func(tx *sql.Tx) error {
+			var e error
+			stored, e = mail.InsertSystemMailOnce(tx, st.Sender, subject, body, st.TaskID, "normal", idleAfterKey(st.ID), now)
+			return e
+		})
+		if err != nil {
+			return sent, err
+		}
+		if stored {
+			sent++
+			s.wake(st.Sender)
 		}
 	}
 	return sent, nil

@@ -465,7 +465,8 @@ func TestDashboardWaitAndDetails(t *testing.T) {
 	}
 	for _, want := range []string{
 		// 대기: kinds in order, oldest first, the counts the menu shows.
-		"const waitKinds=[['q','질문','warning'],['p','권한','info'],['s','오류','danger'],['d','지시','neutral']];",
+		"const waitKinds=[['q','질문','warning'],['p','권한','info'],['s','오류','danger'],['d','지시','neutral'],['m','멈춤','warning']];",
+		"for(const x of p.stalled||[])by.m.push(",
 		"for(const [k,label,tone] of waitKinds)for(const x of by[k].sort((a,b)=>b.age-a.age))",
 		"api('questions?status=pending&limit=500'),api('permissions?status=pending')",
 		"for(const x of p.open_directives)if(x.over_threshold)by.d.push(",
@@ -473,7 +474,7 @@ func TestDashboardWaitAndDetails(t *testing.T) {
 		"const svcChips=[['all','전체',()=>true],['problem','문제 있음',p=>/^(error|blocked)$/.test(p.badge)],['stale','오래된 지시',p=>p.open_directives.some(d=>d.over_threshold)]];",
 		"detailRow(tr,'progress','svc:'+p.service);",
 		// Each 대기 kind opens its own detail.
-		"const progressKinds={q:'questions',p:'permissions',s:'sessions',d:progressDirective,svc:progressService};",
+		"const progressKinds={q:'questions',p:'permissions',s:'sessions',d:progressDirective,m:progressDirective,svc:progressService};",
 		"registerDetail('progress',{",
 		"kinds:['progress','questions','permissions','sessions','mail'],",
 		"subs:x=>[['sessions','세션 '+x.p.sessions.length],['directives','답 없는 지시 '+x.p.open_directives.length],['news','마지막 소식']],",

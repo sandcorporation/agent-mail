@@ -23,9 +23,12 @@ type RuleMigration struct {
 //     current version is stored and nothing is marked. A database without
 //     the row was already running the current rule (version 1, #214).
 //   - A stored version older than the rule: every directive created before
-//     now that is open under the rule gets no_reply=1, the flag `send
-//     --no-reply` and `close` set, so a rule change does not reopen old
-//     directives at once; the rule's version is stored.
+//     now that is open under the rule but was not open under the stored
+//     version's rule gets no_reply=1, the flag `send --no-reply` and `close`
+//     set, so a rule change does not reopen old directives at once, and a
+//     directive that was open stays open (#268). When this build does not
+//     know the stored version (mail.AnsweredRules), every open directive is
+//     marked. The rule's version is stored.
 //   - The same version, or a newer one (an older build started on a newer
 //     database): nothing changes.
 func (s *Service) MigrateAnsweredRule(base func(string) string) (RuleMigration, error) {
@@ -46,13 +49,23 @@ func (s *Service) MigrateAnsweredRule(base func(string) string) (RuleMigration, 
 	if err != nil {
 		return out, err
 	}
+	wasOpen := map[int64]bool{}
+	if old, ok := s.pastRule(out.From); ok {
+		before, err := s.openDirectivesUnder(old, true, base, s.ids.IsBossName(base))
+		if err != nil {
+			return out, err
+		}
+		for _, d := range before {
+			wasOpen[d.ID] = true
+		}
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return out, err
 	}
 	defer tx.Rollback()
 	for _, d := range open {
-		if !d.At.Before(now) {
+		if !d.At.Before(now) || wasOpen[d.ID] {
 			continue
 		}
 		res, err := tx.Exec(`UPDATE messages SET no_reply=1 WHERE id=? AND no_reply=0`, d.ID)

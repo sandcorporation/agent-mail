@@ -56,11 +56,15 @@ func keysOf[V any](m map[string]V) []string {
 func TestRemindStartLineAndSettingsAPI(t *testing.T) {
 	s, clock := slotsWithRoles(t)
 	s.admin.ProxyToken = "proxy-secret"
-	if got := startLog(t, s); got != "directive reminders: off" {
+	if got := startLog(t, s); got != "directive reminders: off (idle 1h)" {
 		t.Fatalf("off: %q", got)
 	}
-	s.presenceCfg.Remind = presence.RemindConfig{On: true, After: 90 * time.Minute, Max: 4}
-	if got, want := startLog(t, s), "directive reminders: on (after 1h30m, max 4, since first sweep)"; got != want {
+	s.presenceCfg.Remind = presence.RemindConfig{Idle: -1}
+	if got := startLog(t, s); got != "directive reminders: off (idle off)" {
+		t.Fatalf("off, idle off: %q", got)
+	}
+	s.presenceCfg.Remind = presence.RemindConfig{On: true, After: 90 * time.Minute, Max: 4, Idle: 45 * time.Minute}
+	if got, want := startLog(t, s), "directive reminders: on (after 1h30m, max 4, since first sweep, idle 45m)"; got != want {
 		t.Fatalf("on before a sweep:\n got %q\nwant %q", got, want)
 	}
 	top, _ := settingsJSON(t, s)
@@ -68,12 +72,12 @@ func TestRemindStartLineAndSettingsAPI(t *testing.T) {
 	if err := json.Unmarshal(top["reminders"], &rs); err != nil {
 		t.Fatal(err)
 	}
-	if rs["on"] != true || rs["after"] != "1h30m" || rs["after_seconds"] != float64(5400) || rs["max"] != float64(4) || rs["since"] != nil {
+	if rs["on"] != true || rs["after"] != "1h30m" || rs["after_seconds"] != float64(5400) || rs["max"] != float64(4) || rs["since"] != nil || rs["idle"] != "45m" || rs["idle_seconds"] != float64(2700) {
 		t.Fatalf("reminders before a sweep: %v", rs)
 	}
 	sweepOnce(t, s)
 	at := clock.now().UTC().Format(time.RFC3339)
-	if got, want := startLog(t, s), "directive reminders: on (after 1h30m, max 4, since "+at+")"; got != want {
+	if got, want := startLog(t, s), "directive reminders: on (after 1h30m, max 4, since "+at+", idle 45m)"; got != want {
 		t.Fatalf("on after a sweep:\n got %q\nwant %q", got, want)
 	}
 	top, _ = settingsJSON(t, s)
@@ -83,12 +87,12 @@ func TestRemindStartLineAndSettingsAPI(t *testing.T) {
 	}
 	// Switching off keeps the first time, and the line says only off.
 	s.presenceCfg.Remind = presence.RemindConfig{}
-	if got := startLog(t, s); got != "directive reminders: off" {
+	if got := startLog(t, s); got != "directive reminders: off (idle 1h)" {
 		t.Fatalf("off again: %q", got)
 	}
-	// Defaults when on with no values: 2h and 3.
+	// Defaults when on with no values: 2h, 3 and idle 1h.
 	s.presenceCfg.Remind = presence.RemindConfig{On: true}
-	if got, want := startLog(t, s), "directive reminders: on (after 2h, max 3, since "+at+")"; got != want {
+	if got, want := startLog(t, s), "directive reminders: on (after 2h, max 3, since "+at+", idle 1h)"; got != want {
 		t.Fatalf("defaults:\n got %q\nwant %q", got, want)
 	}
 }
@@ -117,7 +121,7 @@ func TestSettingsShowNoSecrets(t *testing.T) {
 	if err := json.Unmarshal(top["reminders"], &rs); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := keysOf(rs), []string{"after", "after_seconds", "max", "on", "since"}; !slices.Equal(got, want) {
+	if got, want := keysOf(rs), []string{"after", "after_seconds", "idle", "idle_seconds", "max", "on", "since"}; !slices.Equal(got, want) {
 		t.Fatalf("reminder keys %v, want %v", got, want)
 	}
 	line := startLog(t, s)

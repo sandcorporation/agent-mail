@@ -195,31 +195,53 @@ func TestRemindStopsOnReplyOrComplete(t *testing.T) {
 	}
 }
 
-// Directives created before the first sweep with reminders on are never
-// reminded; switching off and on keeps the first enable time.
-func TestRemindSkipsDirectivesBeforeEnable(t *testing.T) {
+// A directive older than the first sweep with reminders on counts from that
+// time (#268): switching on sends nothing at once, the first reminder is due
+// at enabled_at + T and none before; switching off and on keeps the first
+// enable time.
+func TestRemindOlderDirectivesCountFromEnable(t *testing.T) {
 	s, clock := slotsWithRoles(t)
 	old := apiMail(t, s, clock, "hq/boss", "/api/messages", map[string]any{"recipient": "team/worker", "subject": "old"})
+	older := apiMail(t, s, clock, "hq/boss", "/api/messages", map[string]any{"recipient": "team/worker", "subject": "older"})
 	readAs(t, s, "team/worker", old.ID)
-	clock.add(time.Minute)
+	readAs(t, s, "team/worker", older.ID)
+	clock.add(5 * remindGap) // both are long past T before reminders exist
 	remindOn(s)
-	sweepOnce(t, s)
-	var enabled int64
-	if err := s.db.QueryRow(`SELECT enabled_at FROM remind_state`).Scan(&enabled); err != nil {
+	if n := sweepOnce(t, s).Remind; n != 0 {
+		t.Fatalf("switch-on sent %d, want no burst", n)
+	}
+	var enabledMS int64
+	if err := s.db.QueryRow(`SELECT enabled_at FROM remind_state`).Scan(&enabledMS); err != nil {
 		t.Fatal(err)
 	}
+	enabled := time.UnixMilli(enabledMS).UTC()
+	if n := sweepAt(t, s, clock, enabled.Add(remindGap-time.Second)); n != 0 {
+		t.Fatalf("sent %d before enabled_at + T", n)
+	}
 	s.presenceCfg.Remind.On = false
-	sweepAt(t, s, clock, clock.now().Add(time.Hour))
 	newer := apiMail(t, s, clock, "hq/boss", "/api/messages", map[string]any{"recipient": "team/worker", "subject": "new"})
 	readAs(t, s, "team/worker", newer.ID)
 	remindOn(s)
-	sweepAt(t, s, clock, newer.CreatedAt.Add(remindGap))
-	var again int64
-	if err := s.db.QueryRow(`SELECT enabled_at FROM remind_state`).Scan(&again); err != nil || again != enabled {
-		t.Fatalf("enable time %d -> %d (%v)", enabled, again, err)
+	if n := sweepAt(t, s, clock, enabled.Add(remindGap)); n != 2 {
+		t.Fatalf("at enabled_at + T sent %d, want 2", n)
 	}
-	if got, want := remindKeys(t, s), []string{fmt.Sprintf("team/worker remind:%d:1", newer.ID)}; strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("reminders %v, want %v (none for #%d from before the enable time)", got, want, old.ID)
+	var again int64
+	if err := s.db.QueryRow(`SELECT enabled_at FROM remind_state`).Scan(&again); err != nil || again != enabledMS {
+		t.Fatalf("enable time %d -> %d (%v)", enabledMS, again, err)
+	}
+	sweepAt(t, s, clock, newer.CreatedAt.Add(remindGap))
+	// The existing gaps follow: the second reminder 2T after the first.
+	sweepAt(t, s, clock, enabled.Add(3*remindGap-time.Second))
+	want := []string{
+		fmt.Sprintf("team/worker remind:%d:1", old.ID),
+		fmt.Sprintf("team/worker remind:%d:1", older.ID),
+		fmt.Sprintf("team/worker remind:%d:1", newer.ID),
+	}
+	if got := remindKeys(t, s); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("reminders %v, want %v", got, want)
+	}
+	if n := sweepAt(t, s, clock, enabled.Add(3*remindGap)); n != 2 {
+		t.Fatalf("at enabled_at + 3T sent %d, want the second reminder of #%d and #%d", n, old.ID, older.ID)
 	}
 }
 
@@ -249,7 +271,13 @@ func TestRemindSettings(t *testing.T) {
 	if err := presence.Configure(&c, env(map[string]string{"SWITCHBOARD_REMIND": "on", "SWITCHBOARD_REMIND_AFTER": "30m", "SWITCHBOARD_REMIND_MAX": "2"})); err != nil || !c.Remind.On || c.Remind.After != 30*time.Minute || c.Remind.Max != 2 {
 		t.Fatalf("on: %+v %v", c.Remind, err)
 	}
-	for k, v := range map[string]string{"SWITCHBOARD_REMIND": "yes", "SWITCHBOARD_REMIND_AFTER": "0s", "SWITCHBOARD_REMIND_MAX": "0"} {
+	for v, want := range map[string]time.Duration{"45m": 45 * time.Minute, "0": -1} {
+		var c presence.Config
+		if err := presence.Configure(&c, env(map[string]string{"SWITCHBOARD_REMIND_IDLE": v})); err != nil || c.Remind.Idle != want {
+			t.Fatalf("idle %s: %+v %v", v, c.Remind, err)
+		}
+	}
+	for k, v := range map[string]string{"SWITCHBOARD_REMIND": "yes", "SWITCHBOARD_REMIND_AFTER": "0s", "SWITCHBOARD_REMIND_MAX": "0", "SWITCHBOARD_REMIND_IDLE": "500ms"} {
 		if err := presence.Configure(&presence.Config{}, env(map[string]string{k: v})); err == nil {
 			t.Errorf("%s=%s accepted", k, v)
 		}

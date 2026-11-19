@@ -47,6 +47,9 @@ type Config struct {
 	// Rule is the answered rule open directives follow; the zero value means
 	// mail.CurrentAnsweredRule. Only tests set another (a later version).
 	Rule mail.AnsweredRule
+	// Rules is every version of the rule by number, for MigrateAnsweredRule;
+	// nil means mail.AnsweredRules. Only tests set it.
+	Rules map[int]mail.AnsweredRule
 }
 
 // rule is the answered rule in force (Config.Rule, else the current one).
@@ -55,6 +58,17 @@ func (s *Service) rule() mail.AnsweredRule {
 		return s.cfg.Rule
 	}
 	return mail.CurrentAnsweredRule
+}
+
+// pastRule is version v of the answered rule, false when this build does not
+// know it.
+func (s *Service) pastRule(v int) (mail.AnsweredRule, bool) {
+	rules := mail.AnsweredRules
+	if s.cfg != nil && s.cfg.Rules != nil {
+		rules = s.cfg.Rules
+	}
+	r, ok := rules[v]
+	return r, ok && r.Replies != nil
 }
 
 // Service is the presence rules over the slots and presence_log tables. It
