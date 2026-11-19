@@ -105,7 +105,10 @@ func Init(db *sql.DB) error {
 	if e = migrateHosting(db); e != nil {
 		return e
 	}
-	return migrateTerminalLog(db)
+	if e = migrateTerminalLog(db); e != nil {
+		return e
+	}
+	return migrateHostingLimit(db)
 }
 
 func HasColumn(db *sql.DB, table, column string) (bool, error) {
@@ -478,5 +481,33 @@ func migrateTerminalLog(db *sql.DB) error {
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS terminal_log(id INTEGER PRIMARY KEY AUTOINCREMENT, session TEXT NOT NULL, admin_user TEXT NOT NULL, kind TEXT NOT NULL, at INTEGER NOT NULL, bytes INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS terminal_log_session ON terminal_log(session, at);
 CREATE INDEX IF NOT EXISTS terminal_log_at ON terminal_log(at);`)
+	return err
+}
+
+// migrateHostingLimit adds the session cap and subscription limit state
+// (#190), all additive: hosted_sessions.class (what the session does),
+// nodes.max_sessions (the cap the node reported, 0 before it did),
+// nodes.limit_since and limit_reset (the usage limit its sessions' screens
+// show, null when none) and hosting_limit, one row: the operator's limit
+// switch and when the limit last cleared. Times are Unix ms.
+func migrateHostingLimit(db *sql.DB) error {
+	adds := []struct{ table, column, def string }{
+		{"hosted_sessions", "class", `TEXT NOT NULL DEFAULT 'execute'`},
+		{"nodes", "max_sessions", `INTEGER NOT NULL DEFAULT 0`},
+		{"nodes", "limit_since", `INTEGER`},
+		{"nodes", "limit_reset", `INTEGER`},
+	}
+	for _, c := range adds {
+		has, err := HasColumn(db, c.table, c.column)
+		if err != nil {
+			return err
+		}
+		if !has {
+			if _, err = db.Exec(`ALTER TABLE ` + c.table + ` ADD COLUMN ` + c.column + ` ` + c.def); err != nil {
+				return err
+			}
+		}
+	}
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS hosting_limit(id INTEGER PRIMARY KEY CHECK(id=1), operator INTEGER NOT NULL DEFAULT 0, set_at INTEGER NOT NULL DEFAULT 0, cleared_at INTEGER NOT NULL DEFAULT 0)`)
 	return err
 }

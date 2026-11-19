@@ -196,8 +196,8 @@ var commands = []command{
 			{"--status", "STATUS", "list: only pending, answered or withdrawn questions"},
 			optJSON, optProfile,
 		}},
-	{name: "host", args: "ACTION [ID]", nargs: 2, optArgs: true, extra: true, synopsis: "(ACTION: add | list | start ID | stop ID | restart ID | new-conversation ID | remove ID) [-- AGENT ARGS...]",
-		summary: "Manage hosted sessions in this instance's database (DB_PATH, not the container default): add a record, list them, set one to run or stop, restart one with resume (clears a crash loop), start one in a new conversation, remove one",
+	{name: "host", args: "ACTION [ID]", nargs: 2, optArgs: true, extra: true, synopsis: "(ACTION: add | list | start ID | stop ID | restart ID | new-conversation ID | remove ID | limit [on|off]) [-- AGENT ARGS...]",
+		summary: "Manage hosted sessions in this instance's database (DB_PATH, not the container default): add a record, list them, set one to run or stop, restart one with resume (clears a crash loop), start one in a new conversation, remove one, show or set the subscription limit",
 		options: []option{
 			{"--node", "NAME", "add: node the session runs on"},
 			{"--base", "ROLE", "add: base role (must exist)"},
@@ -206,6 +206,7 @@ var commands = []command{
 			{"--label", "TEXT", "add: label (SWITCHBOARD_LABEL)"},
 			{"--parent", "ROLE", "add: parent role (SWITCHBOARD_PARENT)"},
 			{"--restart", "POLICY", "add: always (default), on-failure or never"},
+			{"--class", "CLASS", "add: lead, coordinator, execute (default) or review"},
 			optJSON,
 		}},
 	{name: "up",

@@ -7,11 +7,12 @@ import (
 	"io"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
-// RunCLI serves `host add|list|start|stop|restart|new-conversation|remove` against the service's
+// RunCLI serves `host add|list|start|stop|restart|new-conversation|remove|limit` against the service's
 // database. The client has already checked the action and its arguments;
 // add is the record for `host add`, id the record for the others. The host
 // picks database changes up when it reconciles, so no server is called.
@@ -19,6 +20,23 @@ func (s *Service) RunCLI(action, id string, add wire.HostedSessionCreate, jsonOu
 	var h wire.HostedSession
 	var err error
 	switch action {
+	case "limit":
+		l := wire.HostingLimit{}
+		var err error
+		switch id {
+		case "on", "off":
+			l, err = s.SetLimit(id == "on")
+		default:
+			l, err = s.Limit()
+		}
+		if err != nil {
+			return err
+		}
+		if jsonOut {
+			return json.NewEncoder(stdout).Encode(l)
+		}
+		printLimit(stdout, l)
+		return nil
 	case "list":
 		list, err := s.List()
 		if err != nil {
@@ -74,13 +92,32 @@ func printList(w io.Writer, list []wire.HostedSession) {
 		return
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tNODE\tBASE\tLABEL\tDESIRED\tSTATE\tRESTART\tDIRECTORY\tARGS")
+	fmt.Fprintln(tw, "ID\tNODE\tBASE\tCLASS\tLABEL\tDESIRED\tSTATE\tWORK\tRESTART\tDIRECTORY\tARGS")
 	for _, h := range list {
 		label := h.Label
 		if label == "" {
 			label = "-"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", h.ID, h.Node, h.Base, label, h.Desired, h.Runtime.State, h.Restart, h.Directory, strings.Join(h.Args, " "))
+		work := "yes"
+		if !h.AcceptingWork {
+			work = "no"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", h.ID, h.Node, h.Base, h.Class, label, h.Desired, h.Runtime.State, work, h.Restart, h.Directory, strings.Join(h.Args, " "))
 	}
 	tw.Flush()
+}
+
+func printLimit(w io.Writer, l wire.HostingLimit) {
+	if !l.Limited {
+		fmt.Fprintln(w, "not limited")
+		return
+	}
+	line := "limited (" + l.Source + ")"
+	if l.Since != nil {
+		line += " since " + time.UnixMilli(*l.Since).Format(time.RFC3339)
+	}
+	if l.ResetAt != nil {
+		line += ", resets " + time.UnixMilli(*l.ResetAt).Format(time.RFC3339)
+	}
+	fmt.Fprintln(w, line)
 }

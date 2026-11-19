@@ -211,7 +211,7 @@ func (s *Service) NodeByToken(token string) (string, error) {
 // nodeSeen records a node's hello (machine, OS, version) and when it was
 // last seen.
 func (s *Service) nodeSeen(name string, h wire.NodeHello) error {
-	_, err := s.db.Exec(`UPDATE nodes SET machine=?,os=?,version=?,last_seen_at=? WHERE name=?`, h.Machine, h.OS, h.Version, s.clock().UnixMilli(), name)
+	_, err := s.db.Exec(`UPDATE nodes SET machine=?,os=?,version=?,max_sessions=?,last_seen_at=? WHERE name=?`, h.Machine, h.OS, h.Version, max(h.Max, 0), s.clock().UnixMilli(), name)
 	return err
 }
 

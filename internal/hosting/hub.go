@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -52,6 +53,11 @@ type Hub struct {
 	admin   Admin
 	notify  Notify
 	bosses  []string
+	// nodeLimit is the last usage limit each node reported; limited and
+	// limitKnown are the subscription limit as last published (#190).
+	nodeLimit  map[string]wire.NodeLimit
+	limited    bool
+	limitKnown bool
 
 	tickets tickets
 }
@@ -69,7 +75,7 @@ func NewHub(svc *Service, publish func(kinds ...string)) *Hub {
 		publish = func(...string) {}
 	}
 	return &Hub{svc: svc, publish: publish, conns: map[string]*nodeConn{}, runtime: map[string]wire.HostedRuntime{},
-		away: map[string]int64{}, owner: map[string]string{}, viewers: map[string]map[*viewer]struct{}{}, sizeBy: map[string]*viewer{}}
+		away: map[string]int64{}, owner: map[string]string{}, viewers: map[string]map[*viewer]struct{}{}, sizeBy: map[string]*viewer{}, nodeLimit: map[string]wire.NodeLimit{}}
 }
 
 // Run re-reads the records every interval until ctx is done.
@@ -127,7 +133,44 @@ func (h *Hub) Sync() error {
 	if changed {
 		h.changed()
 	}
+	return h.checkLimit()
+}
+
+// checkLimit publishes a change of the subscription limit: "terminals",
+// and LimitClearedKind once when it clears (recorded as ClearedAt).
+func (h *Hub) checkLimit() error {
+	l, err := h.svc.Limit()
+	if err != nil {
+		return err
+	}
+	h.mu.Lock()
+	was, known := h.limited, h.limitKnown
+	h.limited, h.limitKnown = l.Limited, true
+	h.mu.Unlock()
+	if !known || was == l.Limited {
+		return nil
+	}
+	if !l.Limited {
+		if err := h.svc.markCleared(h.svc.clock().UnixMilli()); err != nil {
+			return err
+		}
+		h.publish("terminals", LimitClearedKind)
+		return nil
+	}
+	h.publish("terminals")
 	return nil
+}
+
+// SetLimit is the operator's switch through the hub, published at once.
+func (h *Hub) SetLimit(on bool) (wire.HostingLimit, error) {
+	l, err := h.svc.SetLimit(on)
+	if err != nil {
+		return l, err
+	}
+	if err := h.checkLimit(); err != nil {
+		return l, err
+	}
+	return h.svc.Limit()
 }
 
 // assignLocked sends c its records when they differ from the last list it
@@ -398,7 +441,20 @@ func (h *Hub) receive(c *nodeConn, f wire.NodeFrame) {
 				launched = append(launched, st)
 			}
 		}
+		limitChanged := false
+		if f.Limit != nil {
+			if prev, ok := h.nodeLimit[c.name]; !ok || !sameLimit(prev, *f.Limit) {
+				h.nodeLimit[c.name], limitChanged = *f.Limit, true
+			}
+		}
 		h.mu.Unlock()
+		if limitChanged {
+			if err := h.svc.setNodeLimit(c.name, *f.Limit); err != nil {
+				log.Printf("hosting: node %s limit: %v", c.name, err)
+			} else if err := h.checkLimit(); err != nil {
+				log.Printf("hosting: limit: %v", err)
+			}
+		}
 		for _, st := range launched {
 			if err := h.svc.markLaunched(st.ID, st.AgentSessionID); err != nil {
 				log.Printf("hosting: mark %s launched: %v", st.ID, err)
@@ -420,6 +476,10 @@ func (h *Hub) receive(c *nodeConn, f wire.NodeFrame) {
 	}
 }
 
+func sameLimit(a, b wire.NodeLimit) bool {
+	return a.Limited == b.Limited && a.Since == b.Since && (a.ResetAt == nil) == (b.ResetAt == nil) && (a.ResetAt == nil || *a.ResetAt == *b.ResetAt)
+}
+
 func sameRuntime(a, b wire.HostedRuntime) bool {
 	x, _ := json.Marshal(a)
 	y, _ := json.Marshal(b)
@@ -438,6 +498,10 @@ func (h *Hub) AdminTerminalsAPI(w http.ResponseWriter, r *http.Request, rest str
 			return true
 		}
 		writeJSON(w, http.StatusOK, out)
+		return true
+	}
+	if rest == "limit" {
+		h.limitAPI(w, r)
 		return true
 	}
 	for _, sub := range []string{"/ticket", "/socket", "/log"} {
@@ -475,7 +539,7 @@ func (h *Hub) AdminTerminalsAPI(w http.ResponseWriter, r *http.Request, rest str
 			act = h.NewConversation
 		}
 		rec, err := act(id)
-		if errors.Is(err, ErrNodeOffline) {
+		if errors.Is(err, ErrNodeOffline) || errors.As(err, new(CapacityError)) {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return true
 		}
@@ -491,4 +555,34 @@ func (h *Hub) AdminTerminalsAPI(w http.ResponseWriter, r *http.Request, rest str
 		}
 	}
 	return true
+}
+
+// limitAPI serves /api/admin/terminals/limit: GET the subscription limit,
+// PUT {"limited": bool} to set or clear it by hand.
+func (h *Hub) limitAPI(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		l, err := h.svc.Limit()
+		if err != nil {
+			http.Error(w, "query failed", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, l)
+	case http.MethodPut:
+		var c wire.HostingLimitChange
+		dec := json.NewDecoder(io.LimitReader(r.Body, maxBody))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&c); err != nil {
+			http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		l, err := h.SetLimit(c.Limited)
+		if err != nil {
+			http.Error(w, "update failed", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, l)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }

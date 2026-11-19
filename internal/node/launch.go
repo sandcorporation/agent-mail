@@ -30,6 +30,9 @@ type Config struct {
 	Endpoint string
 	// History is the scrollback lines kept per session.
 	History int
+	// Max caps the sessions running at once (0: config.DefaultHostingMax);
+	// records beyond it wait, oldest-created first (#190).
+	Max int
 	// NodeToken is the node's credential; no child sees it.
 	NodeToken string
 	// Environ is the node's environment ("KEY=value"), the base of every
@@ -82,7 +85,13 @@ func Resolve(h Host) (Config, error) {
 			return Config{}, fmt.Errorf("node: %s=%q is not a line count", from, v)
 		}
 	}
-	return Config{Agent: path, Machine: machine, History: history, Environ: h.Environ()}, nil
+	max := config.DefaultHostingMax
+	if v, from := config.EnvFrom(h.Getenv, config.HostingMaxName); strings.TrimSpace(v) != "" {
+		if max, err = strconv.Atoi(strings.TrimSpace(v)); err != nil || max < 1 {
+			return Config{}, fmt.Errorf("node: %s=%q is not a session count (1 or more)", from, v)
+		}
+	}
+	return Config{Agent: path, Machine: machine, History: history, Max: max, Environ: h.Environ()}, nil
 }
 
 // Argv is the command for a record: --session-id on its first launch,

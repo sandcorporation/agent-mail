@@ -120,3 +120,12 @@ func writeRuns(b *strings.Builder, prefix string, lines [][]Cell) {
 		}
 	}
 }
+
+// ScreenText is the visible screen's rows as text, trailing spaces trimmed.
+func (g Grid) ScreenText() []string {
+	out := make([]string, len(g.Screen))
+	for i, l := range g.Screen {
+		out[i] = strings.TrimRight(lineText(l), " ")
+	}
+	return out
+}

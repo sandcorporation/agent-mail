@@ -259,16 +259,17 @@ func TestValidationRules(t *testing.T) {
 	if list, _ := s.List(); len(list) != 0 {
 		t.Errorf("refused records were stored: %d", len(list))
 	}
+	// Stopped, so the node's session cap does not refuse them.
 	for _, ok := range []string{"/", "/work/app", `C:\work\app`, "C:/work", `\\server\share\app`} {
 		c := record()
-		c.Directory = ok
+		c.Directory, c.Desired = ok, DesiredStopped
 		if _, err := s.Create(c); err != nil {
 			t.Errorf("directory %q: %v", ok, err)
 		}
 	}
 	for _, r := range []string{"always", "on-failure", "never"} {
 		c := record()
-		c.Directory, c.Restart = "/r/"+r, r
+		c.Directory, c.Restart, c.Desired = "/r/"+r, r, DesiredStopped
 		if _, err := s.Create(c); err != nil {
 			t.Errorf("restart %s: %v", r, err)
 		}

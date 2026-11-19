@@ -68,6 +68,7 @@ type Link struct {
 
 	mu     sync.Mutex
 	states []wire.HostedNodeState
+	limit  wire.NodeLimit
 }
 
 // SocketURL is the node channel URL for a host base URL.
@@ -165,16 +166,20 @@ func (l *Link) report() {
 	for _, s := range sts {
 		out = append(out, wire.HostedNodeState{ID: s.ID, Launched: s.Launched, AgentSessionID: s.AgentSessionID, Runtime: s.Wire()})
 	}
+	limit := l.Node.Limit()
 	l.mu.Lock()
-	l.states = out
+	l.states, l.limit = out, limit
 	l.mu.Unlock()
 	signal(l.changed)
 }
 
-func (l *Link) current() []wire.HostedNodeState {
+// current is the state frame to send: every record's state and the usage
+// limit.
+func (l *Link) current() wire.NodeFrame {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.states
+	limit := l.limit
+	return wire.NodeFrame{Type: wire.NodeStateType, States: l.states, Limit: &limit}
 }
 
 // session runs one connection; attached reports whether it got as far as
@@ -224,7 +229,7 @@ func (l *Link) session(ctx context.Context, url string) (attached bool, err erro
 		cur := l.current()
 		b, _ := json.Marshal(cur)
 		if string(b) != sent {
-			if err := write(wire.NodeFrame{Type: wire.NodeStateType, States: cur}); err != nil {
+			if err := write(cur); err != nil {
 				return true, err
 			}
 			sent = string(b)
