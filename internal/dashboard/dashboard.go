@@ -341,7 +341,7 @@ table.cards td.cardhide{display:none}
 <table id="waitTbl" class="stack list cards"><thead><tr><th>종류</th><th>항목</th><th>역할</th><th class="num">지난 시간</th></tr></thead><tbody id="wait"></tbody></table>
 <h3 class="sechead">서비스</h3>
 <div class="listbar"><div class="chips" id="svcChips" role="group" aria-label="서비스 고르기"></div></div>
-<table id="progressTbl" class="stack list cards"><thead><tr><th>서비스</th><th>상태</th><th class="num">세션</th><th class="num">답 없는 지시</th><th>마지막 소식</th></tr></thead><tbody id="progress"></tbody></table>
+<table id="progressTbl" class="stack list cards"><thead><tr><th>서비스</th><th>상태</th><th class="num">세션</th><th class="num">열린 지시</th><th>마지막 소식</th></tr></thead><tbody id="progress"></tbody></table>
 </section>
 <section id="panel-sessions" role="tabpanel" aria-labelledby="tab-sessions" tabindex="0" class="card" hidden>
 <div class="toolbar"><h2>세션</h2><button id="reloadSessions">새로 고침</button><span id="sessionsNote" class="muted"></span></div>
@@ -1004,7 +1004,10 @@ function rel(now,t){if(!t)return '-';const s=Math.max(0,Math.round((new Date(now
 function secsSince(now,t){return Math.max(0,Math.round((new Date(now)-new Date(t))/1000))}
 const waitKinds=[['q','질문','warning'],['p','권한','info'],['s','오류','danger'],['d','지시','neutral'],['m','멈춤','warning']];
 const waitCols=['종류','항목','역할','지난 시간'];
-const svcCols=['서비스','상태','세션','답 없는 지시','마지막 소식'];
+const svcCols=['서비스','상태','세션','열린 지시','마지막 소식'];
+// recipLabel is an open directive's recipient state: offline apart from idle (#269).
+const recipLabel={offline:'오프라인',none:'오프라인'};
+function recipWho(x){const l=recipLabel[x.recipient_state]||badgeLabel[x.recipient_state];return x.to+(l&&x.recipient_state!=='busy'?' · '+l:'')}
 const svcChips=[['all','전체',()=>true],['problem','문제 있음',p=>/^(error|blocked)$/.test(p.badge)],['stale','오래된 지시',p=>p.open_directives.some(d=>d.over_threshold)]];
 let progressSeq=0,progressData=null,svcFilter='all';
 // waitItems builds the 대기 rows: {kind,id,item,role,age} with age in seconds.
@@ -1014,7 +1017,7 @@ function waitItems(d){
   for(const v of d.perms)by.p.push({id:v.id,item:v.tool+(v.summary?' · '+v.summary:''),role:v.requester,age:secsSince(now,v.created_at)});
   for(const p of d.r.services){
     for(const v of p.sessions){const m=/^(error|blocked):(.*)$/.exec(v.state||'');if(m)by.s.push({id:v.role,item:m[2]||badgeLabel[m[1]],role:v.role,age:secsSince(now,v.since),tone:m[1]==='blocked'?'warning':'danger',label:badgeLabel[m[1]]})}
-    for(const x of p.open_directives)if(x.over_threshold)by.d.push({id:String(x.id),item:'#'+x.id+' '+(x.subject||'(제목 없음)'),role:x.to,age:x.age_s});
+    for(const x of p.open_directives)if(x.over_threshold)by.d.push({id:String(x.id),item:'#'+x.id+' '+(x.subject||'(제목 없음)'),role:recipWho(x),age:x.age_s});
     for(const x of p.stalled||[])by.m.push({id:String(x.id),item:'#'+x.id+' '+(x.subject||'(제목 없음)'),role:x.to,age:x.idle_s});
   }
   const out=[];
@@ -1069,7 +1072,7 @@ function drawProgress(){
       const tr=node('tr','',/^(error|blocked)$/.test(p.badge)?'row-'+p.badge:'');
       const st=cell('');st.append(badge(badgeLabel[p.badge]||p.badge,badgeTone[p.badge]||'neutral'));
       const stale=p.open_directives.filter(d=>d.over_threshold).length;
-      const dirs=cell(String(p.open_directives.length),'답 없는 지시','num nowrap');
+      const dirs=cell(String(p.open_directives.length),'열린 지시','num nowrap');
       if(stale){dirs.classList.add('over');dirs.title='문턱('+dur(r.pending_alert_s)+') 넘음 '+stale+'개'}
       const rep=p.last_report;
       const news=cell(rep?(rep.subject||'(제목 없음)')+' · '+rel(now,rep.at):p.last_activity_at?'보고 없음 · 마지막 활동 '+rel(now,p.last_activity_at):'소식 없음','마지막 소식','muted');
@@ -1094,12 +1097,12 @@ const progressDirective={
     for(const p of r.services){for(const d of p.open_directives)if(String(d.id)===id)open=d;for(const d of p.stalled||[])if(String(d.id)===id)stall=d}
     return {m:m,open:open,stall:stall,limit:r.pending_alert_s,now:r.generated_at};
   },
-  head:x=>x.open?{title:'#'+x.m.id+' '+x.m.subject,badge:[x.open.over_threshold?'오래된 지시':'답 없음',x.open.over_threshold?'danger':'warning']}:x.stall?{title:'#'+x.m.id+' '+x.m.subject,badge:['멈춤','warning']}:details.mail.head(x.m),
+  head:x=>x.open?{title:'#'+x.m.id+' '+x.m.subject,badge:[x.open.over_threshold?'오래된 지시':'열림',x.open.over_threshold?'danger':'warning']}:x.stall?{title:'#'+x.m.id+' '+x.m.subject,badge:['멈춤','warning']}:details.mail.head(x.m),
   subs:()=>[['thread','스레드'],['body','본문']],
   draw:async(x,sub,box)=>{
     if(x.open){
       const row=node('div','','row'),msg=node('span','','msg');msg.setAttribute('role','status');
-      const close=node('button','닫기');close.type='button';close.title='답을 기다리지 않게 닫기';
+      const close=node('button','닫기');close.type='button';close.title='끝난 것으로 닫기';
       close.onclick=async()=>{
         if(!confirm('#'+x.m.id+' 지시를 닫을까요?'))return;
         close.disabled=true;setMsg(msg,'닫는 중…');
@@ -1107,26 +1110,26 @@ const progressDirective={
         catch(e){close.disabled=false;setMsg(msg,e.message,'err')}
       };
       row.append(close,msg);
-      box.append(dl([['받는 쪽',x.open.to],['상태',statusLabel[x.open.status]||x.open.status],['지난 시간',dur(x.open.age_s)+(x.open.over_threshold?' · 문턱('+dur(x.limit)+') 넘음':'')]]),row);
+      box.append(dl([['받는 쪽',recipWho(x.open)],['상태',statusLabel[x.open.status]||x.open.status],['지난 시간',dur(x.open.age_s)+(x.open.over_threshold?' · 문턱('+dur(x.limit)+') 넘음':'')]].concat(x.open.replied_at?[['마지막 답',rel(x.now,x.open.replied_at)]]:[],x.stall?[['idle 세션',x.stall.sessions.join(', ')],['idle',dur(x.stall.idle_s)]]:[])),row);
     }
-    if(x.stall)box.append(dl([['받는 쪽',x.stall.to],['답한 때',rel(x.now,x.stall.answered_at)],['idle 세션',x.stall.sessions.join(', ')],['idle',dur(x.stall.idle_s)]]));
+    if(x.stall&&!x.open)box.append(dl([['받는 쪽',x.stall.to]].concat(x.stall.answered_at?[['마지막 답',rel(x.now,x.stall.answered_at)]]:[],[['idle 세션',x.stall.sessions.join(', ')],['idle',dur(x.stall.idle_s)]])));
     await details.mail.draw(x.m,sub,box);
   }
 };
 const progressService={
   load:async id=>{const r=await api('progress');const p=r.services.find(s=>s.service===id);return p?{p:p,now:r.generated_at,limit:r.pending_alert_s}:null},
   head:x=>({title:x.p.service,badge:[badgeLabel[x.p.badge]||x.p.badge,badgeTone[x.p.badge]||'neutral']}),
-  subs:x=>[['sessions','세션 '+x.p.sessions.length],['directives','답 없는 지시 '+x.p.open_directives.length],['news','마지막 소식']],
+  subs:x=>[['sessions','세션 '+x.p.sessions.length],['directives','열린 지시 '+x.p.open_directives.length],['news','마지막 소식']],
   draw:async(x,sub,box)=>{
     const p=x.p,now=x.now;
     if(sub==='directives'){
       const ul=node('ul','','dlist');
       for(const d of p.open_directives){
         const li=node('li','',d.over_threshold?'over':'');const a=node('a','#'+d.id+' '+(d.subject||'(제목 없음)'));a.href=detailHash('progress','d:'+d.id,'thread');
-        li.append(a,node('small',d.to+' · '+(statusLabel[d.status]||d.status)+' · '+dur(d.age_s)+' 지남'+(d.over_threshold?' · 문턱('+dur(x.limit)+') 넘음':'')));
+        li.append(a,node('small',recipWho(d)+' · '+(statusLabel[d.status]||d.status)+(d.replied_at?' · 답 있음':'')+' · '+dur(d.age_s)+' 지남'+(d.over_threshold?' · 문턱('+dur(x.limit)+') 넘음':'')));
         ul.append(li);
       }
-      box.append(p.open_directives.length?ul:node('p','답 없는 지시 없음','empty'));
+      box.append(p.open_directives.length?ul:node('p','열린 지시 없음','empty'));
       return;
     }
     if(sub==='news'){
@@ -2035,7 +2038,7 @@ async function loadReminders(){
     if(setView!=='reminders')return;
     const r=s.reminders,st=document.createElement('span');
     st.append(badge(r.on?'켬':'끔',r.on?'success':'neutral'));
-    $('remindBox').replaceChildren(dl([['다시 알림',st],['첫 알림',r.after],['최대 횟수',String(r.max)],['켠 때',r.since?when(r.since):r.on?'첫 점검 전':'-'],['서버 판',s.version],['터미널 호스팅',s.hosting?'켬':'끔']]));
+    $('remindBox').replaceChildren(dl([['다시 알림',st],['첫 알림',r.after],['최대 횟수',String(r.max)],['멈춤 문턱',r.idle==='off'?'끔':r.idle],['멈춤 알림',r.idle==='off'?'-':String(r.idle_max||1)+'번'],['켠 때',r.since?when(r.since):r.on?'첫 점검 전':'-'],['서버 판',s.version],['터미널 호스팅',s.hosting?'켬':'끔']]));
     $('settingsNote').textContent='';
   }catch(e){if(setView==='reminders')$('settingsNote').textContent=e.message}
 }

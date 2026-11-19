@@ -366,10 +366,10 @@ func toReportMail(m threadMail, withBody bool) wire.ReportMail {
 }
 
 // threads builds the linked threads rooted at roots, keyed by root ID. A
-// root that no longer exists is left out. The directive is open unless the
-// answered rule (mail.CurrentAnsweredRule) finds a reply to it, its
-// recipient completed it, or it was closed (no_reply). Bodies are read only
-// for the detail.
+// root that no longer exists is left out. Whether the directive is open is
+// the answered rule's Open (mail.CurrentAnsweredRule): since version 2 open
+// until its recipient marks it done or it is closed (no_reply), whatever
+// replies it got. Bodies are read only for the detail.
 func (s *Service) threads(roots []int64, withBody bool) (map[int64]wire.ReportThread, error) {
 	out := map[int64]wire.ReportThread{}
 	set := map[int64]bool{}
@@ -409,7 +409,7 @@ func (s *Service) threads(roots []int64, withBody bool) (map[int64]wire.ReportTh
 			}
 			t.Completed = mail.IsCompleteStatus(d.Status)
 			t.Closed = d.NoReply
-			t.Open = mail.DirectiveState{Answered: t.Answered, Completed: t.Completed, Closed: t.Closed}.Open()
+			t.Open = s.rule.Open(mail.DirectiveState{Replied: t.Answered, Completed: t.Completed, Closed: t.Closed})
 			out[id] = t
 		}
 	}

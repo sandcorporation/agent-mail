@@ -54,7 +54,7 @@ func TestAnsweredRule_NewDatabaseStartsAtCurrentVersion(t *testing.T) {
 	if v := storedRule(t, s); v != mail.AnsweredRuleVersion {
 		t.Fatalf("stored version %d, want %d", v, mail.AnsweredRuleVersion)
 	}
-	want := fmt.Sprintf("answered rule: version %d stored (none before); 0 directives marked as needing no reply", mail.AnsweredRuleVersion)
+	want := fmt.Sprintf("answered rule: version %d stored (none before); 0 directives marked closed (no_reply=1)", mail.AnsweredRuleVersion)
 	if len(lines) != 1 || lines[0] != want {
 		t.Fatalf("log %q, want %q", lines, want)
 	}
@@ -63,39 +63,35 @@ func TestAnsweredRule_NewDatabaseStartsAtCurrentVersion(t *testing.T) {
 	}
 }
 
-// A database from before the version table already runs the current rule
-// (version 1, #214): its first start with this code stores the version and
-// leaves every directive as it is, open ones included.
-func TestAnsweredRule_ExistingDatabaseWithoutVersionKeepsDirectives(t *testing.T) {
+// A database with mail from before the version table ran version 1 (#214):
+// its first start with this code settles it as version 1 -> current, so a
+// directive answered by a reply is closed and the open ones stay open, a
+// mention-answered one included (version 1 never counted a mention).
+func TestAnsweredRule_ExistingDatabaseWithoutVersionIsVersion1(t *testing.T) {
 	s, clock := ruleServer(t)
 	now := clock.now()
 	open := mailAt(t, s, flowRow{sender: "hq/boss", recipient: "team/worker", subject: "open", at: now.Add(-48 * time.Hour)})
 	mention := mailAt(t, s, flowRow{sender: "hq/boss", recipient: "team/worker", subject: "answered by a mention", at: now.Add(-47 * time.Hour)})
 	mailAt(t, s, flowRow{sender: "team/worker", recipient: "hq/boss", subject: fmt.Sprintf("Re #%d", mention), at: now.Add(-46 * time.Hour)})
-	before := ruleOpenIDs(t, s)
-	if fmt.Sprint(before) != fmt.Sprint([]int64{open, mention}) {
-		t.Fatalf("open before %v", before)
-	}
+	replied := mailAt(t, s, flowRow{sender: "hq/boss", recipient: "team/worker", subject: "replied", at: now.Add(-45 * time.Hour)})
+	mailAt(t, s, flowRow{sender: "team/worker", recipient: "hq/boss", subject: "re", at: now.Add(-44 * time.Hour), thread: replied, reply: replied})
 
 	lines := startRule(t, s)
 	if v := storedRule(t, s); v != mail.AnsweredRuleVersion {
 		t.Fatalf("stored version %d", v)
 	}
-	if fmt.Sprint(ruleOpenIDs(t, s)) != fmt.Sprint(before) {
-		t.Fatalf("open after %v, want %v", ruleOpenIDs(t, s), before)
+	if got, want := fmt.Sprint(ruleOpenIDs(t, s)), fmt.Sprint([]int64{open, mention}); got != want {
+		t.Fatalf("open after %v, want %v", got, want)
 	}
-	var marked int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE no_reply=1`).Scan(&marked); err != nil || marked != 0 {
-		t.Fatalf("marked %d %v", marked, err)
-	}
-	if len(lines) != 1 {
-		t.Fatalf("log %q", lines)
+	want := "answered rule: version 1 -> 2; 1 directives closed under version 1 but open under version 2 marked closed (no_reply=1); open directives stay open"
+	if len(lines) != 1 || lines[0] != want {
+		t.Fatalf("log %q, want %q", lines, want)
 	}
 }
 
 // Upgrade: a database at version 1 whose directives were answered under
 // version 1's rule; this code runs version 2. Version 2 here is the #214
-// change replayed: version 1 counted a plain send that mentions #id, version
+// change replayed (a reply still closes, in both): version 1 counted a plain send that mentions #id, version
 // 2 (mail.Replies) does not. A directive open under both stays open (#268).
 func looseReplies(d, m mail.FlowMail, base func(string) string) bool {
 	return mail.Answers(d, m, base, func(string) bool { return false })
@@ -122,10 +118,11 @@ func TestAnsweredRule_UpgradeMarksDirectivesTheNewRuleOpens(t *testing.T) {
 	// Open under both rules: stays open, not marked.
 	stillOpen := mailAt(t, s, flowRow{sender: "hq/boss", recipient: "team/worker", subject: "unanswered", at: now.Add(-17 * time.Hour)})
 
-	s.presenceCfg.Rule = mail.AnsweredRule{Version: 2, Replies: mail.Replies}
-	s.presenceCfg.Rules = map[int]mail.AnsweredRule{1: {Version: 1, Replies: looseReplies}, 2: s.presenceCfg.Rule}
+	replyCloses := mail.AnsweredRules[1].Open
+	s.presenceCfg.Rule = mail.AnsweredRule{Version: 2, Replies: mail.Replies, Open: replyCloses}
+	s.presenceCfg.Rules = map[int]mail.AnsweredRule{1: {Version: 1, Replies: looseReplies, Open: replyCloses}, 2: s.presenceCfg.Rule}
 	lines := startRule(t, s)
-	if want := "answered rule: version 1 -> 2; 3 directives opened by the new rule marked as needing no reply"; len(lines) != 1 || lines[0] != want {
+	if want := "answered rule: version 1 -> 2; 3 directives closed under version 1 but open under version 2 marked closed (no_reply=1); open directives stay open"; len(lines) != 1 || lines[0] != want {
 		t.Fatalf("log %q, want %q", lines, want)
 	}
 	if v := storedRule(t, s); v != 2 {
@@ -170,6 +167,56 @@ func TestAnsweredRule_UpgradeMarksDirectivesTheNewRuleOpens(t *testing.T) {
 	}
 }
 
+// Version 1 -> 2 (#269), the rule this build runs: a directive answered by a
+// plain reply under version 1 is closed, one with no reply stays open, a
+// completed one stays done; after the cut-over a plain reply leaves a new
+// directive open.
+func TestAnsweredRule_Version2ClosesOnlyRepliedDirectives(t *testing.T) {
+	s, clock := ruleServer(t)
+	now := clock.now()
+	if _, err := s.db.Exec(`INSERT INTO answered_rule(id,version,updated_at) VALUES(1,1,'2026-11-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	replied := mailAt(t, s, flowRow{sender: "hq/boss", recipient: "team/worker", subject: "replied", at: now.Add(-30 * time.Hour)})
+	mailAt(t, s, flowRow{sender: "team/worker", recipient: "hq/boss", subject: "started", at: now.Add(-29 * time.Hour), thread: replied, reply: replied})
+	silent := mailAt(t, s, flowRow{sender: "hq/boss", recipient: "team/worker", subject: "no reply", at: now.Add(-28 * time.Hour)})
+	completed := mailAt(t, s, flowRow{sender: "hq/boss", recipient: "team/worker", subject: "completed", at: now.Add(-27 * time.Hour), status: "complete"})
+
+	lines := startRule(t, s)
+	want := "answered rule: version 1 -> 2; 1 directives closed under version 1 but open under version 2 marked closed (no_reply=1); open directives stay open"
+	if len(lines) != 1 || lines[0] != want {
+		t.Fatalf("log %q, want %q", lines, want)
+	}
+	state := func(id int64) string {
+		t.Helper()
+		var noReply bool
+		var status string
+		if err := s.db.QueryRow(`SELECT m.no_reply,`+mail.StatusExpr+` FROM messages m `+mail.StatusJoin+` WHERE m.id=?`, id).Scan(&noReply, &status); err != nil {
+			t.Fatal(err)
+		}
+		if noReply || mail.IsCompleteStatus(status) {
+			return "closed"
+		}
+		return "open"
+	}
+	if got := []string{state(replied), state(silent), state(completed)}; fmt.Sprint(got) != "[closed open closed]" {
+		t.Fatalf("after start-up %v, want [closed open closed]", got)
+	}
+	if ids := ruleOpenIDs(t, s); fmt.Sprint(ids) != fmt.Sprint([]int64{silent}) {
+		t.Fatalf("open %v, want [%d]", ids, silent)
+	}
+
+	clock.add(time.Minute)
+	fresh := mailAt(t, s, flowRow{sender: "hq/boss", recipient: "team/worker", subject: "new", at: clock.now()})
+	mailAt(t, s, flowRow{sender: "team/worker", recipient: "hq/boss", subject: "started", at: clock.now().Add(time.Second), thread: fresh, reply: fresh})
+	if ids := ruleOpenIDs(t, s); fmt.Sprint(ids) != fmt.Sprint([]int64{silent, fresh}) {
+		t.Fatalf("open after a plain reply %v, want [%d %d]", ids, silent, fresh)
+	}
+	if lines = startRule(t, s); len(lines) != 0 {
+		t.Fatalf("restart logged %q", lines)
+	}
+}
+
 // An older build started on a database a newer one settled leaves it as is.
 func TestAnsweredRule_NewerStoredVersionIsKept(t *testing.T) {
 	s, clock := ruleServer(t)
@@ -196,9 +243,9 @@ func TestAnsweredRule_UnknownStoredVersionMarksEveryOpenDirective(t *testing.T) 
 		t.Fatal(err)
 	}
 	d := mailAt(t, s, flowRow{sender: "hq/boss", recipient: "team/worker", subject: "open", at: clock.now().Add(-time.Hour)})
-	s.presenceCfg.Rule = mail.AnsweredRule{Version: 2, Replies: mail.Replies}
+	s.presenceCfg.Rule = mail.AnsweredRule{Version: 2, Replies: mail.Replies, Open: mail.OpenUntilDone}
 	s.presenceCfg.Rules = map[int]mail.AnsweredRule{2: s.presenceCfg.Rule}
-	if lines := startRule(t, s); len(lines) != 1 || lines[0] != "answered rule: version 1 -> 2; 1 directives opened by the new rule marked as needing no reply" {
+	if lines := startRule(t, s); len(lines) != 1 || lines[0] != "answered rule: version 1 -> 2; version 1 unknown to this build, 1 open directives marked closed (no_reply=1)" {
 		t.Fatalf("log %q", lines)
 	}
 	if ids := ruleOpenIDs(t, s); len(ids) != 0 {

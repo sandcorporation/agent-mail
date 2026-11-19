@@ -132,6 +132,13 @@ func (s *Service) AdminList(w http.ResponseWriter, r *http.Request) {
 
 // Send serves POST /api/messages for the caller p.
 func (s *Service) Send(w http.ResponseWriter, r *http.Request, p identity.Principal) {
+	s.send(w, r, p, nil, nil)
+}
+
+// send stores the message in the request body. inTx, when set, runs in the
+// insert's transaction (reply --done marks the replied-to mail done there).
+// respond, when set, fills the response, also for an idempotent retry.
+func (s *Service) send(w http.ResponseWriter, r *http.Request, p identity.Principal, inTx func(tx *sql.Tx, now time.Time) error, respond func(*wire.Message)) {
 	role := p.Role
 	var m wire.Message
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&m) != nil {
@@ -186,6 +193,9 @@ func (s *Service) Send(w http.ResponseWriter, r *http.Request, p identity.Princi
 	if key != "" {
 		existing, e := scanMessage(s.db.QueryRow(`SELECT `+messageCols(`m.status`)+` FROM messages m WHERE m.sender=? AND m.idem=?`, role, key))
 		if e == nil {
+			if respond != nil {
+				respond(&existing)
+			}
 			w.WriteHeader(200)
 			writeJSON(w, existing)
 			return
@@ -216,8 +226,10 @@ func (s *Service) Send(w http.ResponseWriter, r *http.Request, p identity.Princi
 		if err != nil {
 			return err
 		}
-		m.ID, err = res.LastInsertId()
-		return err
+		if m.ID, err = res.LastInsertId(); err != nil || inTx == nil {
+			return err
+		}
+		return inTx(tx, now)
 	})
 	if e != nil {
 		http.Error(w, "could not store message", 500)
@@ -226,6 +238,10 @@ func (s *Service) Send(w http.ResponseWriter, r *http.Request, p identity.Princi
 	m.CreatedAt = now
 	if m.Status != statusHeld {
 		s.hub.Publish(m.Recipient)
+	}
+	m.Done = false
+	if respond != nil {
+		respond(&m)
 	}
 	w.WriteHeader(201)
 	writeJSON(w, m)
@@ -374,9 +390,41 @@ func (s *Service) Reply(w http.ResponseWriter, r *http.Request, p identity.Princ
 	if m.Recipient == "" {
 		m.Recipient = orig.Sender
 	}
+	if m.Subject == "" {
+		m.Subject = ReplySubject(orig.Subject)
+	}
+	done := m.Done
+	m.Done = false
 	b, _ := json.Marshal(m)
 	r.Body = io.NopCloser(bytes.NewReader(b))
-	s.Send(w, r, p)
+	var inTx func(*sql.Tx, time.Time) error
+	if done {
+		// reply --done: the reply and the done mark commit together (#269).
+		inTx = func(tx *sql.Tx, now time.Time) error {
+			_, err := tx.Exec(`INSERT INTO role_states(role,message_id,status,updated_at) VALUES(?,?,'complete',?) ON CONFLICT(role,message_id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at`, orig.Recipient, id, now.Format(time.RFC3339Nano))
+			return err
+		}
+	}
+	var respond func(*wire.Message)
+	if orig.ReplyTo == 0 || orig.Directive {
+		respond = func(out *wire.Message) { out.DirectiveState = s.directiveState(id) }
+	}
+	s.send(w, r, p, inTx, respond)
+}
+
+// directiveState is a directive's state for its recipient: done when its
+// recipient marked it complete or it was closed (no_reply), else open.
+// Replies never close it (mail.AnsweredRule version 2).
+func (s *Service) directiveState(id int64) string {
+	var status string
+	var noReply bool
+	if s.db.QueryRow(`SELECT `+StatusExpr+`,m.no_reply FROM messages m `+StatusJoin+` WHERE m.id=?`, id).Scan(&status, &noReply) != nil {
+		return ""
+	}
+	if noReply || IsCompleteStatus(status) {
+		return "done"
+	}
+	return "open"
 }
 
 // isReplyToSender: mail replyTo was received by role and box sent it. A group
@@ -438,4 +486,14 @@ func (s *Service) Watch(w http.ResponseWriter, r *http.Request, role string) {
 		case <-time.After(1 * time.Second):
 		}
 	}
+}
+
+// ReplySubject is the subject of a reply sent without one: "Re: " and the
+// replied-to subject, without stacking "Re: " (#269, so reply ID --done
+// --body TEXT is the whole command).
+func ReplySubject(orig string) string {
+	if strings.HasPrefix(orig, "Re: ") {
+		return orig
+	}
+	return "Re: " + orig
 }

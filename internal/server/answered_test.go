@@ -48,7 +48,9 @@ func TestProgressAnsweredDirectivesHidden(t *testing.T) {
 	open, _, _ := answeredFixture(t, s, clock.now().Add(-time.Hour))
 	var got []int64
 	for _, d := range serviceNamed(t, mustProgress(t, s), "team").OpenDirectives {
-		got = append(got, d.ID)
+		if d.RepliedAt == nil {
+			got = append(got, d.ID)
+		}
 	}
 	sort.Slice(got, func(i, j int) bool { return got[i] < got[j] })
 	if len(got) != len(open) {
@@ -92,7 +94,7 @@ func TestProgressAnsweredAcrossChunks(t *testing.T) {
 	if err = tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if got := serviceNamed(t, mustProgress(t, s), "team").OpenDirectives; len(got) != 0 {
-		t.Fatalf("%d replied directives still open, first %+v", len(got), got[0])
+	if got := unrepliedIDs(t, s); len(got) != 0 {
+		t.Fatalf("%d replied directives still unreplied, first %d", len(got), got[0])
 	}
 }

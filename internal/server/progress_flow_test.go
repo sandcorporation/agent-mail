@@ -8,13 +8,16 @@ import (
 	"time"
 )
 
-// openDirectiveTasks lists "service:task" for every open directive with a
-// task id that the progress view shows.
+// openDirectiveTasks lists "service:task" for every unreplied open
+// directive with a task id that the progress view shows.
 func openDirectiveTasks(t *testing.T, s *Server) []string {
 	t.Helper()
 	var got []string
 	for _, p := range mustProgress(t, s).Services {
 		for _, d := range p.OpenDirectives {
+			if d.RepliedAt != nil {
+				continue // answered: open until done (#269), but not waiting on a reply
+			}
 			var task string
 			if err := s.db.QueryRow(`SELECT COALESCE(task_id,'') FROM messages WHERE id=?`, d.ID).Scan(&task); err != nil {
 				t.Fatal(err)

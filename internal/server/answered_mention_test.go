@@ -24,6 +24,23 @@ func openIDs(t *testing.T, s *Server) []int64 {
 	return got
 }
 
+// unrepliedIDs lists the open directives that no reply has answered yet,
+// ascending. Under answered rule 2 (#269) a reply leaves a directive open,
+// so tests about which mail counts as a reply (mail.Replies) look here.
+func unrepliedIDs(t *testing.T, s *Server) []int64 {
+	t.Helper()
+	var got []int64
+	for _, p := range mustProgress(t, s).Services {
+		for _, d := range p.OpenDirectives {
+			if d.RepliedAt == nil {
+				got = append(got, d.ID)
+			}
+		}
+	}
+	sort.Slice(got, func(i, j int) bool { return got[i] < got[j] })
+	return got
+}
+
 func sameIDs(got, want []int64) bool {
 	sort.Slice(want, func(i, j int) bool { return want[i] < want[j] })
 	return fmt.Sprint(got) == fmt.Sprint(want)
@@ -226,7 +243,7 @@ func TestProgressMixedFixture(t *testing.T) {
 	// Under mail.Replies (#214) only the thread reply 8 answers (7) and the
 	// completion closes 9 and 29: reports by task (6) or by #id (3, 12, 20,
 	// 25) leave their directives open.
-	if got, want := openIDs(t, s), []int64{d1, d2, c5, d6, d7, d8, d9, more, d10, d11, d12}; !sameIDs(got, want) {
+	if got, want := unrepliedIDs(t, s), []int64{d1, d2, c5, d6, d7, d8, d9, more, d10, d11, d12}; !sameIDs(got, want) {
 		t.Fatalf("open %v (%d), want %v", got, len(got), want)
 	}
 }

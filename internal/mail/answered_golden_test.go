@@ -16,6 +16,7 @@ import (
 // version and its fingerprint (see TestAnsweredRuleGolden).
 var goldenFingerprints = map[int]string{
 	1: "11ba0e5b476d42f9", // #214: reply_to or the thread only (Replies); #id and task_id for Answers
+	2: "d6521a5eac67dae3", // #269: replies never close a directive, only its end (Open); fingerprints from here on hash Open too
 }
 
 var goldenNumber = regexp.MustCompile(`-[0-9]+$`)
@@ -64,16 +65,38 @@ func goldenCases() []goldenCase {
 	}
 }
 
+// goldenState: is a directive in state st open?
+type goldenState struct {
+	st   DirectiveState
+	open bool
+}
+
+func goldenStates() []goldenState {
+	var out []goldenState
+	for _, replied := range []bool{false, true} {
+		for _, completed := range []bool{false, true} {
+			for _, closed := range []bool{false, true} {
+				st := DirectiveState{Replied: replied, Completed: completed, Closed: closed}
+				out = append(out, goldenState{st, !completed && !closed}) // replies never close it (version 2)
+			}
+		}
+	}
+	return out
+}
+
 // goldenFingerprint hashes what the rule as built decides on goldenCases.
 func goldenFingerprint() string {
 	h := sha256.New()
 	for _, c := range goldenCases() {
 		fmt.Fprintf(h, "%s|%t|%t\n", c.name, Replies(c.d, c.m, goldenBase), Answers(c.d, c.m, goldenBase, goldenIsBoss))
 	}
+	for _, c := range goldenStates() {
+		fmt.Fprintf(h, "state %+v|%t\n", c.st, CurrentAnsweredRule.Open(c.st))
+	}
 	return fmt.Sprintf("%x", h.Sum(nil))[:16]
 }
 
-// TestAnsweredRuleGolden pins the answered rule (Answers, Replies) to
+// TestAnsweredRuleGolden pins the answered rule (Answers, Replies, Open) to
 // AnsweredRuleVersion. A change to what either decides fails it until the
 // version is bumped: add the cases, add the new version's fingerprint to
 // goldenFingerprints and a line to the release notes. CI and release run it
@@ -84,6 +107,11 @@ func TestAnsweredRuleGolden(t *testing.T) {
 		r, a := Replies(c.d, c.m, goldenBase), Answers(c.d, c.m, goldenBase, goldenIsBoss)
 		if r != c.replies || a != c.answers {
 			wrong = append(wrong, fmt.Sprintf("  %s: Replies %t Answers %t, table says %t %t", c.name, r, a, c.replies, c.answers))
+		}
+	}
+	for _, c := range goldenStates() {
+		if o := CurrentAnsweredRule.Open(c.st); o != c.open {
+			wrong = append(wrong, fmt.Sprintf("  state %+v: Open %t, table says %t", c.st, o, c.open))
 		}
 	}
 	for v := 1; v <= AnsweredRuleVersion; v++ {

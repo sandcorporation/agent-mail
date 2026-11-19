@@ -133,13 +133,15 @@ var commands = []command{
 			optJSON, optProfile,
 		}},
 	{name: "read", args: "ID", nargs: 1, summary: "Read a message (marks it read)", options: []option{optJSON, optProfile}},
-	{name: "reply", args: "ID", nargs: 1, synopsis: "(--body TEXT | --body-file PATH | stdin)", summary: "Reply to a message",
+	{name: "reply", args: "ID", nargs: 1, synopsis: "[--done] (--body TEXT | --body-file PATH | stdin)", summary: "Reply to a message; reply --done with the final report closes the directive",
 		options: []option{
+			{"--done", "", "the reply is the final report: also mark the directive done (one transaction). Without it the directive stays open"},
 			optSubject, optBody, optBodyF,
 			{"--to", "ROLE", "send the reply to ROLE instead of the original sender"},
 			optUrgent,
 			{"--directive", "", "the reply carries new work: count it as a directive in progress"},
 			optNoReply,
+			{"--idempotency-key", "KEY", "retry-safe key; resending with the same key returns the first reply and marks nothing twice"},
 			optJSON, optProfile,
 		}},
 	{name: "ack", args: "ID", nargs: 1, summary: "Acknowledge a message", options: []option{optJSON, optProfile}},
@@ -493,10 +495,16 @@ func dispatch(args []string) (int, error) {
 			// Omitted otherwise, like priority, so older servers accept the request.
 			msg["directive"] = true
 		}
+		if p.bool("--done") {
+			msg["done"] = true
+		}
 		b, _ := json.Marshal(msg)
 		req, _ := http.NewRequest("POST", endpoint(c, "/api/messages/"+p.pos[0]+"/reply"), bytes.NewReader(b))
 		req.Header.Set("Content-Type", "application/json")
-		return doRequest(c, req, p.bool("--json"))
+		if key := p.values["--idempotency-key"]; key != "" {
+			req.Header.Set("Idempotency-Key", key)
+		}
+		return cliReply(c, req, p.pos[0], p.bool("--json"))
 	}
 	return 0, usagef("unknown command %q", name)
 }
@@ -855,6 +863,31 @@ func cliRegister(p parsedArgs) (int, error) {
 	return ExitOK, nil
 }
 
+// cliReply sends a reply and prints it like doRequest. A reply that leaves
+// its directive open (no --done) adds one line on stderr saying so (#269).
+func cliReply(c Config, req *http.Request, id string, jsonMode bool) (int, error) {
+	authorize(c, req)
+	resp, e := http.DefaultClient.Do(req)
+	if e != nil {
+		return 0, e
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return 0, fmt.Errorf("server returned %s: %s", resp.Status, string(b))
+	}
+	var out wire.Message
+	if json.Unmarshal(b, &out) == nil && out.DirectiveState == "open" {
+		fmt.Fprintln(os.Stderr, ReplyOpenNote(id))
+	}
+	return printResponse(b, jsonMode), nil
+}
+
+// ReplyOpenNote is the stderr line of a reply that leaves its directive open.
+func ReplyOpenNote(id string) string {
+	return "directive #" + id + " stays open; reply " + id + " --done (or complete " + id + ") closes it"
+}
+
 func endpoint(c Config, path string) string { return strings.TrimRight(c.Endpoint, "/") + path }
 
 func cliSend(c Config, p parsedArgs) (int, error) {
@@ -933,13 +966,19 @@ func doRequest(c Config, req *http.Request, jsonMode bool) (int, error) {
 	if resp.StatusCode >= 300 {
 		return 0, fmt.Errorf("server returned %s: %s", resp.Status, string(b))
 	}
+	return printResponse(b, jsonMode), nil
+}
+
+// printResponse prints a response body: indented JSON with jsonMode, else
+// for people.
+func printResponse(b []byte, jsonMode bool) int {
 	if jsonMode {
 		var out bytes.Buffer
 		if json.Indent(&out, b, "", "  ") == nil {
 			b = out.Bytes()
 		}
 		fmt.Println(string(b))
-		return ExitOK, nil
+		return ExitOK
 	}
 	var v any
 	if json.Unmarshal(b, &v) == nil {
@@ -947,7 +986,7 @@ func doRequest(c Config, req *http.Request, jsonMode bool) (int, error) {
 	} else {
 		fmt.Println(string(b))
 	}
-	return ExitOK, nil
+	return ExitOK
 }
 
 func pretty(v any) { prettyTo(os.Stdout, v) }

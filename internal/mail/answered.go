@@ -64,8 +64,8 @@ func (m FlowMail) mentions(id int64) bool {
 }
 
 // Answers is the loose rule (#63, #138) for whether m answers the directive
-// d. The metrics first_reply uses it. The progress view's open_directives and
-// the directive reminders use the strict rule, Replies (#214).
+// d. The metrics first_reply uses it. Whether a directive is open is the
+// AnsweredRule's (Replies and Open).
 //
 // m answers d when it is sent no earlier than d, not by the system, by a
 // role of d's recipient base, and either
@@ -92,33 +92,48 @@ func Answers(d, m FlowMail, base func(string) string, isBoss func(string) bool) 
 	return (d.TaskID != "" && m.TaskID == d.TaskID) || m.mentions(d.ID)
 }
 
-// AnsweredRuleVersion is the version of the answered rule (Answers and
-// Replies). Bump it with every change to how either decides, together with
-// the golden table (answered_golden_test.go), an entry in AnsweredRules and a
-// line in the release notes: at start-up presence.MigrateAnsweredRule marks
-// the directives the new rule would reopen as needing no reply. Version 1 is
-// the rule since #214.
-const AnsweredRuleVersion = 1
+// AnsweredRuleVersion is the version of the answered rule: what counts as a
+// reply (Answers, Replies) and which directives are open
+// (AnsweredRule.Open). Bump it with every change to how any of them decides,
+// together with the golden table (answered_golden_test.go), an entry in
+// AnsweredRules and a line in the release notes: at start-up
+// presence.MigrateAnsweredRule marks the directives the new rule would reopen
+// as needing no reply.
+//
+//   - 1 (#214): a reply (Replies) closes a directive.
+//   - 2 (#269): replies never close a directive; only its end does (reply
+//     --done or complete by its recipient, close by its sender).
+const AnsweredRuleVersion = 2
 
-// AnsweredRule is a version of the strict rule open directives follow.
+// AnsweredRule is a version of the rule open directives follow.
 type AnsweredRule struct {
 	Version int
+	// Replies decides whether m is a reply to the directive d.
 	Replies func(d, m FlowMail, base func(string) string) bool
+	// Open decides whether a directive in state st is still open.
+	Open func(st DirectiveState) bool
 }
 
 // CurrentAnsweredRule is the rule this code runs.
-var CurrentAnsweredRule = AnsweredRule{Version: AnsweredRuleVersion, Replies: Replies}
+var CurrentAnsweredRule = AnsweredRules[AnsweredRuleVersion]
 
-// AnsweredRules is every version of the strict rule this build knows, by
-// number, so the start-up migration can tell which directives a new version
-// opens that the stored one did not (#268). Keep past versions when bumping.
+// AnsweredRules is every version of the rule this build knows, by number, so
+// the start-up migration can tell which directives a new version opens that
+// the stored one did not (#268). Keep past versions when bumping.
 var AnsweredRules = map[int]AnsweredRule{
-	1: CurrentAnsweredRule,
+	1: {Version: 1, Replies: Replies, Open: func(st DirectiveState) bool { return !st.Ended() && !st.Replied }},
+	2: {Version: 2, Replies: Replies, Open: OpenUntilDone},
 }
 
-// Replies is the strict rule (#214) for whether m answers the directive d:
-// the progress view's open_directives, the directive reminders and the
-// report status use it.
+// OpenUntilDone is the open decision since version 2 (#269), the one place
+// that decides whether a directive is still open: the progress view and 대기,
+// the reminders, the idle check and the report status all go through it. A
+// directive is open until it ends; replies, however many, leave it open.
+func OpenUntilDone(st DirectiveState) bool { return !st.Ended() }
+
+// Replies is the strict rule (#214) for whether m replies to the directive d.
+// Since version 2 a reply no longer closes the directive; the progress view,
+// the reminders, the idle check and the report show when it last got one.
 //
 // m replies to d when it is sent no earlier than d, not by the system, by a
 // role of d's recipient base to a role of d's sender base, and either has
@@ -132,27 +147,15 @@ func Replies(d, m FlowMail, base func(string) string) bool {
 	return m.ReplyTo == d.ID || m.ThreadID == d.ID || m.Thread() == d.Thread()
 }
 
-// DirectiveState is what decides whether a directive is still open. Open is
-// the one place that decides it: the progress view and 대기, the reminders,
-// the idle-after-answer check and the report status all go through it.
+// DirectiveState is what an AnsweredRule's Open reads.
 type DirectiveState struct {
-	Answered  bool // a reply under the answered rule (Replies)
-	Completed bool // its recipient marked it complete
+	Replied   bool // a reply under Replies
+	Completed bool // its recipient marked it done (reply --done, complete)
 	Closed    bool // no_reply: sent with --no-reply, or closed by its sender or an admin (close)
 }
 
-// Ended: completed by its recipient or closed. Nothing watches it any more.
+// Ended: done by its recipient or closed. Nothing watches it any more.
 func (st DirectiveState) Ended() bool { return st.Completed || st.Closed }
-
-// Open is the one decision whether a directive is still open: not ended and
-// not answered. A rule where only the end closes a directive changes this
-// function alone.
-func (st DirectiveState) Open() bool { return !st.Ended() && !st.Answered }
-
-// AwaitingCompletion: replied to but not ended, the work the idle check
-// watches (presence idle.go). It does not read Open: the reply that made the
-// directive answered is what put it here.
-func (st DirectiveState) AwaitingCompletion() bool { return st.Answered && !st.Ended() }
 
 // IsCompleteStatus reports whether a recipient status is complete.
 func IsCompleteStatus(status string) bool { return status == "complete" || status == "completed" }

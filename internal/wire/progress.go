@@ -39,25 +39,29 @@ type ProgressMail struct {
 	At      time.Time `json:"at"`
 }
 
-// ProgressStall is a directive answered (a plain reply) but not completed,
-// the newest directive to its recipient, whose live sessions have all been
-// idle since IdleSince.
+// ProgressStall is an open directive, the newest open one to its recipient,
+// whose live sessions have all been idle since IdleSince.
 type ProgressStall struct {
-	ID         int64     `json:"id"`
-	From       string    `json:"from"`
-	To         string    `json:"to"`
-	Subject    string    `json:"subject"`
-	AnsweredAt time.Time `json:"answered_at"`
-	IdleSince  time.Time `json:"idle_since"` // the later of the answer and the start of the sessions' idle stretch
-	IdleS      int64     `json:"idle_s"`
-	Sessions   []string  `json:"sessions"`
+	ID         int64      `json:"id"`
+	From       string     `json:"from"`
+	To         string     `json:"to"`
+	Subject    string     `json:"subject"`
+	AnsweredAt *time.Time `json:"answered_at,omitempty"` // its newest reply; none when it got none
+	IdleSince  time.Time  `json:"idle_since"`            // the latest of the directive, its newest reply and the start of the sessions' idle stretch
+	IdleS      int64      `json:"idle_s"`
+	Sessions   []string   `json:"sessions"`
 }
 
+// ProgressDirective is an open directive. Recipient is its recipient
+// mailbox's live state: the worst state of the sessions reading it (idle,
+// busy, ...), or offline when none is live.
 type ProgressDirective struct {
-	ID            int64  `json:"id"`
-	To            string `json:"to"`
-	Subject       string `json:"subject"`
-	Status        string `json:"status"`
-	AgeS          int64  `json:"age_s"`
-	OverThreshold bool   `json:"over_threshold"`
+	ID            int64      `json:"id"`
+	To            string     `json:"to"`
+	Subject       string     `json:"subject"`
+	Status        string     `json:"status"`
+	AgeS          int64      `json:"age_s"`
+	OverThreshold bool       `json:"over_threshold"`
+	RepliedAt     *time.Time `json:"replied_at,omitempty"` // its newest reply; open directives can have replies (#269)
+	Recipient     string     `json:"recipient_state"`
 }
