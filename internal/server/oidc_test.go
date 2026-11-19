@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"crypto"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -24,12 +25,19 @@ import (
 
 // fakeIdP is an OpenID Connect provider on httptest: discovery, JWKS and a
 // token endpoint that checks the client secret and PKCE. The test decides
-// what the next ID token says through issue.
+// what the next ID token says through issue. With clientSecret empty it is a
+// public client's provider: the token request must carry no client
+// authentication at all (token_endpoint_auth_method none) and PKCE.
+// JWKS has an RSA key (k1) and an Ed25519 key (k2); signAlg picks the one ID
+// tokens are signed with and algs is what discovery advertises.
 type fakeIdP struct {
 	srv          *httptest.Server
 	key          *rsa.PrivateKey
+	edKey        ed25519.PrivateKey
 	clientID     string
 	clientSecret string
+	signAlg      string   // RS256 (default) or EdDSA
+	algs         []string // id_token_signing_alg_values_supported
 
 	mu        sync.Mutex
 	codes     map[string]idpGrant
@@ -49,14 +57,18 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := &fakeIdP{key: key, clientID: "switchboard", clientSecret: "client-secret-value", codes: map[string]idpGrant{}}
+	_, edKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &fakeIdP{key: key, edKey: edKey, clientID: "switchboard", clientSecret: "client-secret-value", signAlg: "RS256", algs: []string{"RS256"}, codes: map[string]idpGrant{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
 		u := p.srv.URL
 		writeJSON(w, map[string]any{
 			"issuer": u, "authorization_endpoint": u + "/authorize", "token_endpoint": u + "/token", "jwks_uri": u + "/jwks",
 			"response_types_supported": []string{"code"}, "subject_types_supported": []string{"public"},
-			"id_token_signing_alg_values_supported": []string{"RS256"}, "code_challenge_methods_supported": []string{"S256"},
+			"id_token_signing_alg_values_supported": p.algs, "code_challenge_methods_supported": []string{"S256"},
 		})
 	})
 	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
@@ -64,6 +76,9 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 		writeJSON(w, map[string]any{"keys": []map[string]string{{
 			"kty": "RSA", "kid": "k1", "use": "sig", "alg": "RS256",
 			"n": base64.RawURLEncoding.EncodeToString(key.N.Bytes()), "e": base64.RawURLEncoding.EncodeToString(e),
+		}, {
+			"kty": "OKP", "crv": "Ed25519", "kid": "k2", "use": "sig", "alg": "EdDSA",
+			"x": base64.RawURLEncoding.EncodeToString(edKey.Public().(ed25519.PublicKey)),
 		}}})
 	})
 	mux.HandleFunc("/token", p.token)
@@ -81,10 +96,16 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 
 func (p *fakeIdP) token(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
-	id, secret, ok := r.BasicAuth()
-	if !ok {
+	id, secret, basic := r.BasicAuth()
+	if !basic {
 		id, secret = r.PostForm.Get("client_id"), r.PostForm.Get("client_secret")
 	}
+	// A public client sends client_id in the form and no authentication:
+	// no Authorization header (not even with an empty password), no
+	// client_secret parameter.
+	_, formSecret := r.PostForm["client_secret"]
+	public := p.clientSecret == ""
+	unauthenticated := !basic && r.Header.Get("Authorization") == "" && !formSecret
 	p.mu.Lock()
 	p.exchanges++
 	g, found := p.codes[r.PostForm.Get("code")]
@@ -92,7 +113,7 @@ func (p *fakeIdP) token(w http.ResponseWriter, r *http.Request) {
 	p.mu.Unlock()
 	sum := sha256.Sum256([]byte(r.PostForm.Get("code_verifier")))
 	switch {
-	case id != p.clientID || secret != p.clientSecret:
+	case public && (!unauthenticated || id != p.clientID), !public && (id != p.clientID || secret != p.clientSecret):
 		http.Error(w, `{"error":"invalid_client"}`, 401)
 		return
 	case !found || r.PostForm.Get("grant_type") != "authorization_code" || r.PostForm.Get("redirect_uri") != g.redirectURI,
@@ -106,15 +127,24 @@ func (p *fakeIdP) token(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"access_token": "at", "token_type": "Bearer", "expires_in": 300, "id_token": p.sign(g.claims)})
 }
 
-// sign makes an RS256 JWT with kid k1.
+// sign makes a JWT: RS256 with kid k1, or EdDSA (Ed25519) with kid k2.
 func (p *fakeIdP) sign(claims map[string]any) string {
-	h, _ := json.Marshal(map[string]string{"alg": "RS256", "kid": "k1", "typ": "JWT"})
+	kid := "k1"
+	if p.signAlg == "EdDSA" {
+		kid = "k2"
+	}
+	h, _ := json.Marshal(map[string]string{"alg": p.signAlg, "kid": kid, "typ": "JWT"})
 	c, _ := json.Marshal(claims)
 	in := base64.RawURLEncoding.EncodeToString(h) + "." + base64.RawURLEncoding.EncodeToString(c)
-	sum := sha256.Sum256([]byte(in))
-	sig, err := rsa.SignPKCS1v15(rand.Reader, p.key, crypto.SHA256, sum[:])
-	if err != nil {
-		panic(err)
+	var sig []byte
+	if p.signAlg == "EdDSA" {
+		sig = ed25519.Sign(p.edKey, []byte(in))
+	} else {
+		sum := sha256.Sum256([]byte(in))
+		var err error
+		if sig, err = rsa.SignPKCS1v15(rand.Reader, p.key, crypto.SHA256, sum[:]); err != nil {
+			panic(err)
+		}
 	}
 	return in + "." + base64.RawURLEncoding.EncodeToString(sig)
 }
@@ -149,7 +179,7 @@ func (p *fakeIdP) issue(t *testing.T, authURL string, now time.Time, extra map[s
 }
 
 func oidcEnv(p *fakeIdP, admins string) map[string]string {
-	return map[string]string{
+	env := map[string]string{
 		"SWITCHBOARD_ADMIN_AUTH":         "oidc",
 		"SWITCHBOARD_OIDC_ISSUER":        p.srv.URL,
 		"SWITCHBOARD_OIDC_CLIENT_ID":     p.clientID,
@@ -157,6 +187,10 @@ func oidcEnv(p *fakeIdP, admins string) map[string]string {
 		"SWITCHBOARD_OIDC_ADMINS":        admins,
 		"SWITCHBOARD_PUBLIC_URL":         "https://mail.example/",
 	}
+	if p.clientSecret == "" {
+		delete(env, "SWITCHBOARD_OIDC_CLIENT_SECRET")
+	}
+	return env
 }
 
 func oidcServer(t *testing.T, p *fakeIdP, admins string) (*Server, *time.Time) {
@@ -382,7 +416,7 @@ func TestOIDCConfig(t *testing.T) {
 	if err := adminauth.Configure(&adminauth.Config{}, fakeEnv(full)); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"SWITCHBOARD_OIDC_ISSUER", "SWITCHBOARD_OIDC_CLIENT_ID", "SWITCHBOARD_OIDC_CLIENT_SECRET", "SWITCHBOARD_OIDC_ADMINS", "SWITCHBOARD_PUBLIC_URL"} {
+	for _, name := range []string{"SWITCHBOARD_OIDC_ISSUER", "SWITCHBOARD_OIDC_CLIENT_ID", "SWITCHBOARD_OIDC_ADMINS", "SWITCHBOARD_PUBLIC_URL"} {
 		env := map[string]string{}
 		for k, v := range full {
 			if k != name {

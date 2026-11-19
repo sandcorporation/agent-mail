@@ -6,6 +6,11 @@ package adminauth
 // provider's JWKS) and the admin allowlist, then starts the same sb_session
 // as the built-in mode.
 //
+// Without a client secret it is a public client (#235): PKCE only, no client
+// authentication at the token endpoint. The ID token's signing algorithm must
+// be one the provider's discovery advertises (go-oidc's default), e.g. RS256
+// or EdDSA.
+//
 // Libraries: github.com/coreos/go-oidc/v3 (discovery, JWKS, ID token checks)
 // and golang.org/x/oauth2 (authorization URL, code exchange, PKCE).
 
@@ -109,8 +114,11 @@ func configureOIDC(getenv func(string) string) (*oidcLogin, error) {
 	public := strings.TrimRight(get("PUBLIC_URL"), "/")
 
 	var missing []string
-	for name, v := range map[string]string{"OIDC_ISSUER": o.issuer, "OIDC_CLIENT_ID": o.clientID, "OIDC_CLIENT_SECRET": o.clientSecret, "PUBLIC_URL": public} {
-		if v == "" && !(name == "OIDC_CLIENT_SECRET" && len(invalid) > 0) {
+	// No client secret is a public client (#235): a PC instance's loopback
+	// redirect is allowed only for those at many providers, and a program on
+	// a user's PC cannot keep a secret anyway.
+	for name, v := range map[string]string{"OIDC_ISSUER": o.issuer, "OIDC_CLIENT_ID": o.clientID, "PUBLIC_URL": public} {
+		if v == "" {
 			missing = append(missing, config.EnvPrefix+name)
 		}
 	}
@@ -138,6 +146,11 @@ func configureOIDC(getenv func(string) string) (*oidcLogin, error) {
 		return nil, errors.New(config.EnvPrefix + "ADMIN_AUTH=oidc: invalid " + strings.Join(invalid, ", "))
 	}
 	o.redirectURL = public + oidcCallbackPath
+	if o.clientSecret == "" {
+		log.Printf("oidc: public client (PKCE)")
+	} else {
+		log.Printf("oidc: confidential client")
+	}
 	o.flowKey = make([]byte, 32)
 	if _, err := rand.Read(o.flowKey); err != nil {
 		return nil, err
@@ -166,8 +179,16 @@ func (o *oidcLogin) discover() (*oidc.Provider, error) {
 	return p, nil
 }
 
+// oauth is the code-flow client. A public client (no secret) authenticates
+// with nothing but PKCE: client_id goes in the form and no Authorization
+// header is sent (token_endpoint_auth_method none), where auto-detection
+// would first try Basic auth with an empty password.
 func (o *oidcLogin) oauth(p *oidc.Provider) *oauth2.Config {
-	return &oauth2.Config{ClientID: o.clientID, ClientSecret: o.clientSecret, Endpoint: p.Endpoint(), RedirectURL: o.redirectURL, Scopes: o.scopes}
+	ep := p.Endpoint()
+	if o.clientSecret == "" {
+		ep.AuthStyle = oauth2.AuthStyleInParams
+	}
+	return &oauth2.Config{ClientID: o.clientID, ClientSecret: o.clientSecret, Endpoint: ep, RedirectURL: o.redirectURL, Scopes: o.scopes}
 }
 
 // allowed reports whether a session user (an email or sub:<id>) is still on
