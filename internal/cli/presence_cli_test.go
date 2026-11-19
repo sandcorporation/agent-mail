@@ -8,7 +8,7 @@ import (
 	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
-func TestStatusTableSinceColumnLast(t *testing.T) {
+func TestStatusTableNewColumnsLast(t *testing.T) {
 	now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
 	busy, reported := now.Add(-(7*time.Hour + 12*time.Minute)), now.Add(-4*time.Second)
 	out := wire.PresenceList{Now: now, Sessions: []wire.PresenceView{
@@ -20,14 +20,14 @@ func TestStatusTableSinceColumnLast(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
-	want := []string{"ROLE", "STATUS", "CONTEXT", "LAST", "TURN", "MACHINE", "DIRECTORY", "LABEL", "PARENT", "REPORTED", "SINCE"}
+	want := []string{"ROLE", "STATUS", "CONTEXT", "LAST", "TURN", "MACHINE", "DIRECTORY", "LABEL", "PARENT", "REPORTED", "SINCE", "SUBAGENTS"}
 	if got := strings.Fields(lines[0]); strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("header %q", lines[0])
 	}
 	for i, wantSince := range []string{"7h12m", "-"} {
 		f := strings.Fields(lines[i+1])
-		if f[0] != out.Sessions[i].Role || f[len(f)-1] != wantSince {
-			t.Errorf("row %d: %q, want SINCE %q at the end", i, lines[i+1], wantSince)
+		if f[0] != out.Sessions[i].Role || f[len(f)-2] != wantSince || f[len(f)-1] != "-" {
+			t.Errorf("row %d: %q, want SINCE %q then SUBAGENTS - at the end", i, lines[i+1], wantSince)
 		}
 	}
 	if !strings.Contains(lines[1], "4s ago") {

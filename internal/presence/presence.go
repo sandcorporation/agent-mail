@@ -125,7 +125,9 @@ func applyPresence(tx *sql.Tx, base string, number int, req wire.SlotRequest, no
 	if err != nil {
 		return err
 	}
-	set, args := `reported_at=?,offline_noticed_at=0`, []any{ms(now)}
+	// subagents is not kept like the other fields: a report without it means
+	// none are running (the plugin sends it only when N > 0).
+	set, args := `reported_at=?,offline_noticed_at=0,subagents=?`, []any{ms(now), req.SubagentCount()}
 	if fresh {
 		set += `,state='',context_tokens=-1,last_turn_at=0`
 	}
@@ -148,13 +150,13 @@ func applyPresence(tx *sql.Tx, base string, number int, req wire.SlotRequest, no
 }
 
 func presenceCols() string {
-	return slotCols() + `,state,context_tokens,last_turn_at,reported_at,` + stretchStartSQL
+	return slotCols() + `,state,context_tokens,last_turn_at,reported_at,subagents,` + stretchStartSQL
 }
 
 func scanPresence(sc interface{ Scan(...any) error }, now time.Time) (wire.PresenceView, error) {
 	var v wire.PresenceView
-	var reg, until, tokens, last, reported, started int64
-	err := sc.Scan(&v.Base, &v.Number, &v.Machine, &v.Directory, &v.SessionID, &v.Label, &v.Parent, &reg, &until, &v.State, &tokens, &last, &reported, &started)
+	var reg, until, tokens, last, reported, subagents, started int64
+	err := sc.Scan(&v.Base, &v.Number, &v.Machine, &v.Directory, &v.SessionID, &v.Label, &v.Parent, &reg, &until, &v.State, &tokens, &last, &reported, &subagents, &started)
 	v.Role = identity.SlotRole(v.Base, v.Number)
 	v.RegisteredAt, v.LeaseExpiresAt = fromMS(reg), fromMS(until)
 	v.Online = until > ms(now)
@@ -170,6 +172,7 @@ func scanPresence(sc interface{ Scan(...any) error }, now time.Time) (wire.Prese
 		v.Status = "unknown"
 	}
 	if v.Online {
+		v.Subagents = subagents
 		t := stretchStart(started, reg)
 		v.Since = &t
 	}

@@ -23,6 +23,7 @@ type ProgressSession struct {
 	Since     time.Time `json:"since"`
 	Directory string    `json:"directory"`
 	LastSeen  time.Time `json:"last_seen"`
+	Subagents int64     `json:"subagents,omitempty"` // running background sub-agents
 }
 
 type ProgressMail struct {
