@@ -1,6 +1,8 @@
 # The terminal narrows; the program repaints the whole viewport at the new size.
+# No line is wider than the new width: tmux and ConPTY rewrap such lines on
+# resize and the emulator does not, so the scrollback would differ.
 @size 20x5
-first line of output\r\n
+first line\r\n
 second\r\n
 third
 @resize 12x4
