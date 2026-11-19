@@ -1,0 +1,2 @@
+# Terminal scenes and recordings are byte-exact; keep LF on Windows checkouts.
+internal/term/testdata/** -text

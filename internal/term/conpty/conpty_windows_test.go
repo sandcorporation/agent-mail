@@ -5,10 +5,10 @@ package conpty_test
 import (
 	"bufio"
 	"context"
+	"encoding/binary"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +17,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 
@@ -109,7 +110,7 @@ func console() (in, out *os.File) {
 	}
 	in, out = open("CONIN$"), open("CONOUT$")
 	_ = windows.SetConsoleMode(windows.Handle(in.Fd()), windows.ENABLE_VIRTUAL_TERMINAL_INPUT)
-	_ = windows.SetConsoleMode(windows.Handle(out.Fd()), windows.ENABLE_PROCESSED_OUTPUT|windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING|windows.DISABLE_NEWLINE_AUTO_RETURN)
+	_ = windows.SetConsoleMode(windows.Handle(out.Fd()), windows.ENABLE_PROCESSED_OUTPUT|windows.ENABLE_WRAP_AT_EOL_OUTPUT|windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING|windows.DISABLE_NEWLINE_AUTO_RETURN)
 	return in, out
 }
 
@@ -149,18 +150,37 @@ func runScene(path string) int {
 		return 3
 	}
 	in, out := console()
-	key := make([]byte, 1)
+	h := windows.Handle(in.Fd())
 	for _, s := range sc.Steps {
 		if s.Data == nil {
 			continue
 		}
-		if _, err := in.Read(key); err != nil {
+		if waitKey(h) != nil {
 			return 0
 		}
 		_, _ = out.Write(s.Data)
 	}
-	_, _ = io.Copy(io.Discard, in)
+	for waitKey(h) == nil {
+	}
 	return 0
+}
+
+var readConsoleInput = windows.NewLazySystemDLL("kernel32.dll").NewProc("ReadConsoleInputW")
+
+// waitKey blocks until a key goes down. It reads input records rather than
+// characters: a character read (ReadConsole) puts the console cursor back
+// at column 0, which ConPTY then paints.
+func waitKey(in windows.Handle) error {
+	for {
+		var rec [20]byte // INPUT_RECORD: EventType at 0, KEY_EVENT_RECORD.bKeyDown at 4
+		var n uint32
+		if r, _, err := readConsoleInput.Call(uintptr(in), uintptr(unsafe.Pointer(&rec[0])), 1, uintptr(unsafe.Pointer(&n))); r == 0 {
+			return err
+		}
+		if n == 1 && binary.LittleEndian.Uint16(rec[0:]) == 1 && binary.LittleEndian.Uint32(rec[4:]) != 0 {
+			return nil
+		}
+	}
 }
 
 func echoSpec(name string) term.Spec {
@@ -368,10 +388,24 @@ func TestPipeGrantsOnlyTheCurrentUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sddl := sd.String()
-	dacl := sddl[strings.Index(sddl, "D:"):]
-	if !strings.HasPrefix(dacl, "D:P") || strings.Count(dacl, "(") != 1 || !strings.HasSuffix(dacl, ";;;"+u.User.Sid.String()+")") || !strings.Contains(dacl, "(A;") {
-		t.Fatalf("pipe DACL %q, want one allow entry for %s", dacl, u.User.Sid)
+	ctl, _, err := sd.Control()
+	if err != nil {
+		t.Fatal(err)
+	}
+	acl, _, err := sd.DACL()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctl&windows.SE_DACL_PROTECTED == 0 || acl == nil || acl.AceCount != 1 {
+		t.Fatalf("pipe DACL %s, want one protected entry", sd)
+	}
+	var ace *windows.ACCESS_ALLOWED_ACE
+	if err := windows.GetAce(acl, 0, &ace); err != nil {
+		t.Fatal(err)
+	}
+	sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+	if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || !sid.Equals(u.User.Sid) {
+		t.Fatalf("pipe DACL %s, want one allow entry for %s", sd, u.User.Sid)
 	}
 }
 
