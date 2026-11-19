@@ -13,6 +13,7 @@ import (
 	"github.com/sandcorporation/switchboard/internal/identity"
 	"github.com/sandcorporation/switchboard/internal/mail"
 	"github.com/sandcorporation/switchboard/internal/store"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 // Config holds the ask settings.
@@ -31,15 +32,28 @@ type Service struct {
 	hub    *mail.Hub
 	done   <-chan struct{}
 	notify func(id, asker, header string)
+	slots  SlotRules
+}
+
+// SlotRules are the slot lookups an answer's delivery needs (internal/presence
+// provides them; asks does not import it). A nil rule means no slots: the
+// answer goes to the asking address.
+type SlotRules struct {
+	// Asking is the live slot role (base or <base>-N) names under base.
+	Asking func(tx *sql.Tx, base, role string, now time.Time) (wire.SlotView, bool, error)
+	// Answer is the role of the live slot of base that takes mail meant for
+	// the session asking was, if any.
+	Answer func(tx *sql.Tx, base string, asking wire.SlotView, now time.Time) (string, bool, error)
 }
 
 // New returns the ask rules over db. clock is the current time, cfg the ask
 // settings, ids the identity rules, ml the mailbox (its long-poll wait
 // rules), hub the server's event hub (asks and answers wake it), done is
 // closed on shutdown (it ends question long polls), and notify sends the
-// outside notice for a new question whose settings ask for one (Discord).
-func New(db *sql.DB, clock func() time.Time, cfg *Config, ids *identity.Service, ml *mail.Service, hub *mail.Hub, done <-chan struct{}, notify func(id, asker, header string)) *Service {
-	return &Service{db: db, clock: clock, cfg: cfg, ids: ids, mail: ml, hub: hub, done: done, notify: notify}
+// outside notice for a new question whose settings ask for one (Discord),
+// and slots finds the session an answer goes to.
+func New(db *sql.DB, clock func() time.Time, cfg *Config, ids *identity.Service, ml *mail.Service, hub *mail.Hub, done <-chan struct{}, notify func(id, asker, header string), slots SlotRules) *Service {
+	return &Service{db: db, clock: clock, cfg: cfg, ids: ids, mail: ml, hub: hub, done: done, notify: notify, slots: slots}
 }
 
 func (s *Service) now() time.Time { return s.clock() }

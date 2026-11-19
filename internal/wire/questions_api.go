@@ -41,12 +41,19 @@ type QuestionView struct {
 	// Answerer is AnswererOwner when no boss role could answer at ask time,
 	// so a person answers on the dashboard; empty (omitted) otherwise.
 	Answerer string `json:"answerer,omitempty"`
+	// Delivery is DeliveryWaiting while the answer mail waits for a session
+	// of the asker to register; empty (omitted) otherwise.
+	Delivery string `json:"delivery,omitempty"`
 
 	AskerBase string `json:"-"` // server-side only
 }
 
 // AnswererOwner marks a question that only a person on the dashboard answers.
 const AnswererOwner = "owner"
+
+// DeliveryWaiting marks an answered question whose answer mail no session
+// has received yet.
+const DeliveryWaiting = "waiting"
 
 type QuestionList struct {
 	Questions []QuestionView `json:"questions"`

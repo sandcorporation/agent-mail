@@ -205,7 +205,8 @@ func (s *Service) claimSlot(ctx context.Context, base string, req wire.SlotReque
 	now := s.now()
 	until := now.Add(s.LeaseLength())
 	var g wire.SlotGrant
-	var box string
+	var box, handed string
+	var moved int
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
 		own, has, err := identityRow(tx, base, req)
 		if err != nil {
@@ -257,9 +258,13 @@ func (s *Service) claimSlot(ctx context.Context, base string, req wire.SlotReque
 		if box, g.HeldDelivered, err = mail.DeliverHeld(tx, base, number, req.Label, now); err != nil {
 			return err
 		}
+		if handed, moved, err = mail.DeliverHandoff(tx, base, number, req.Machine, req.Directory, req.Label, now); err != nil {
+			return err
+		}
 		return s.fillGrant(tx, &g, base, number)
 	})
 	s.wakeHeld(err, box, g.HeldDelivered)
+	s.wakeHeld(err, handed, moved)
 	return g, err
 }
 
@@ -319,7 +324,8 @@ func (s *Service) renewSlot(ctx context.Context, base string, req wire.SlotReque
 		until = now
 	}
 	var g wire.SlotGrant
-	var box string
+	var box, handed string
+	var moved int
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
 		own, has, err := identityRow(tx, base, req)
 		if err != nil {
@@ -353,11 +359,15 @@ func (s *Service) renewSlot(ctx context.Context, base string, req wire.SlotReque
 			if box, g.HeldDelivered, err = mail.DeliverHeld(tx, base, own.Number, req.Label, now); err != nil {
 				return err
 			}
+			if handed, moved, err = mail.DeliverHandoff(tx, base, own.Number, req.Machine, req.Directory, req.Label, now); err != nil {
+				return err
+			}
 		}
 		g.Reclaimed = true
 		return s.fillGrant(tx, &g, base, own.Number)
 	})
 	s.wakeHeld(err, box, g.HeldDelivered)
+	s.wakeHeld(err, handed, moved)
 	return g, err
 }
 
