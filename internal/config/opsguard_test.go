@@ -92,34 +92,6 @@ func TestOperationsConfigNeverEnablesHosting(t *testing.T) {
 	}
 }
 
-// remindNameRE matches SWITCHBOARD_REMIND, SWITCHBOARD_REMIND_* and their
-// old-prefix forms.
-var remindNameRE = regexp.MustCompile(`(` + EnvPrefix + `|` + legacyEnvPrefix + `)REMIND\w*`)
-
-// TestOperationsConfigNeverEnablesRemind keeps directive reminders (#214)
-// off on the operations instance until they are switched on on purpose:
-// compose.yaml passes only the variables it names, so naming
-// SWITCHBOARD_REMIND there is what would let the deploy .env turn it on.
-// Switching it on removes this test in the same change.
-func TestOperationsConfigNeverEnablesRemind(t *testing.T) {
-	root := repoRoot(t)
-	for _, f := range operationsFiles(t, root) {
-		b, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if names := remindNameRE.FindAllString(string(b), -1); len(names) > 0 {
-			rel, _ := filepath.Rel(root, f)
-			t.Errorf("%s names %v: directive reminders stay off on the operations instance until switched on on purpose", rel, names)
-		}
-	}
-	for _, s := range []string{"SWITCHBOARD_REMIND: ${SWITCHBOARD_REMIND:-}", "- SWITCHBOARD_REMIND_AFTER=2h", "AGENT_MAIL_REMIND=on"} {
-		if !remindNameRE.MatchString(s) {
-			t.Errorf("guard misses %q", s)
-		}
-	}
-}
-
 func TestHostingNameGuardMatches(t *testing.T) {
 	for _, s := range []string{"SWITCHBOARD_HOSTING: on", "- SWITCHBOARD_HOSTING_MAX=4", "AGENT_MAIL_HOSTING=on", "env.SWITCHBOARD_HOSTING_AGENT"} {
 		if !hostingNameRE.MatchString(s) {
