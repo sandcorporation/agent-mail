@@ -34,7 +34,7 @@ A thread's root ID is shared in `thread_id`; `reply_to` points at the immediate 
 
 ## Build and run locally
 
-Requires Go 1.24+ for development. End users install a compiled release binary and do not need Go. Create distinct random tokens per role and set them in the environment (never commit token values):
+Requires Go 1.25+ for development. End users install a compiled release binary and do not need Go. Create distinct random tokens per role and set them in the environment (never commit token values):
 
 ```sh
 export SWITCHBOARD_TOKENS='sandcorp/boss=REPLACE_WITH_RANDOM,codemit/coordinator=REPLACE_WITH_RANDOM,codemit/worker-1=REPLACE_WITH_RANDOM'
