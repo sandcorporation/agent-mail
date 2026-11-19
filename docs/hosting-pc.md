@@ -253,6 +253,8 @@ Set-Content "$([Environment]::GetFolderPath('Startup'))\switchboard-pc.cmd" "@st
 Start-Process -WindowStyle Minimized "$data\up.cmd"
 ```
 
+`up` stopped later on its own (health does not answer, the task is `Ready`) → read the end of `$data\up.log`. Every way `up` ends by itself leaves an `exit N: …` line there, after a `signal …`, `console event …` or `panic in …` line when that was the cause. No `exit` line after the last start means a program outside ended `switchboard.exe` (as `Stop-Process` does). The task does not start it again: Task Scheduler restarts a task only when it fails to start, not when its program exits with an error, so W6 sets no restart. Start it with `Start-ScheduledTask -TaskName 'switchboard-pc'`; it adopts the keeper and the sessions keep running (`node: keeper … (adopted)` in `up.log`).
+
 (With the Startup folder, "Start-ScheduledTask" in W8 and W9 becomes `Start-Process -WindowStyle Minimized "$data\up.cmd"`.) Health times out → read the end of `$data\up.log` (`Get-Content "$data\up.log" -Tail 20`) and look the message up under [Refusals](#refusals).
 
 ### W7. Add a session
