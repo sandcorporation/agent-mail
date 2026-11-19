@@ -67,7 +67,10 @@ var version = "dev"
 
 // Run reads the settings from the environment, opens the database and serves
 // until SIGINT or SIGTERM. v is the build version.
-func Run(v string) { run(v, nil, "", nil) }
+func Run(v string) {
+	logConsoleEvents()
+	run(v, nil, "", nil)
+}
 
 // attachFunc starts more work on a server about to serve (up's node); ctx
 // ends at shutdown.
@@ -158,7 +161,6 @@ func run(v string, ln net.Listener, setupDir string, attach attachFunc) {
 	srv.RegisterOnShutdown(func() { close(s.done) })
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-	logConsoleEvents()
 	stopped := make(chan struct{})
 	waitSweeper := s.startSweeper()
 	if ln == nil {

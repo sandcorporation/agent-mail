@@ -38,6 +38,9 @@ const (
 // only when start-up fails; otherwise it serves until SIGINT or SIGTERM.
 // Every way it ends leaves its exit line in the log (exit.go).
 func Up(v, dataDir string, port int, nodeName string) (err error) {
+	// From the first moment: an event before run's signal.Notify still
+	// ends up (STATUS_CONTROL_C_EXIT), and now leaves its line.
+	logConsoleEvents()
 	defer recoverExit("up")
 	defer func() {
 		if err != nil {

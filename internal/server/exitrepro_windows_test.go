@@ -32,7 +32,7 @@ func TestExitReproConsole(t *testing.T) {
 		t.Fatal(err)
 	}
 	bin := e2eBinary(t, filepath.Join(root, "bin"))
-	for _, what := range []string{"break", "close"} {
+	for _, what := range []string{"break", "close", "early"} {
 		data := filepath.Join(root, what)
 		ln, _ := net.Listen("tcp", "127.0.0.1:0")
 		port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
@@ -48,13 +48,13 @@ func TestExitReproConsole(t *testing.T) {
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
 		// up binds its port before the keeper; wait until it serves.
-		for i := 0; i < 150; i++ {
+		for i := 0; i < 150 && what != "early"; i++ {
 			if b, _ := os.ReadFile(filepath.Join(root, what+".log")); strings.Contains(string(b), "node: attached") {
 				break
 			}
 			time.Sleep(200 * time.Millisecond)
 		}
-		time.Sleep(time.Second)
+		time.Sleep(300 * time.Millisecond)
 		h := exec.Command(os.Args[0], "-test.run=^TestExitReproConsole$")
 		h.Env = append(os.Environ(), "SB_CON_HELPER="+strconv.Itoa(cmd.Process.Pid)+" "+what)
 		hout, herr := h.CombinedOutput()
@@ -93,7 +93,7 @@ func conHelper(arg string) {
 	}
 	call(k32, "FreeConsole")
 	call(k32, "AttachConsole", uintptr(pid))
-	if f[1] == "break" {
+	if f[1] != "close" {
 		call(k32, "SetConsoleCtrlHandler", 0, 1)
 		call(k32, "GenerateConsoleCtrlEvent", 1, 0)
 	} else {
