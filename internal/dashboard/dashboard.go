@@ -333,12 +333,14 @@ const $=id=>document.getElementById(id);
 // adminMode is the mode from /api/admin/me. Outside the proxy-secret
 // transition mode a 401 means the session ended: reload to the login page.
 let adminMode='';
+// hostingOn is the hosting flag from /api/admin/me (terminal hosting, #173).
+let hostingOn=false;
 function signedOut(){if(adminMode&&adminMode!=='legacy')location.reload()}
 async function loadMe(){
   try{
     const r=await fetch('/api/admin/me',{credentials:'same-origin',headers:{'Accept':'application/json'}});
     if(!r.ok)return;
-    const m=await r.json();adminMode=m.mode||'';
+    const m=await r.json();adminMode=m.mode||'';hostingOn=m.hosting===true;
     $('whoName').textContent=m.mode==='legacy'?'프록시':m.user;
     $('whoName').title=$('whoName').textContent;
     $('logout').hidden=m.mode==='legacy';

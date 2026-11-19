@@ -56,6 +56,10 @@ const (
 // users in with. proxy (#76) is added with its login step.
 var adminModes = map[string]bool{ModeBuiltin: true, modeOIDC: true}
 
+// SignsIn reports whether mode (a SWITCHBOARD_ADMIN_AUTH value) signs admins
+// in itself: builtin or oidc, not unset and not the proxy transition rule.
+func SignsIn(mode string) bool { return adminModes[strings.TrimSpace(mode)] }
+
 // Identity is who made an admin request.
 type Identity struct {
 	User string `json:"user"`
