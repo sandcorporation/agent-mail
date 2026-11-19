@@ -154,7 +154,7 @@ func writeResult(w http.ResponseWriter, ok int, h wire.HostedSession, err error)
 	}
 }
 
-func writeJSON[T wire.HostedSession | []wire.HostedSession | wire.NodeView | []wire.NodeView | wire.NodeJoined | wire.TerminalTicket](w http.ResponseWriter, code int, v T) {
+func writeJSON[T wire.HostedSession | []wire.HostedSession | wire.NodeView | []wire.NodeView | wire.NodeJoined | wire.TerminalTicket | []wire.TerminalLogEntry](w http.ResponseWriter, code int, v T) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)

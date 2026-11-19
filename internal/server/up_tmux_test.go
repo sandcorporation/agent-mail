@@ -318,3 +318,67 @@ func TestUpTerminalViewShowsTheTmuxScreen(t *testing.T) {
 	}
 	readUntil(t, c, emu, func([]wire.TerminalMessage) bool { return strings.Contains(emu.Grid(0).Dump(), "echo hi there") })
 }
+
+// TestUpTerminalInputTypesIntoTmux types into a fake agent in tmux through an
+// input socket, resizes its window and finds the attach/input log without
+// the typed text.
+func TestUpTerminalInputTypesIntoTmux(t *testing.T) {
+	r := newUpRig(t)
+	work := t.TempDir()
+	body, _ := json.Marshal(wire.HostedSessionCreate{Node: "local", Base: "team/worker", Profile: "team-worker", Directory: work})
+	got := adminCall(t, r.base(), "POST", "/api/admin/terminals", r.cookie, true, string(body))
+	var rec wire.HostedSession
+	if err := json.Unmarshal([]byte(got.body), &rec); err != nil {
+		t.Fatalf("create = %d %s", got.code, got.body)
+	}
+	id := rec.ID
+	r.wait("the agent started", func() bool {
+		return r.session(id).Runtime.State == "running" && strings.Contains(r.tmuxScreen(id), "argv")
+	})
+
+	tk := adminCall(t, r.base(), "POST", "/api/admin/terminals/"+id+"/ticket", r.cookie, true, `{"mode":"input"}`)
+	var ticket wire.TerminalTicket
+	if err := json.Unmarshal([]byte(tk.body), &ticket); err != nil {
+		t.Fatalf("ticket = %d %s", tk.code, tk.body)
+	}
+	c, code := dialTerminal(t, r.base(), id, ticket.Ticket, r.cookie, r.base())
+	if c == nil {
+		t.Fatalf("socket = %d", code)
+	}
+	var hello wire.TerminalMessage
+	if err := json.Unmarshal(readFrame(t, c, websocket.MessageText), &hello); err != nil || hello.Type != "hello" {
+		t.Fatalf("hello %+v %v", hello, err)
+	}
+	emu := term.NewEmulator(hello.Cols, hello.Rows, 1000)
+
+	const line = "typed-in-the-browser"
+	typeInto(t, c, line+"\r")
+	readUntil(t, c, emu, func([]wire.TerminalMessage) bool { return strings.Contains(emu.Grid(-1).Dump(), "echo "+line) })
+
+	clientSend(t, c, wire.TerminalInput{Type: "resize", Cols: 50, Rows: 12})
+	r.wait("the window resized", func() bool {
+		out, _ := exec.Command("tmux", "-L", r.socket, "display-message", "-p", "-t", "=sb-"+id+":", "#{window_width}x#{window_height}").Output()
+		return strings.TrimSpace(string(out)) == "50x12"
+	})
+	r.wait("the size stored", func() bool { s := r.session(id); return s.Cols == 50 && s.Rows == 12 })
+	c.Close(websocket.StatusNormalClosure, "")
+
+	db, err := store.Open(filepath.Join(r.dir, upDatabase))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	r.wait("the log written", func() bool {
+		var n int
+		_ = db.QueryRow(`SELECT COUNT(*) FROM terminal_log WHERE session=? AND kind='detach'`, id).Scan(&n)
+		return n == 1
+	})
+	var input int
+	if err := db.QueryRow(`SELECT bytes FROM terminal_log WHERE session=? AND kind='input'`, id).Scan(&input); err != nil || input != len(line)+1 {
+		t.Errorf("input row %d %v, want %d bytes", input, err, len(line)+1)
+	}
+	var hits int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM terminal_log WHERE session LIKE ? OR admin_user LIKE ? OR kind LIKE ?`, "%"+line+"%", "%"+line+"%", "%"+line+"%").Scan(&hits); err != nil || hits != 0 {
+		t.Errorf("typed text in terminal_log: %d %v", hits, err)
+	}
+}

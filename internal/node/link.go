@@ -13,6 +13,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
+	"github.com/sandcorporation/switchboard/internal/term"
 	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
@@ -247,6 +248,15 @@ func (l *Link) receive(ctx context.Context, f wire.NodeFrame, sctx context.Conte
 		rl.attach(sctx, f.ID)
 	case wire.NodeDetach:
 		rl.detach(f.ID)
+	case wire.NodeInput:
+		// In the read loop, so input keeps its order.
+		if err := l.Node.Input(sctx, f.ID, f.Data); err != nil && !errors.Is(err, term.ErrNoSession) {
+			l.Logf("node: input %s: %v", f.ID, err)
+		}
+	case wire.NodeResize:
+		if err := l.Node.Resize(sctx, f.ID, f.Cols, f.Rows); err != nil && !errors.Is(err, term.ErrNoSession) {
+			l.Logf("node: resize %s: %v", f.ID, err)
+		}
 	case wire.NodeAssign:
 		l.Node.Assign(f.Sessions)
 		l.once.Do(func() { close(l.assigned) })

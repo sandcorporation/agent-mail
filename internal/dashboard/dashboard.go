@@ -86,6 +86,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13.5px/1.55 var(--mono);mar
 #notice:empty{display:none}
 .wide{overflow-x:auto}
 #termScreen{overflow:auto;max-width:100%;padding:var(--s2);background:#000;border-radius:4px}
+#termView.typing #termScreen{overflow:hidden;height:60vh;min-height:240px}
+#termMode[aria-pressed="true"]{outline:2px solid var(--idle)}
 .head{display:flex;align-items:center;gap:var(--s3);padding:var(--s2) 0 var(--s3)}
 .who{margin-left:auto;display:flex;align-items:center;gap:var(--s2);min-width:0}
 .live{width:.55rem;height:.55rem;border-radius:50%;background:var(--offline);flex:none}.live.on{background:var(--idle)}
@@ -333,7 +335,7 @@ table.stack tbody tr:hover td{background:none}
 <section id="panel-terminals" role="tabpanel" aria-labelledby="tab-terminals" tabindex="0" class="card" hidden>
 <div class="toolbar"><h2>터미널</h2><button id="reloadTerminals">새로 고침</button><span id="terminalsNote" class="muted"></span></div>
 <div id="terminalsMsg" class="msg" role="status" aria-live="polite"></div>
-<div id="termView" hidden><div class="toolbar"><button type="button" id="termBack">목록</button><h3 id="termTitle"></h3><span id="termStateText" class="muted"></span><span id="termConn" class="muted" role="status" aria-live="polite"></span></div><div id="termScreen"></div></div>
+<div id="termView" hidden><div class="toolbar"><button type="button" id="termBack">목록</button><h3 id="termTitle"></h3><span id="termStateText" class="muted"></span><span id="termConn" class="muted" role="status" aria-live="polite"></span><button type="button" id="termMode" aria-pressed="false">입력</button></div><div id="termScreen"></div><h3>기록</h3><div class="wide"><table class="stack"><thead><tr><th>시각</th><th>관리자</th><th>종류</th><th>바이트</th></tr></thead><tbody id="termLog"></tbody></table></div></div>
 <div class="wide" id="termListWrap"><table id="terminalsTbl" class="stack"><thead><tr><th>노드</th><th>역할</th><th>라벨</th><th>상태</th><th>이후</th><th>폴더</th><th>재시작</th><th>마지막 종료</th><th></th></tr></thead><tbody id="terminals"></tbody></table></div>
 <form id="termForm" class="settings-form">
 <label>노드 <input id="termNode" required autocomplete="off" autocapitalize="off" spellcheck="false" value="local"></label>
@@ -945,11 +947,61 @@ function loadTermLib(){
   })().catch(e=>{termLib=null;throw e});
   return termLib;
 }
+const termLogKind={attach:'연결',detach:'끊음',input:'입력'};
+async function termLog(t){
+  if(t.closed)return;
+  try{
+    const rows=await api('terminals/'+encodeURIComponent(t.id)+'/log');
+    if(t.closed||termView!==t)return;
+    const body=$('termLog');body.replaceChildren();
+    for(const e of rows){
+      const tr=node('tr','');
+      cells(tr,['시각','관리자','종류','바이트'],[when(e.at),e.admin_user,termLogKind[e.kind]||e.kind,e.kind==='input'?String(e.bytes):'-'],['','','','num']);
+      body.append(tr);
+    }
+    if(!rows.length)emptyRow(body,4,'기록 없음');
+  }catch(e){}
+}
+// termSend sends one client frame on an open input socket.
+function termSend(t,m){if(t.mode==='input'&&t.ws&&t.ws.readyState===1)t.ws.send(JSON.stringify(m))}
+// termInput sends typed or pasted text, split under the host's 64 KiB frame limit.
+const termEnc=new TextEncoder();
+function termInput(t,d){
+  if(t.mode!=='input')return;
+  let chunk='',n=0;
+  for(const ch of d){
+    const b=termEnc.encode(ch).length;
+    if(n+b>32768){termSend(t,{type:'input',data:chunk});chunk='';n=0}
+    chunk+=ch;n+=b;
+  }
+  if(chunk)termSend(t,{type:'input',data:chunk});
+}
+// termFit fits an input terminal to the panel; the host gets the size.
+function termFit(t,always){
+  if(t.closed||t.mode!=='input'||!t.term)return;
+  const c=t.term.cols,r=t.term.rows;
+  if(t.fit)try{t.fit.fit()}catch(e){}
+  if(always&&t.term.cols===c&&t.term.rows===r)termSend(t,{type:'resize',cols:t.term.cols,rows:t.term.rows});
+}
+function termModeShow(t){
+  const typing=t.mode==='input';
+  $('termMode').setAttribute('aria-pressed',String(typing));
+  $('termView').classList.toggle('typing',typing);
+  if(t.term)t.term.options.disableStdin=!typing;
+}
+$('termMode').onclick=()=>{
+  const t=termView;if(!t||!t.term)return;
+  t.mode=t.mode==='input'?'view':'input';termModeShow(t);
+  const ws=t.ws;t.ws=null;if(ws)ws.close();
+  t.tries=0;clearTimeout(t.timer);termConnect(t);
+  if(t.mode==='input')t.term.focus();
+};
 const termConnText={connecting:'연결 중',open:'연결됨',retry:'다시 연결 중',closed:'끊김'};
 function termConnSet(s){$('termConn').textContent=termConnText[s]||s}
 async function termOpen(v){
   termClose();
-  const t={id:v.id,ws:null,term:null,timer:0,tries:0,closed:false};termView=t;
+  const t={id:v.id,ws:null,term:null,fit:null,ro:null,timer:0,fitTimer:0,logTimer:0,tries:0,closed:false,mode:'view'};termView=t;
+  termModeShow(t);$('termLog').replaceChildren();
   $('termTitle').textContent=v.base+(v.label?' · '+v.label:'');
   $('termStateText').textContent='';
   $('termListWrap').hidden=true;$('termForm').hidden=true;$('termView').hidden=false;
@@ -957,14 +1009,22 @@ async function termOpen(v){
   try{await loadTermLib()}catch(e){termConnSet('closed');setMsg($('terminalsMsg'),e.message,'err');return}
   if(t.closed)return;
   t.term=new Terminal({cols:v.cols||120,rows:v.rows||40,disableStdin:true,scrollback:5000});
+  if(typeof FitAddon==='object'&&FitAddon.FitAddon){t.fit=new FitAddon.FitAddon();t.term.loadAddon(t.fit)}
   t.term.open($('termScreen'));
+  t.term.onData(d=>termInput(t,d));
+  t.term.onResize(s=>termSend(t,{type:'resize',cols:s.cols,rows:s.rows}));
+  if(typeof ResizeObserver==='function'){
+    t.ro=new ResizeObserver(()=>{clearTimeout(t.fitTimer);t.fitTimer=setTimeout(()=>termFit(t),150)});
+    t.ro.observe($('termScreen'));
+  }
+  termLog(t);t.logTimer=setInterval(()=>termLog(t),15000);
   termConnect(t);
 }
 async function termConnect(t){
   if(t.closed)return;
   termConnSet(t.tries?'retry':'connecting');
   let tk;
-  try{tk=await apiSend('POST','terminals/'+encodeURIComponent(t.id)+'/ticket',{mode:'view'})}
+  try{tk=await apiSend('POST','terminals/'+encodeURIComponent(t.id)+'/ticket',{mode:t.mode})}
   catch(e){
     if(e.status===404||e.status===401){termConnSet('closed');setMsg($('terminalsMsg'),e.message,'err');return}
     termRetry(t);return;
@@ -977,9 +1037,12 @@ async function termConnect(t){
     if(typeof ev.data==='string'){
       let m;try{m=JSON.parse(ev.data)}catch(e){return}
       if(m.type==='hello'){
-        t.tries=0;termConnSet('open');
-        if(m.cols>0&&m.rows>0&&(m.cols!==t.term.cols||m.rows!==t.term.rows))t.term.resize(m.cols,m.rows);
+        t.tries=0;termConnSet('open');termLog(t);
+        if(t.mode==='input')termFit(t,true);
+        else if(m.cols>0&&m.rows>0&&(m.cols!==t.term.cols||m.rows!==t.term.rows))t.term.resize(m.cols,m.rows);
       }
+      if(m.type==='size'&&t.mode!=='input'&&m.cols>0&&m.rows>0)t.term.resize(m.cols,m.rows);
+      if(m.type==='refused')setMsg($('terminalsMsg'),m.error||'거부됨','err');
       if(m.type==='hello'||m.type==='state')$('termStateText').textContent=termState[m.state]||m.state;
       return;
     }
@@ -994,7 +1057,9 @@ function termRetry(t){
 }
 function termClose(){
   const t=termView;if(!t)return;
-  termView=null;t.closed=true;clearTimeout(t.timer);
+  termView=null;t.closed=true;clearTimeout(t.timer);clearTimeout(t.fitTimer);clearInterval(t.logTimer);
+  if(t.ro)t.ro.disconnect();
+  $('termView').classList.remove('typing');
   if(t.ws)t.ws.close();
   if(t.term)t.term.dispose();
   $('termScreen').replaceChildren();

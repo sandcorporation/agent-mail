@@ -346,6 +346,24 @@ func (n *Node) Restart(ctx context.Context, id string) error {
 	return n.launch(ctx, r, s)
 }
 
+// Input types b into the session of the assigned record id, unchanged (a
+// browser viewer with an input ticket). An unassigned id is ignored.
+func (n *Node) Input(ctx context.Context, id string, b []byte) error {
+	if !n.owns(id) {
+		return nil
+	}
+	return n.backend.Input(ctx, TerminalName(id), b)
+}
+
+// Resize changes the terminal size of the assigned record id's session. An
+// unassigned id or an empty size is ignored.
+func (n *Node) Resize(ctx context.Context, id string, cols, rows int) error {
+	if !n.owns(id) || cols <= 0 || rows <= 0 {
+		return nil
+	}
+	return n.backend.Resize(ctx, TerminalName(id), cols, rows)
+}
+
 // Default terminal size when a record carries none.
 const (
 	DefaultCols = 120
