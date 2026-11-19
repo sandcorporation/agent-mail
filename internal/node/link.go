@@ -176,7 +176,7 @@ func (l *Link) current() []wire.HostedNodeState {
 }
 
 // session runs one connection; attached reports whether it got as far as
-// saying hello.
+// saying hello. Terminals the host attaches stream over it until it ends.
 func (l *Link) session(ctx context.Context, url string) (attached bool, err error) {
 	dctx, cancel := context.WithTimeout(ctx, linkDialTimeout)
 	ws, _, err := websocket.Dial(dctx, url, &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + l.Token}}})
@@ -193,6 +193,12 @@ func (l *Link) session(ctx context.Context, url string) (attached bool, err erro
 		defer done()
 		return wsjson.Write(wctx, ws, f)
 	}
+	rl := newRelay(l.Node.backend, l.Node.owns, func(kind byte, id string, b []byte) error {
+		wctx, done := context.WithTimeout(sctx, linkWriteTimeout)
+		defer done()
+		return ws.Write(wctx, websocket.MessageBinary, wire.EncodeTermFrame(kind, id, b))
+	}, l.Logf)
+	defer rl.stop()
 	hello := l.Hello
 	if err := write(wire.NodeFrame{Type: wire.NodeHelloType, Hello: &hello}); err != nil {
 		return false, err
@@ -207,7 +213,7 @@ func (l *Link) session(ctx context.Context, url string) (attached bool, err erro
 				stop()
 				return
 			}
-			l.receive(ctx, f)
+			l.receive(ctx, f, sctx, rl)
 		}
 	}()
 	sent := "\x00"
@@ -233,9 +239,14 @@ func (l *Link) session(ctx context.Context, url string) (attached bool, err erro
 	}
 }
 
-// receive applies one host frame.
-func (l *Link) receive(ctx context.Context, f wire.NodeFrame) {
+// receive applies one host frame; attach and detach drive rl, the relay of
+// this connection (sctx).
+func (l *Link) receive(ctx context.Context, f wire.NodeFrame, sctx context.Context, rl *relay) {
 	switch f.Type {
+	case wire.NodeAttach:
+		rl.attach(sctx, f.ID)
+	case wire.NodeDetach:
+		rl.detach(f.ID)
 	case wire.NodeAssign:
 		l.Node.Assign(f.Sessions)
 		l.once.Do(func() { close(l.assigned) })

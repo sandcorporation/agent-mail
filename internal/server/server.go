@@ -57,7 +57,8 @@ type Server struct {
 	publicURL   string              // SWITCHBOARD_PUBLIC_URL; a WebSocket Origin it also accepts
 	hosting     bool                // SWITCHBOARD_HOSTING=on (hosting.go); off answers every hosting route 404
 	hubOnce     sync.Once
-	nodeHub     *hosting.Hub // the node channel (hosting.go), built on first use
+	nodeHub     *hosting.Hub  // the node channel (hosting.go), built on first use
+	termLimits  hosting.Admin // browser terminal recheck and queue; tests shorten them (zero: the defaults)
 }
 
 // version is the build version /health reports (set by Run).
@@ -182,6 +183,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("/health", health)
 	mux.HandleFunc("/api/", s.api)
 	mux.HandleFunc("/auth/", s.authAPI)
+	mux.HandleFunc(dashboard.AssetsPrefix, s.assets)
 	mux.HandleFunc("/", s.root)
 	return secureHeaders(mux)
 }
@@ -417,10 +419,17 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 	case "me":
 		// The dashboard's bootstrap call; hosting tells it whether to show
 		// the terminal tab.
+		// With hosting on it also lists the terminal view's assets, which
+		// the page loads only then.
+		var assets []string
+		if s.hosting {
+			assets = dashboard.TerminalAssets
+		}
 		writeJSON(w, struct {
 			adminauth.Identity
-			Hosting bool `json:"hosting"`
-		}{who, s.hosting})
+			Hosting        bool     `json:"hosting"`
+			TerminalAssets []string `json:"terminal_assets,omitempty"`
+		}{who, s.hosting, assets})
 	case "slots":
 		out, err := s.presence().ActiveSlots("")
 		if err != nil {

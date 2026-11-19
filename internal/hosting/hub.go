@@ -30,7 +30,7 @@ const SyncInterval = 2 * time.Second
 
 const (
 	nodeWriteTimeout = 10 * time.Second
-	nodeReadLimit    = 1 << 20
+	nodeReadLimit    = 8 << 20 // a snapshot carries history
 	nodeQueue        = 32
 )
 
@@ -42,11 +42,15 @@ type Hub struct {
 	publish func(kinds ...string)
 
 	mu      sync.Mutex
-	conns   map[string]*nodeConn          // attached nodes by name
-	runtime map[string]wire.HostedRuntime // last report by record id
-	away    map[string]int64              // when a node detached, by name
-	owner   map[string]string             // node by record id, as of the last Sync
-	digest  string                        // the records as of the last Sync
+	conns   map[string]*nodeConn            // attached nodes by name
+	runtime map[string]wire.HostedRuntime   // last report by record id
+	away    map[string]int64                // when a node detached, by name
+	owner   map[string]string               // node by record id, as of the last Sync
+	digest  string                          // the records as of the last Sync
+	viewers map[string]map[*viewer]struct{} // open browser terminal sockets by record id
+	admin   Admin
+
+	tickets tickets
 }
 
 type nodeConn struct {
@@ -62,7 +66,7 @@ func NewHub(svc *Service, publish func(kinds ...string)) *Hub {
 		publish = func(...string) {}
 	}
 	return &Hub{svc: svc, publish: publish, conns: map[string]*nodeConn{}, runtime: map[string]wire.HostedRuntime{},
-		away: map[string]int64{}, owner: map[string]string{}}
+		away: map[string]int64{}, owner: map[string]string{}, viewers: map[string]map[*viewer]struct{}{}}
 }
 
 // Run re-reads the records every interval until ctx is done.
@@ -118,7 +122,7 @@ func (h *Hub) Sync() error {
 	}
 	h.mu.Unlock()
 	if changed {
-		h.publish("terminals")
+		h.changed()
 	}
 	return nil
 }
@@ -271,8 +275,16 @@ func (h *Hub) nodeSocket(w http.ResponseWriter, r *http.Request, name string) {
 	h.attach(c)
 	defer h.detach(c)
 	for {
+		typ, b, err := ws.Read(ctx)
+		if err != nil {
+			return
+		}
+		if typ == websocket.MessageBinary {
+			h.relay(c, b)
+			continue
+		}
 		var f wire.NodeFrame
-		if err := wsjson.Read(ctx, ws, &f); err != nil {
+		if json.Unmarshal(b, &f) != nil {
 			return
 		}
 		h.receive(c, f)
@@ -298,11 +310,12 @@ func (h *Hub) attach(c *nodeConn) {
 			}
 		}
 		h.assignLocked(c, mine)
+		h.attachViewedLocked(c)
 	} else {
 		c.cancel()
 	}
 	h.mu.Unlock()
-	h.publish("terminals")
+	h.changed()
 }
 
 func (h *Hub) detach(c *nodeConn) {
@@ -317,7 +330,7 @@ func (h *Hub) detach(c *nodeConn) {
 	if err := h.svc.nodeLeft(c.name); err != nil {
 		log.Printf("hosting: node %s left: %v", c.name, err)
 	}
-	h.publish("terminals")
+	h.changed()
 }
 
 // Revoke revokes node name and closes its socket; its sessions show
@@ -333,7 +346,7 @@ func (h *Hub) Revoke(name string) (wire.NodeView, error) {
 		c.cancel()
 	}
 	h.mu.Unlock()
-	h.publish("terminals")
+	h.changed()
 	return n, nil
 }
 
@@ -378,7 +391,7 @@ func (h *Hub) receive(c *nodeConn, f wire.NodeFrame) {
 			}
 		}
 		if changed {
-			h.publish("terminals")
+			h.changed()
 		}
 	}
 }
@@ -401,6 +414,20 @@ func (h *Hub) AdminTerminalsAPI(w http.ResponseWriter, r *http.Request, rest str
 			return true
 		}
 		writeJSON(w, http.StatusOK, out)
+		return true
+	}
+	for _, sub := range []string{"/ticket", "/socket"} {
+		id, ok := strings.CutSuffix(rest, sub)
+		if !ok {
+			continue
+		}
+		if !ValidID(id) {
+			http.Error(w, "no such hosted session", http.StatusNotFound)
+		} else if sub == "/ticket" {
+			h.ticketAPI(w, r, id)
+		} else {
+			h.terminalSocket(w, r, id)
+		}
 		return true
 	}
 	if id, ok := strings.CutSuffix(rest, "/restart"); ok {

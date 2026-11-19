@@ -12,9 +12,11 @@ import (
 // Page serves the admin overview. It only calls same-origin /api/admin/*
 // endpoints, sends no Authorization header and stores nothing in the browser.
 // Its only writes are question answers, permission answers, question
-// settings and role revokes and restores, sent with the
-// admin write guard headers. Message and question fields are rendered as text
-// nodes, never as HTML.
+// settings, role revokes and restores, the Terminals tab's record writes and
+// terminal socket tickets, sent with the admin write guard headers. Message
+// and question fields are rendered as text nodes, never as HTML; terminal
+// output reaches the page only through the vendored terminal renderer, whose
+// files the page loads only when the admin bootstrap lists them (hosting on).
 func Page(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
@@ -83,6 +85,7 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13.5px/1.55 var(--mono);mar
 #notice{margin:var(--s2) 0;font-size:.9em}
 #notice:empty{display:none}
 .wide{overflow-x:auto}
+#termScreen{overflow:auto;max-width:100%;padding:var(--s2);background:#000;border-radius:4px}
 .head{display:flex;align-items:center;gap:var(--s3);padding:var(--s2) 0 var(--s3)}
 .who{margin-left:auto;display:flex;align-items:center;gap:var(--s2);min-width:0}
 .live{width:.55rem;height:.55rem;border-radius:50%;background:var(--offline);flex:none}.live.on{background:var(--idle)}
@@ -330,7 +333,8 @@ table.stack tbody tr:hover td{background:none}
 <section id="panel-terminals" role="tabpanel" aria-labelledby="tab-terminals" tabindex="0" class="card" hidden>
 <div class="toolbar"><h2>터미널</h2><button id="reloadTerminals">새로 고침</button><span id="terminalsNote" class="muted"></span></div>
 <div id="terminalsMsg" class="msg" role="status" aria-live="polite"></div>
-<div class="wide"><table id="terminalsTbl" class="stack"><thead><tr><th>노드</th><th>역할</th><th>라벨</th><th>상태</th><th>이후</th><th>폴더</th><th>재시작</th><th>마지막 종료</th><th></th></tr></thead><tbody id="terminals"></tbody></table></div>
+<div id="termView" hidden><div class="toolbar"><button type="button" id="termBack">목록</button><h3 id="termTitle"></h3><span id="termStateText" class="muted"></span><span id="termConn" class="muted" role="status" aria-live="polite"></span></div><div id="termScreen"></div></div>
+<div class="wide" id="termListWrap"><table id="terminalsTbl" class="stack"><thead><tr><th>노드</th><th>역할</th><th>라벨</th><th>상태</th><th>이후</th><th>폴더</th><th>재시작</th><th>마지막 종료</th><th></th></tr></thead><tbody id="terminals"></tbody></table></div>
 <form id="termForm" class="settings-form">
 <label>노드 <input id="termNode" required autocomplete="off" autocapitalize="off" spellcheck="false" value="local"></label>
 <label>역할 <input id="termBase" required autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="team/worker"></label>
@@ -357,12 +361,14 @@ const $=id=>document.getElementById(id);
 let adminMode='';
 // hostingOn is the hosting flag from /api/admin/me (terminal hosting, #173).
 let hostingOn=false;
+// termAssets are the terminal view's files, listed by /api/admin/me only with hosting on.
+let termAssets=[];
 function signedOut(){if(adminMode&&adminMode!=='legacy')location.reload()}
 async function loadMe(){
   try{
     const r=await fetch('/api/admin/me',{credentials:'same-origin',headers:{'Accept':'application/json'}});
     if(!r.ok)return;
-    const m=await r.json();adminMode=m.mode||'';hostingOn=m.hosting===true;
+    const m=await r.json();adminMode=m.mode||'';hostingOn=m.hosting===true;termAssets=Array.isArray(m.terminal_assets)?m.terminal_assets:[];
     $('tab-terminals').hidden=!hostingOn;$('nodesBox').hidden=!hostingOn;
     if(hostingOn&&location.hash==='#settings')loadNodes();
     if(hostingOn&&location.hash==='#terminals')route();
@@ -890,7 +896,7 @@ async function loadSettings(){
 }
 // ---- 터미널 (hosting) ----
 const termCols=['노드','역할','라벨','상태','이후','폴더','재시작','마지막 종료'];
-const termState={running:'실행 중',starting:'시작 중',stopped:'멈춤',waiting:'대기',crashloop:'반복 실패',unknown:'모름','node offline':'노드 오프라인'};
+const termState={running:'실행 중',starting:'시작 중',stopped:'멈춤',waiting:'대기',crashloop:'반복 실패',unknown:'모름','node offline':'노드 오프라인',gone:'삭제됨'};
 async function termAct(v,method,path,body,done){
   try{await apiSend(method,'terminals/'+v.id+path,body);setMsg($('terminalsMsg'),done,'ok');loadTerminals()}
   catch(e){setMsg($('terminalsMsg'),e.message,'err')}
@@ -908,6 +914,7 @@ async function loadTerminals(){
         ['','','',st==='running'?'st-idle':st==='node offline'||st==='unknown'?'st-offline':st==='crashloop'?'st-error':'','','dir','num','num']);
       const dir=tr.children[5];dir.title=v.directory;dir.textContent='\u200e'+v.directory+'\u200e';
       const act=node('td','');
+      const view=node('button','보기');view.type='button';view.onclick=()=>termOpen(v);act.append(view);
       if(v.desired==='stopped'){const b=node('button','시작');b.type='button';b.onclick=()=>termAct(v,'PUT','',{desired:'running'},v.base+' 시작');act.append(b)}
       else{
         const b=node('button','멈춤');b.type='button';b.onclick=()=>termAct(v,'PUT','',{desired:'stopped'},v.base+' 멈춤');act.append(b);
@@ -922,6 +929,78 @@ async function loadTerminals(){
   }catch(e){$('terminalsNote').textContent=e.message}
 }
 tabLoaders.terminals=loadTerminals;
+// ---- 터미널 보기: a snapshot then output over the terminal socket; text reaches the page only through the terminal renderer ----
+let termLib=null,termView=null;
+function loadTermLib(){
+  if(!termLib)termLib=(async()=>{
+    for(const u of termAssets){
+      await new Promise((ok,fail)=>{
+        let el;
+        if(u.endsWith('.css')){el=document.createElement('link');el.rel='stylesheet';el.href=u}
+        else{el=document.createElement('script');el.src=u}
+        el.onload=ok;el.onerror=()=>fail(Error('불러오기 실패: '+u));document.head.append(el);
+      });
+    }
+    if(typeof Terminal!=='function')throw Error('불러오기 실패');
+  })().catch(e=>{termLib=null;throw e});
+  return termLib;
+}
+const termConnText={connecting:'연결 중',open:'연결됨',retry:'다시 연결 중',closed:'끊김'};
+function termConnSet(s){$('termConn').textContent=termConnText[s]||s}
+async function termOpen(v){
+  termClose();
+  const t={id:v.id,ws:null,term:null,timer:0,tries:0,closed:false};termView=t;
+  $('termTitle').textContent=v.base+(v.label?' · '+v.label:'');
+  $('termStateText').textContent='';
+  $('termListWrap').hidden=true;$('termForm').hidden=true;$('termView').hidden=false;
+  termConnSet('connecting');
+  try{await loadTermLib()}catch(e){termConnSet('closed');setMsg($('terminalsMsg'),e.message,'err');return}
+  if(t.closed)return;
+  t.term=new Terminal({cols:v.cols||120,rows:v.rows||40,disableStdin:true,scrollback:5000});
+  t.term.open($('termScreen'));
+  termConnect(t);
+}
+async function termConnect(t){
+  if(t.closed)return;
+  termConnSet(t.tries?'retry':'connecting');
+  let tk;
+  try{tk=await apiSend('POST','terminals/'+encodeURIComponent(t.id)+'/ticket',{mode:'view'})}
+  catch(e){
+    if(e.status===404||e.status===401){termConnSet('closed');setMsg($('terminalsMsg'),e.message,'err');return}
+    termRetry(t);return;
+  }
+  if(t.closed)return;
+  const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/api/admin/terminals/'+encodeURIComponent(t.id)+'/socket?ticket='+encodeURIComponent(tk.ticket));
+  ws.binaryType='arraybuffer';t.ws=ws;
+  ws.onmessage=ev=>{
+    if(t.closed||t.ws!==ws)return;
+    if(typeof ev.data==='string'){
+      let m;try{m=JSON.parse(ev.data)}catch(e){return}
+      if(m.type==='hello'){
+        t.tries=0;termConnSet('open');
+        if(m.cols>0&&m.rows>0&&(m.cols!==t.term.cols||m.rows!==t.term.rows))t.term.resize(m.cols,m.rows);
+      }
+      if(m.type==='hello'||m.type==='state')$('termStateText').textContent=termState[m.state]||m.state;
+      return;
+    }
+    t.term.write(new Uint8Array(ev.data));
+  };
+  ws.onclose=()=>{if(t.ws===ws&&!t.closed)termRetry(t)};
+}
+function termRetry(t){
+  if(t.closed)return;
+  t.tries++;termConnSet('retry');
+  clearTimeout(t.timer);t.timer=setTimeout(()=>termConnect(t),Math.min(30000,500*2**Math.min(t.tries,6)));
+}
+function termClose(){
+  const t=termView;if(!t)return;
+  termView=null;t.closed=true;clearTimeout(t.timer);
+  if(t.ws)t.ws.close();
+  if(t.term)t.term.dispose();
+  $('termScreen').replaceChildren();
+  $('termView').hidden=true;$('termListWrap').hidden=false;$('termForm').hidden=false;
+}
+$('termBack').onclick=termClose;
 $('termForm').onsubmit=async e=>{
   e.preventDefault();
   const args=$('termArgs').value.split(/\s+/).filter(Boolean);
@@ -1120,6 +1199,7 @@ function liveRetry(){
 }
 let curTab='';
 function showTab(name){
+  if(name!=='terminals')termClose();
   curTab=name;
   for(const n of tabNames){
     const on=n===name,t=$('tab-'+n);

@@ -119,14 +119,15 @@ func TestHostingOffRoutesAre404LikeUnknownRoutes(t *testing.T) {
 	}
 }
 
-// hostingServed are the hosting routes #184 and #186 serve; the rest stay
-// stubs.
+// hostingServed are the hosting routes #184, #186 and #191 serve; the rest
+// stay stubs.
 var hostingServed = map[string]bool{
 	"GET /api/admin/terminals": true, "POST /api/admin/terminals": true,
 	"PUT /api/admin/terminals/7": true, "DELETE /api/admin/terminals/7": true,
 	"POST /api/admin/terminals/7/restart": true,
 	"GET /api/admin/nodes":                true,
 	"DELETE /api/admin/nodes/pc":          true,
+	"POST /api/admin/terminals/7/ticket":  true, "GET /api/admin/terminals/7/socket": true,
 }
 
 func TestHostingOnStubsStayBehindAdminSignIn(t *testing.T) {
