@@ -53,8 +53,9 @@ jobs:
           name: conpty-recordings
           path: ${{ runner.temp }}/conpty
           if-no-files-found: ignore
-      - name: Question source of truth (server e2e)
-        shell: bash
-        run: bash scripts/ci/question_sot.sh
-      - run: go test ./...
+      # The server suite is not Windows-clean yet (its SQLite test databases
+      # stay open past TempDir cleanup); it runs on Linux in the test job.
+      - name: Terminal packages
+        run: go test -count=1 ./internal/term/...
+      - run: go build ./...
       - run: go vet ./...
