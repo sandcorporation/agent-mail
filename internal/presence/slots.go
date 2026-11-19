@@ -404,7 +404,7 @@ func (s *Service) renewSlot(ctx context.Context, base string, req wire.SlotReque
 		set, args := `lease_until=?`, []any{ms(until)}
 		if release {
 			// An intended stop: no offline notice (see stall.go).
-			set += `,offline_noticed_at=?`
+			set += `,offline_noticed_at=?,subagents=0`
 			args = append(args, ms(now))
 		}
 		if !release {

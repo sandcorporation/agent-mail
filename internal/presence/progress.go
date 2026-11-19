@@ -26,15 +26,17 @@ func serviceOf(name string) string {
 	return svc
 }
 
-// badgeRank orders session states for the card badge: error > blocked >
-// busy (compacting counts as busy) > idle (unknown counts as idle).
-func badgeRank(state string) (int, string) {
+// badgeRank orders sessions for the card badge: error > blocked > busy
+// (compacting, and idle or unknown with running sub-agents, count as busy) >
+// idle (unknown counts as idle).
+func badgeRank(v wire.ProgressSession) (int, string) {
+	state := v.State
 	switch {
 	case isErrorState(state):
 		return 4, "error"
 	case isBlockedState(state):
 		return 3, "blocked"
-	case state == "busy" || state == "compacting":
+	case state == "busy" || state == "compacting" || v.Subagents > 0:
 		return 2, "busy"
 	default:
 		return 1, "idle"
@@ -44,7 +46,7 @@ func badgeRank(state string) (int, string) {
 func progressBadge(sessions []wire.ProgressSession) string {
 	best, badge := 0, "none"
 	for _, v := range sessions {
-		if r, b := badgeRank(v.State); r > best {
+		if r, b := badgeRank(v); r > best {
 			best, badge = r, b
 		}
 	}
@@ -203,7 +205,7 @@ func (s *Service) Progress(pending time.Duration, base func(string) string) (wir
 	}
 
 	// Live sessions, with the start of their current presence_log stretch.
-	rows, err := s.db.Query(`SELECT s.base,s.number,s.directory,s.state,s.registered_at,s.reported_at,`+stretchStartSQL+` FROM slots s WHERE s.lease_until>? ORDER BY s.base,s.number`, ms(now))
+	rows, err := s.db.Query(`SELECT s.base,s.number,s.directory,s.state,s.subagents,s.registered_at,s.reported_at,`+stretchStartSQL+` FROM slots s WHERE s.lease_until>? ORDER BY s.base,s.number`, ms(now))
 	if err != nil {
 		return out, err
 	}
@@ -212,7 +214,7 @@ func (s *Service) Progress(pending time.Duration, base func(string) string) (wir
 		var number int
 		var v wire.ProgressSession
 		var reg, reported, since int64
-		if err = rows.Scan(&base, &number, &v.Directory, &v.State, &reg, &reported, &since); err != nil {
+		if err = rows.Scan(&base, &number, &v.Directory, &v.State, &v.Subagents, &reg, &reported, &since); err != nil {
 			rows.Close()
 			return out, err
 		}

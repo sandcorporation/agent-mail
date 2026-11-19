@@ -157,6 +157,7 @@ var commands = []command{
 			{"--state", "STATE", "presence state to report: idle, busy, compacting, error:<kind> or blocked:<kind> (kind: 1-64 of A-Z a-z 0-9 . _ -) (register, heartbeat, takeover)"},
 			{"--context-tokens", "N", "context size in tokens to report (register, heartbeat, takeover)"},
 			{"--last-turn-at", "TIME", "time the last turn ended, RFC 3339 (register, heartbeat, takeover)"},
+			{"--subagents", "N", "running background sub-agents to report; leaving it out reports 0 (register, heartbeat, takeover)"},
 			optJSON, optProfile,
 		}},
 	{name: "status", args: "[ROLE]", nargs: 1, optArgs: true,
@@ -1221,6 +1222,13 @@ func cliSlot(c Config, p parsedArgs) (int, error) {
 			return 0, usagef("slot: --context-tokens must be a whole number of at least 0")
 		}
 		req.ContextTokens = &n
+	}
+	if v, ok := p.values["--subagents"]; ok {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 0 {
+			return 0, usagef("slot: --subagents must be a whole number of at least 0")
+		}
+		req.Subagents = &n
 	}
 	if _, err := req.Presence(); err != nil {
 		return 0, usagef("slot: %s", err.Error())

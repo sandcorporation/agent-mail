@@ -43,12 +43,29 @@ func cliStatus(c Config, p parsedArgs) (int, error) {
 // at the end: scripts may read the table by position.
 func writeStatusTable(w io.Writer, out wire.PresenceList) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "ROLE\tSTATUS\tCONTEXT\tLAST TURN\tMACHINE\tDIRECTORY\tLABEL\tPARENT\tREPORTED\tSINCE")
+	fmt.Fprintln(tw, "ROLE\tSTATUS\tCONTEXT\tLAST TURN\tMACHINE\tDIRECTORY\tLABEL\tPARENT\tREPORTED\tSINCE\tSUBAGENTS")
 	for _, v := range out.Sessions {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", v.Role, v.Status, kTokens(v.ContextTokens),
-			clockTime(v.LastTurnAt), v.Machine, v.Directory, dash(v.Label), dash(v.Parent), ago(out.Now, v.ReportedAt), elapsed(out.Now, v.Since))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", v.Role, v.Status, kTokens(v.ContextTokens),
+			clockTime(v.LastTurnAt), v.Machine, v.Directory, dash(v.Label), dash(v.Parent), ago(out.Now, v.ReportedAt), elapsed(out.Now, v.Since), subagentCount(v.Subagents))
 	}
 	return tw.Flush()
+}
+
+// subagentCount is the SUBAGENTS cell: the number, or - when none run.
+func subagentCount(n int64) string {
+	if n <= 0 {
+		return "-"
+	}
+	return strconv.FormatInt(n, 10)
+}
+
+// subagentNote is the text shown next to a session's state while background
+// sub-agents run, or "" when none do.
+func subagentNote(n int64) string {
+	if n <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("서브 에이전트 %d개 작업 중", n)
 }
 
 // elapsed is the time since t on the server's clock, such as 7h12m.

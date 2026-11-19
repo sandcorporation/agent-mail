@@ -66,7 +66,11 @@ func formatProgress(ss []wire.ServiceProgress, now time.Time) string {
 		if len(s.Sessions) > 0 {
 			b.WriteString("  세션\n")
 			for _, v := range s.Sessions {
-				fmt.Fprintf(&b, "    %s %s %s\n", v.Role, v.State, shortDir(v.Directory))
+				fmt.Fprintf(&b, "    %s %s %s", v.Role, v.State, shortDir(v.Directory))
+				if note := subagentNote(v.Subagents); note != "" {
+					b.WriteString(" · " + note)
+				}
+				b.WriteString("\n")
 			}
 		}
 		if len(s.OpenDirectives) > 0 {

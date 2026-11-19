@@ -318,6 +318,9 @@ var presenceColumns = []struct{ name, def string }{
 	// has been handled (for example, a parent notified). Every report resets
 	// it to 0. See offlineUnnoticed and markOfflineNoticed.
 	{"offline_noticed_at", `INTEGER NOT NULL DEFAULT 0`},
+	// subagents is the last reported number of running background sub-agents
+	// (0 when a report leaves it out, and on release).
+	{"subagents", `INTEGER NOT NULL DEFAULT 0`},
 }
 
 func migratePresence(db *sql.DB) error {

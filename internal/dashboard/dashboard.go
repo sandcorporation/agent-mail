@@ -116,6 +116,7 @@ tr.row-blocked td:first-child{box-shadow:inset 3px 0 var(--blocked)}
 .st-idle{color:var(--idle)}.st-busy{color:var(--busy);font-weight:600}.st-compacting{color:var(--compacting);font-weight:600}
 .st-error{color:var(--error);font-weight:600}.st-blocked{color:var(--blocked);font-weight:600}
 .st-offline,.st-unknown{color:var(--offline)}
+.subs{color:var(--busy);font-weight:400;overflow-wrap:anywhere}
 .pill.allowed{color:var(--idle);background:var(--idle-bg)}.pill.denied{color:var(--error);background:var(--surface-2)}.pill.expired{color:var(--offline);background:var(--offline-bg)}
 .pcard.allowed,.pcard.denied,.pcard.expired{background:var(--surface-2)}
 .pcard summary{cursor:pointer;overflow-wrap:anywhere}
@@ -359,6 +360,8 @@ function sessionStatus(st){
   if(m)return [(m[1]==='error'?'오류: ':'막힘: ')+m[2],'st-'+m[1]];
   return [sessionLabel[st]||st,'st-'+st];
 }
+// subagentNote is the text next to a session's state while background sub-agents run.
+function subagentNote(n){return n>0?'서브 에이전트 '+n+'개 작업 중':''}
 const statusLabel={pending:'안 읽음',read:'읽음',acknowledged:'확인함',complete:'완료',completed:'완료',held:'보관 중'};
 const $=id=>document.getElementById(id);
 // adminMode is the mode from /api/admin/me. Outside the proxy-secret
@@ -436,6 +439,7 @@ async function loadSessions(){
       cells.forEach((text,i)=>{const td=node('td',text,i===1?stClass:i===5?'dir':i===2?'num':'');if(i>0)td.dataset.label=sessionCols[i];tr.append(td)});
       // 긴 폴더는 앞쪽을 줄임표로 줄이고(끝 폴더 이름이 보이게) 전체 경로는 툴팁으로. LRM은 rtl 칸에서 / 순서를 지킨다.
       const dir=tr.children[5];if(v.directory){dir.title=v.directory;dir.textContent='\u200e'+v.directory+'\u200e'}
+      if(subagentNote(v.subagents))tr.children[1].append(' · ',node('span',subagentNote(v.subagents),'subs'));
       const h=hosted.get(v.role);
       if(h){const a=node('a','터미널','hosted');a.href='#terminal='+encodeURIComponent(h.id);a.title=h.node+' · '+h.directory;tr.children[0].append(' ',a)}
       body.append(tr);
@@ -663,7 +667,7 @@ function progressCard(p,now,limit){
     const ul=node('ul','','plist');
     for(const v of p.sessions){
       const li=node('li',''),[text,cls]=sessionStatus(v.state);
-      li.append(node('b',v.role),document.createTextNode(' · '),node('span',text,cls),node('span',' · '+dur(Math.max(0,Math.round((new Date(now)-new Date(v.since))/1000)))+'째','muted'));
+      li.append(node('b',v.role),document.createTextNode(' · '),node('span',text,cls),...(subagentNote(v.subagents)?[document.createTextNode(' · '),node('span',subagentNote(v.subagents),'subs')]:[]),node('span',' · '+dur(Math.max(0,Math.round((new Date(now)-new Date(v.since))/1000)))+'째','muted'));
       // 폴더는 #346처럼 앞쪽을 줄임표로 줄이고 전체 경로는 툴팁으로.
       if(v.directory){const d=node('span','\u200e'+v.directory+'\u200e','pdir');d.title=v.directory;li.append(d)}
       ul.append(li);

@@ -14,6 +14,19 @@ var presenceKindPrefixes = []string{"error:", "blocked:"}
 
 const maxPresenceKind = 64
 
+// MaxSubagents caps the reported number of running background sub-agents;
+// larger reports are stored as this.
+const MaxSubagents = 64
+
+// SubagentCount is the number a report sets: 0 when absent, at most
+// MaxSubagents. Call it after Presence has accepted the request.
+func (q SlotRequest) SubagentCount() int64 {
+	if q.Subagents == nil {
+		return 0
+	}
+	return min(max(*q.Subagents, 0), MaxSubagents)
+}
+
 // validPresenceState reports whether state is idle, busy, compacting, or
 // error:<kind> / blocked:<kind> with a kind of 1-64 characters from
 // A-Z a-z 0-9 . _ -.
@@ -57,6 +70,9 @@ func (q SlotRequest) Presence() (last time.Time, err error) {
 	if q.ContextTokens != nil && *q.ContextTokens < 0 {
 		return last, presenceError("context_tokens must be a whole number of at least 0")
 	}
+	if q.Subagents != nil && *q.Subagents < 0 {
+		return last, presenceError("subagents must be a whole number of at least 0")
+	}
 	if q.LastTurnAt != "" {
 		if last, err = time.Parse(time.RFC3339, q.LastTurnAt); err != nil {
 			return last, presenceError("last_turn_at must be an RFC 3339 time such as 2026-11-17T09:00:00Z")
@@ -71,9 +87,10 @@ type PresenceView struct {
 	Base           string     `json:"base"`
 	Number         int        `json:"number"`
 	Online         bool       `json:"online"`
-	Status         string     `json:"status"`          // offline when !online, else state or unknown
-	State          string     `json:"state,omitempty"` // last reported state, kept while offline
-	ContextTokens  *int64     `json:"context_tokens"`  // null until reported
+	Status         string     `json:"status"`              // offline when !online, else state or unknown
+	State          string     `json:"state,omitempty"`     // last reported state, kept while offline
+	ContextTokens  *int64     `json:"context_tokens"`      // null until reported
+	Subagents      int64      `json:"subagents,omitempty"` // running background sub-agents; 0 (omitted) while offline
 	LastTurnAt     *time.Time `json:"last_turn_at,omitempty"`
 	Machine        string     `json:"machine"`
 	Directory      string     `json:"directory"`

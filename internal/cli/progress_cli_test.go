@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 func TestProgressDurations(t *testing.T) {
@@ -26,5 +29,17 @@ func TestProgressDurations(t *testing.T) {
 		if got := shortDir(dir); got != want {
 			t.Errorf("shortDir(%q) = %q, want %q", dir, got, want)
 		}
+	}
+}
+
+func TestProgressSessionShowsSubagents(t *testing.T) {
+	now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
+	ss := []wire.ServiceProgress{{Service: "api", Badge: "busy", Sessions: []wire.ProgressSession{
+		{Role: "api-1", State: "idle", Directory: "srv", Subagents: 2},
+		{Role: "api-2", State: "busy", Directory: "srv"},
+	}}}
+	out := formatProgress(ss, now)
+	if !strings.Contains(out, "    api-1 idle srv · 서브 에이전트 2개 작업 중\n") || !strings.Contains(out, "    api-2 busy srv\n") {
+		t.Fatalf("progress text:\n%s", out)
 	}
 }

@@ -38,6 +38,7 @@ type SlotRequest struct {
 	State         string `json:"state,omitempty"`          // idle | busy | compacting | error:<kind> | blocked:<kind>
 	ContextTokens *int64 `json:"context_tokens,omitempty"` // >= 0
 	LastTurnAt    string `json:"last_turn_at,omitempty"`   // RFC 3339
+	Subagents     *int64 `json:"subagents,omitempty"`      // running background sub-agents, >= 0; absent means 0
 }
 
 // SlotView is one row of the slot table.

@@ -245,3 +245,20 @@ func TestDashboardSessionsMarkHostedSessions(t *testing.T) {
 		}
 	}
 }
+
+// Running background sub-agents (#215) show next to the state, as text, in
+// the 진행 cards and the 세션 table.
+func TestDashboardShowsSubagents(t *testing.T) {
+	w := httptest.NewRecorder()
+	Page(w, httptest.NewRequest("GET", "/", nil))
+	body := w.Body.String()
+	for _, want := range []string{
+		"function subagentNote(n){return n>0?'서브 에이전트 '+n+'개 작업 중':''}",
+		"tr.children[1].append(' · ',node('span',subagentNote(v.subagents),'subs'))",
+		"node('span',subagentNote(v.subagents),'subs')]:[]",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("dashboard missing %q", want)
+		}
+	}
+}
