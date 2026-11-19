@@ -1,0 +1,9 @@
+# ConPTY output of scenes/resize-redraw.vt on Windows 10.0 build 26100,
+# recorded by TestGoldenScenesConPTY -conpty.record; replayed by TestRecordedConPTYOutputMatchesGolden.
+@size 20x5
+\e[?9001h\e[?1004h\e[?25l\e[2J\e[m\e[Hfirst line\r\n\e]0;C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\go-build2638710919\\b001\\conpty.test.exe\x07
+\e[?25hsecond\r\nthird
+@resize 12x4
+\e[?25l\e[8;4;12t\e[Hfirst line  \r\nsecond      \r\nthird       \r\n\e[K\e[3;6H
+\e[?25h\e[?25l\e[H\e[?25h\e[2J\e[?25l\e[K\r\n\e[K\r\n\e[K\r\n\e[K\e[H\e[?25hredrawn 12\r\n
+\e[1mstatus\e[22m

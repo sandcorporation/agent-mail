@@ -9,6 +9,7 @@ import (
 	"github.com/sandcorporation/switchboard/internal/adminauth"
 	"github.com/sandcorporation/switchboard/internal/cli"
 	"github.com/sandcorporation/switchboard/internal/server"
+	"github.com/sandcorporation/switchboard/internal/term/conpty"
 )
 
 // version is set at build time with -ldflags "-X main.version=…".
@@ -20,6 +21,10 @@ func main() {
 	if len(args) == 0 {
 		server.Run(version)
 		return
+	}
+	if args[0] == conpty.KeeperCommand {
+		// Hidden: the Windows keeper the node starts (not in help).
+		os.Exit(server.Keeper(version, args[1:]))
 	}
 	os.Exit(cli.Run(args, version, cli.Commands{
 		Admin: adminauth.CLI,

@@ -13,14 +13,13 @@ import (
 type nodeBackend = term.Backend
 
 // newNodeBackend is the node's terminal backend on Linux: tmux (3.2+) with
-// its own server "switchboard-<instance>". dir holds its config file (empty:
-// the user cache directory).
-func newNodeBackend(instance string, history int, dir string) (nodeBackend, string, string, error) {
+// its own server "switchboard-<instance>". o.dir holds its config file.
+func newNodeBackend(o backendOptions) (nodeBackend, backendInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	b, err := tmux.New(ctx, tmux.Options{Instance: instance, History: history, Dir: dir})
+	b, err := tmux.New(ctx, tmux.Options{Instance: o.instance, History: o.history, Dir: o.dir})
 	if err != nil {
-		return nil, "", "", err
+		return nil, backendInfo{}, err
 	}
-	return b, "tmux", b.Socket(), nil
+	return b, backendInfo{name: "tmux", socket: b.Socket()}, nil
 }

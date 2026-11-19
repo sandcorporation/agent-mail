@@ -1,0 +1,7 @@
+# ConPTY output of scenes/full-redraw.vt on Windows 10.0 build 26100,
+# recorded by TestGoldenScenesConPTY -conpty.record; replayed by TestRecordedConPTYOutputMatchesGolden.
+@size 24x6
+\e[?9001h\e[?1004h\e[2J\e[?25l\e[2J\e[m\e[H\r\n\r\n\r\n\r\n\r\n\e]0;C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\go-build2638710919\\b001\\conpty.test.exe\x07
+\e[1m\e[H Claude Code \e[22m\e[K\e[11C\e[2m\r\n────────────────────────
+\e[22m> list the files        \e[32m\r\n● \e[mReading 3 files       \r\n\e[K\e[24C
+\e[7m\r\n esc to interrupt \e[27m      \e[1m\e[H Claude Code \e[22m\e[K\e[11C\e[3;1H> list the files ok     

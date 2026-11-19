@@ -1,0 +1,7 @@
+# ConPTY output of scenes/colors-bold.vt on Windows 10.0 build 26100,
+# recorded by TestGoldenScenesConPTY -conpty.record; replayed by TestRecordedConPTYOutputMatchesGolden.
+@size 24x5
+\e[?9001h\e[?1004h\e[?25l\e[2J\e[m\e[31m\e[Hred \e[32m\e[1mbold green\r\n\e]0;C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\go-build2638710919\\b001\\conpty.test.exe\x07
+\e[?25h\e[m\e[91mbright \e[38;5;208m208 \e[38;2;255;128;0mtrue\r\n\e[m\e[97m\e[44mwhite on blue
+\e[49m plain-bg\r\n\e[m\e[2mfaint\e[22m \e[3mit\e[23m \e[4mul\e[24m \e[7mrev\e[27m 
+\e[9mst\r\n\e[29m\e[48;2;0;0;128m  \e[1m bold-bg \e[m

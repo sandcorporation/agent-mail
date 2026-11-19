@@ -1,10 +1,12 @@
 module github.com/sandcorporation/switchboard
 
-go 1.24.2
+go 1.25.0
 
 require (
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/charmbracelet/ultraviolet v0.0.0-20260303162955-0b88c25f3fff
 	github.com/charmbracelet/x/ansi v0.11.7
+	github.com/charmbracelet/x/conpty v0.2.0
 	github.com/charmbracelet/x/exp/ordered v0.1.0
 	github.com/coder/websocket v1.8.13
 	github.com/coreos/go-oidc/v3 v3.17.0
