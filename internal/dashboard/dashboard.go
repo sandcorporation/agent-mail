@@ -216,9 +216,6 @@ td.cardbr{display:none}
 td.revoked{color:var(--st-error);font-weight:600}
 .settings-form label{display:flex;flex-direction:column;gap:var(--space-1);font-size:.9em}
 .settings-form label.check{flex-direction:row;align-items:center;gap:var(--space-2)}
-#settingsTbl td.watchers{white-space:normal;overflow-wrap:anywhere}
-#settingsTbl td:last-child{text-align:right}
-#settingsTbl td:last-child button{margin-left:var(--space-1);padding:.2rem .55rem;font-size:.95em}
 .viewswitch{display:inline-flex;border:1px solid var(--color-line-strong);border-radius:var(--radius);overflow:hidden;margin:0 0 var(--space-3)}
 .toolbar .viewswitch{margin:0}
 .viewswitch button{margin:0;border:0;border-radius:0;background:var(--color-canvas);color:var(--color-muted);padding:.35rem .9rem}
@@ -283,10 +280,12 @@ table.cards td.cardbr{display:block;flex-basis:100%;height:0}
 table.cards td.cardbr~td{font-size:.88em;color:var(--color-muted);font-weight:400}
 table.cards td[data-label]::before{content:none}
 table.cards tr.row-error td:first-child,table.cards tr.row-blocked td:first-child{padding-left:var(--space-2)}
+table.cards td[data-pre]::before{content:attr(data-pre);color:var(--color-muted)}
+table.cards td.cardhide{display:none}
+#panel-settings table.cards td.cardbr+td~td[data-pre]::before{content:"· " attr(data-pre)}
+#panel-settings table.cards td.cardbr+td~td:not([data-pre])::before{content:"· "}
 #progressTbl td[data-label]+td[data-label]::before{content:"· "}
 #progressTbl td.num[data-label]::after{content:" " attr(data-label)}
-#settingsTbl td:last-child{text-align:left;padding-top:var(--space-1)}
-#settingsTbl td:last-child button{margin:0 var(--space-1) 0 0}
 }
 </style>
 </head>
@@ -402,24 +401,31 @@ table.cards tr.row-error td:first-child,table.cards tr.row-blocked td:first-chil
 </div>
 </section>
 <section id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" tabindex="0" class="card" hidden>
-<div class="toolbar"><h2>질문 설정</h2><button id="reloadSettings">새로 고침</button><span id="settingsNote" class="muted"></span></div>
+<div class="toolbar"><h2>설정</h2>
+<div class="viewswitch" id="setViews" role="group" aria-label="설정 고르기"><button type="button" data-view="qsettings" aria-pressed="true">질문 설정</button><button type="button" data-view="roles" aria-pressed="false">역할</button><button type="button" data-view="nodes" aria-pressed="false" hidden>노드</button><button type="button" data-view="reminders" aria-pressed="false">다시 알림</button></div>
+<button id="reloadSettings">새로 고침</button><span id="settingsNote" class="muted"></span></div>
 <div id="settingsMsg" class="msg" role="status" aria-live="polite"></div>
-<div class="wide"><table id="settingsTbl" class="stack"><thead><tr><th>대상</th><th>질문 가능</th><th>지켜보는 역할</th><th>디스코드</th><th>바뀐 때</th><th></th></tr></thead><tbody id="settingsTable"></tbody></table></div>
-<form id="settingsForm" class="settings-form">
+<div id="setView-qsettings">
+<div class="listbar"><button type="button" id="setAddOpen" aria-haspopup="dialog" aria-controls="setAdd">추가</button></div>
+<table id="settingsTbl" class="stack list cards"><thead><tr><th>대상</th><th>질문 가능</th><th>지켜보는 역할</th><th>디스코드</th><th>바뀐 때</th></tr></thead><tbody id="settingsTable"></tbody></table>
+</div>
+<div id="setView-roles" hidden>
+<table id="rolesTbl" class="stack list cards"><thead><tr><th>역할</th><th>상태</th><th>등록</th><th>끊은 때</th></tr></thead><tbody id="rolesTable"></tbody></table>
+</div>
+<div id="setView-nodes" hidden>
+<table id="nodesTbl" class="stack list cards"><thead><tr><th>노드</th><th>기계</th><th>OS</th><th>버전</th><th>마지막 접속</th><th>끊은 때</th></tr></thead><tbody id="nodesTable"></tbody></table>
+</div>
+<div id="setView-reminders" hidden><div id="remindBox"></div></div>
+<dialog id="setAdd" class="sc-drawer" aria-labelledby="setAddTitle"><div class="sc-drawer-head"><h3 id="setAddTitle" class="sc-drawer-title">질문 설정 추가</h3><button type="button" id="setAddClose" class="detail-close" aria-label="닫기">×</button></div><div class="sc-drawer-body">
+<div id="setAddMsg" class="msg" role="status" aria-live="polite"></div>
+<form id="settingsForm" class="settings-form termform">
 <label title="default, 역할(svc/coordinator — svc/coordinator-N 포함), 접두사(svc/*). 정확한 대상 → 가장 긴 접두사 → default 순으로 하나만 적용">대상 <input id="setTarget" required autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="svc/coordinator 또는 svc/*"></label>
 <label class="check"><input type="checkbox" id="setCanAsk"> 질문할 수 있음 (can_ask)</label>
 <label class="check"><input type="checkbox" id="setDiscord"> 디스코드 알림 (discord)</label>
 <label>지켜보는 역할 (쉼표로 구분, 최대 20) <input id="setWatchers" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="team/boss, ops/lead"></label>
 <div class="row"><button type="submit">저장</button><button type="button" id="setClear">비우기</button></div>
 </form>
-<div class="toolbar"><h2>역할</h2><button id="reloadRoles">새로 고침</button><span id="rolesNote" class="muted"></span></div>
-<div id="rolesMsg" class="msg" role="status" aria-live="polite"></div>
-<div class="wide"><table id="rolesTbl" class="stack"><thead><tr><th>역할</th><th>등록</th><th>끊은 때</th><th></th></tr></thead><tbody id="rolesTable"></tbody></table></div>
-<div id="nodesBox" hidden>
-<div class="toolbar"><h2>노드</h2><button id="reloadNodes">새로 고침</button><span id="nodesNote" class="muted"></span></div>
-<div id="nodesMsg" class="msg" role="status" aria-live="polite"></div>
-<div class="wide"><table id="nodesTbl" class="stack"><thead><tr><th>노드</th><th>기계</th><th>OS</th><th>버전</th><th>마지막 접속</th><th>끊은 때</th><th></th></tr></thead><tbody id="nodesTable"></tbody></table></div>
-</div>
+</div></dialog>
 </section>
 <section id="panel-terminals" role="tabpanel" aria-labelledby="tab-terminals" tabindex="0" class="card" hidden>
 <div class="toolbar"><h2>터미널</h2><button id="reloadTerminals">새로 고침</button><span id="terminalsNote" class="muted"></span></div>
@@ -477,8 +483,8 @@ async function loadMe(){
     const r=await fetch('/api/admin/me',{credentials:'same-origin',headers:{'Accept':'application/json'}});
     if(!r.ok)return;
     const m=await r.json();adminMode=m.mode||'';hostingOn=m.hosting===true;termAssets=Array.isArray(m.terminal_assets)?m.terminal_assets:[];
-    $('tab-terminals').hidden=!hostingOn;$('nodesBox').hidden=!hostingOn;
-    if(hostingOn&&location.hash==='#settings')loadNodes();
+    $('tab-terminals').hidden=!hostingOn;setViewButton('nodes').hidden=!hostingOn;
+    if(hostingOn&&curTab==='settings')route();
     if(hostingOn&&location.hash.startsWith('#terminal'))route();
     if(hostingOn&&curTab==='sessions')loadSessions();
     if(hostingOn&&detailCur)drawDetail();
@@ -538,6 +544,7 @@ function ago(now,t){if(!t)return '-';const s=Math.max(0,Math.round((new Date(now
 //   head   item => {title, badge:[text,tone]} (tone: success|info|warning|danger|neutral)
 //   subs   item => [[key,label],...]; the first is the default sub-tab
 //   draw   async (item,sub,box) => fills box with text nodes only
+//   back   id => the hash closing goes to (optional; default #<tab>)
 // List renderers call detailRow(tr,tab,id) on each row (Tab-reachable, Enter
 // or click opens, the open row is aria-current). openDetail(tab,id,sub) and
 // closeDetail() move the hash; drawDetail() redraws the open item. Esc
@@ -551,7 +558,7 @@ function openDetail(tab,id,sub){
   const h=detailHash(tab,id,sub);
   if(location.hash===h)route();else location.hash=h;
 }
-function closeDetail(){if(detailCur)location.hash=detailCur.tab}
+function closeDetail(){if(detailCur){const b=details[detailCur.tab].back;location.hash=b?b(detailCur.id):detailCur.tab}}
 function detailRow(tr,tab,id){
   id=String(id);tr.dataset.detailId=id;tr.tabIndex=0;
   if(detailCur&&detailCur.tab===tab&&detailCur.id===id)tr.setAttribute('aria-current','true');
@@ -1355,35 +1362,6 @@ $('decForm').onsubmit=e=>{e.preventDefault();loadDecisions()};
 for(const id of ['decFrom','decTo','decRole','decSearch'])$(id).addEventListener('input',updateDecisionExport);
 $('viewQuestions').onclick=()=>selectTab('questions');
 $('viewDecisions').onclick=()=>selectTab('decisions');
-// ---- 질문 설정 ----
-async function loadSettings(){
-  $('settingsNote').textContent='불러오는 중…';
-  try{
-    const rows=await api('question-settings');
-    const body=$('settingsTable');body.replaceChildren();
-    for(const v of rows){
-      const tr=node('tr','');
-      const cells=[['대상',v.target],['질문 가능',v.can_ask?'예':'아니오'],['지켜보는 역할',v.watchers.length?v.watchers.join(', '):'-'],['디스코드',v.discord?'켬':'끔'],['바뀐 때',when(v.updated_at)]];
-      for(const [label,text] of cells){const td=node('td',text,label==='지켜보는 역할'?'watchers':'');td.dataset.label=label;tr.append(td)}
-      const act=node('td','');
-      const edit=node('button','편집');edit.type='button';
-      edit.onclick=()=>{$('setTarget').value=v.target;$('setCanAsk').checked=v.can_ask;$('setDiscord').checked=v.discord;$('setWatchers').value=v.watchers.join(', ');$('settingsForm').scrollIntoView({block:'nearest'});$('setTarget').focus()};
-      act.append(edit);
-      if(v.target!=='default'){
-        const del=node('button','삭제');del.type='button';
-        del.onclick=async()=>{
-          if(!confirm(v.target+' 설정을 지울까요?'))return;
-          try{await apiSend('DELETE','question-settings/'+targetPath(v.target));setMsg($('settingsMsg'),v.target+' 설정을 지웠습니다.','ok');loadSettings()}
-          catch(e){setMsg($('settingsMsg'),e.message,'err')}
-        };
-        act.append(del);
-      }
-      tr.append(act);body.append(tr);
-    }
-    if(!rows.length)emptyRow(body,6,'설정 없음');
-    $('settingsNote').textContent=rows.length+'개';
-  }catch(e){$('settingsNote').textContent=e.message}
-}
 // ---- 터미널 (hosting) ----
 // The list opens a record in the detail panel (#terminals/<id>/<sub>): 화면
 // (the live terminal), 기록 (runtime and the access log) and 설정. The add
@@ -1737,72 +1715,228 @@ $('termClear').onclick=()=>{$('termForm').reset();setMsg($('termAddMsg'),'')};
 $('reloadTerminals').onclick=loadTerminals;
 // targetPath keeps the slashes of a target (svc/coordinator, svc/*) as path separators.
 function targetPath(t){return t.split('/').map(encodeURIComponent).join('/')}
+// ---- 설정 ----
+// Four views under the 설정 tab: 질문 설정 (#settings), 역할
+// (#settings-roles), 노드 (#settings-nodes, hosting only) and 다시 알림
+// (#settings-reminders, GET /api/admin/settings, read-only). A row opens
+// #settings/<kind>:<id>/<sub> with kind qs (question setting target), role
+// or node; closing goes back to that kind's view.
+const setViewHash={qsettings:'settings',roles:'settings-roles',nodes:'settings-nodes',reminders:'settings-reminders'};
+const setKindView={qs:'qsettings',role:'roles',node:'nodes'};
+let setView='qsettings';
+const setNotes=new Map(),setForms=new Map();
+function setViewButton(v){return $('setViews').querySelector('[data-view="'+v+'"]')}
+function showSettingsView(v){
+  if(!setViewHash[v]||(v==='nodes'&&!hostingOn))v='qsettings';
+  const changed=v!==setView;setView=v;
+  for(const k of Object.keys(setViewHash)){$('setView-'+k).hidden=k!==v;setViewButton(k).setAttribute('aria-pressed',k===v?'true':'false')}
+  if(changed){$('settingsNote').textContent='';setMsg($('settingsMsg'),'');if(tabLoaded.has('settings'))loadSettingsView()}
+}
+function settingsViewOfHash(h){for(const [v,x] of Object.entries(setViewHash))if(x===h)return v;return ''}
+$('setViews').addEventListener('click',e=>{const b=e.target.closest('button[data-view]');if(b)selectTab(setViewHash[b.dataset.view])});
+function loadSettingsView(){return ({qsettings:loadQSettings,roles:loadRoles,nodes:loadNodes,reminders:loadReminders})[setView]()}
+tabLoaders.settings=loadSettingsView;
+// setNote keeps a result line for an item's detail across the redraws of
+// the next few seconds (a save also triggers a live redraw).
+function setNote(id,text,kind){setNotes.set(id,{text:text,kind:kind,at:Date.now()})}
+function drawSetNote(box,id){
+  const n=setNotes.get(id),m=node('div','','msg');m.setAttribute('role','status');
+  if(n&&Date.now()-n.at<10000)setMsg(m,n.text,n.kind);
+  box.append(m);
+}
+function setButton(text,cls,run){const b=node('button',text,cls);b.type='button';b.onclick=run;return b}
+// cardText sets the words a two-line card shows before a value (the table
+// header says it on a wide screen).
+function cardText(td,pre){td.dataset.pre=pre;return td}
+// 질문 설정
+const qsCols=['대상','질문 가능','지켜보는 역할','디스코드','바뀐 때'];
+async function loadQSettings(){
+  $('settingsNote').textContent='불러오는 중…';
+  try{
+    const rows=await api('question-settings');
+    if(setView!=='qsettings')return;
+    const body=$('settingsTable');
+    keepRowFocus(body,()=>{
+      body.replaceChildren();
+      for(const v of rows){
+        const tr=node('tr','');
+        const ca=cell('');ca.append(badge(v.can_ask?'질문 가능':'질문 불가',v.can_ask?'success':'neutral'));
+        const at=cell(shortWhen(v.updated_at),qsCols[4],'nowrap');at.title=when(v.updated_at);
+        tr.append(cell(v.target,'','strong mono'),ca,cardBreak(),cardText(cell(v.watchers.length?v.watchers.join(', '):'-',qsCols[2]),'지켜봄 '),cardText(cell(v.discord?'켬':'끔',qsCols[3],'nowrap'),'디스코드 '),at);
+        detailRow(tr,'settings','qs:'+v.target);
+        body.append(tr);
+      }
+      if(!rows.length)emptyRow(body,qsCols.length,'설정 없음');
+    });
+    $('settingsNote').textContent=rows.length+'개';
+  }catch(e){if(setView==='qsettings')$('settingsNote').textContent=e.message}
+}
+// qsForm is the edit form of one target. It is kept across live redraws
+// while the stored setting is unchanged, so a half-made edit survives them.
+function qsForm(v){
+  const kept=setForms.get(v.target);
+  if(kept&&kept.stamp===v.updated_at)return kept.form;
+  const f=node('form','','settings-form termform');
+  const check=(text,on)=>{const l=node('label','','check'),i=document.createElement('input');i.type='checkbox';i.checked=on;l.append(i,' '+text);return [l,i]};
+  const [l1,canAsk]=check('질문할 수 있음 (can_ask)',v.can_ask),[l2,discord]=check('디스코드 알림 (discord)',v.discord);
+  const l3=node('label','지켜보는 역할 (쉼표로 구분, 최대 20) '),w=document.createElement('input');
+  w.value=v.watchers.join(', ');w.autocomplete='off';w.spellcheck=false;w.setAttribute('autocapitalize','off');w.placeholder='team/boss, ops/lead';l3.append(w);
+  const save=node('button','저장');save.type='submit';
+  const row=node('div','','row');row.append(save);
+  f.append(l1,l2,l3,row);
+  const id='qs:'+v.target;
+  f.onsubmit=async e=>{
+    e.preventDefault();
+    const watchers=w.value.split(',').map(x=>x.trim()).filter(Boolean);
+    try{
+      await apiSend('PUT','question-settings/'+targetPath(v.target),{can_ask:canAsk.checked,watchers:watchers,discord:discord.checked});
+      setForms.delete(v.target);setNote(id,v.target+' 설정을 저장했습니다.','ok');
+    }catch(err){setNote(id,err.message,'err')}
+    loadQSettings();drawDetail();
+  };
+  setForms.set(v.target,{stamp:v.updated_at,form:f});
+  return f;
+}
+function drawQS(v,box){
+  if(v.target!=='default'){
+    const acts=node('div','','detail-acts');
+    acts.append(setButton('삭제','',async()=>{
+      if(!confirm(v.target+' 설정을 지울까요?'))return;
+      try{await apiSend('DELETE','question-settings/'+targetPath(v.target));setForms.delete(v.target);setMsg($('settingsMsg'),v.target+' 설정을 지웠습니다.','ok');closeDetail();loadQSettings()}
+      catch(e){setNote('qs:'+v.target,e.message,'err');drawDetail()}
+    }));
+    box.append(acts);
+  }
+  drawSetNote(box,'qs:'+v.target);
+  box.append(dl([['대상',v.target],['바뀐 때',when(v.updated_at)]]),qsForm(v));
+}
+$('setAddOpen').onclick=()=>{setMsg($('setAddMsg'),'');$('setAdd').showModal();$('setTarget').focus()};
+$('setAddClose').onclick=()=>$('setAdd').close();
+$('setAdd').addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();$('setAdd').close()}});
 $('settingsForm').onsubmit=async e=>{
   e.preventDefault();
   const target=$('setTarget').value.trim();
-  if(!target){setMsg($('settingsMsg'),'대상을 쓰세요.','err');return}
+  if(!target){setMsg($('setAddMsg'),'대상을 쓰세요.','err');return}
   const watchers=$('setWatchers').value.split(',').map(x=>x.trim()).filter(Boolean);
   try{
     await apiSend('PUT','question-settings/'+targetPath(target),{can_ask:$('setCanAsk').checked,watchers:watchers,discord:$('setDiscord').checked});
-    setMsg($('settingsMsg'),target+' 설정을 저장했습니다.','ok');loadSettings();
-  }catch(err){setMsg($('settingsMsg'),err.message,'err')}
+    $('settingsForm').reset();$('setAdd').close();setForms.delete(target);
+    setMsg($('settingsMsg'),target+' 설정을 저장했습니다.','ok');loadQSettings();
+    openDetail('settings','qs:'+target,'edit');
+  }catch(err){setMsg($('setAddMsg'),err.message,'err')}
 };
-$('setClear').onclick=()=>{$('settingsForm').reset();setMsg($('settingsMsg'),'')};
-// ---- 역할 ----
+$('setClear').onclick=()=>{$('settingsForm').reset();setMsg($('setAddMsg'),'')};
+// 역할
+const roleCols=['역할','상태','등록','끊은 때'];
 async function loadRoles(){
-  $('rolesNote').textContent='불러오는 중…';
+  $('settingsNote').textContent='불러오는 중…';
   try{
     const rows=await api('roles');
-    const body=$('rolesTable');body.replaceChildren();
-    for(const v of rows){
-      const tr=node('tr','');
-      for(const [label,text] of [['역할',v.role],['등록',when(v.created_at)],['끊은 때',v.revoked_at?when(v.revoked_at):'-']]){const td=node('td',text,label==='끊은 때'&&v.revoked_at?'revoked':'');td.dataset.label=label;tr.append(td)}
-      const act=node('td','');
-      const revoke=!v.revoked_at;
-      const b=node('button',revoke?'끊기':'되살리기');b.type='button';
-      b.onclick=async()=>{
-        if(!confirm(revoke?v.role+' 역할을 끊을까요? 이 토큰으로 접속한 세션이 모두 끊깁니다.':v.role+' 역할을 되살릴까요?'))return;
-        try{await apiSend('POST','roles/'+targetPath(v.role)+(revoke?'/revoke':'/restore'));setMsg($('rolesMsg'),v.role+(revoke?' 역할을 끊었습니다.':' 역할을 되살렸습니다.'),'ok');loadRoles()}
-        catch(e){setMsg($('rolesMsg'),e.message,'err')}
-      };
-      act.append(b);tr.append(act);body.append(tr);
-    }
-    if(!rows.length)emptyRow(body,4,'역할 없음');
+    if(setView!=='roles')return;
+    const body=$('rolesTable');
+    keepRowFocus(body,()=>{
+      body.replaceChildren();
+      for(const v of rows){
+        const tr=node('tr','',v.revoked_at?'done':'');
+        const st=cell('');st.append(badge(v.revoked_at?'끊김':'사용 중',v.revoked_at?'danger':'success'));
+        const at=cardText(cell(shortWhen(v.created_at),roleCols[2],'nowrap'),'등록 ');at.title=when(v.created_at);
+        const off=cardText(cell(v.revoked_at?shortWhen(v.revoked_at):'-',roleCols[3],v.revoked_at?'nowrap revoked':'nowrap cardhide'),'끊음 ');if(v.revoked_at)off.title=when(v.revoked_at);
+        tr.append(cell(v.role,'','strong mono'),st,cardBreak(),at,off);
+        detailRow(tr,'settings','role:'+v.role);
+        body.append(tr);
+      }
+      if(!rows.length)emptyRow(body,roleCols.length,'역할 없음');
+    });
     const off=rows.filter(v=>v.revoked_at).length;
-    $('rolesNote').textContent=rows.length+'개'+(off?' · 끊김 '+off:'');
-  }catch(e){$('rolesNote').textContent=e.message}
+    $('settingsNote').textContent=rows.length+'개'+(off?' · 끊김 '+off:'');
+  }catch(e){if(setView==='roles')$('settingsNote').textContent=e.message}
 }
-$('reloadRoles').onclick=loadRoles;
-// ---- 노드 (hosting) ----
+function drawRole(v,box){
+  const id='role:'+v.role,revoke=!v.revoked_at,acts=node('div','','detail-acts');
+  acts.append(setButton(revoke?'끊기':'되살리기','',async()=>{
+    if(!confirm(revoke?v.role+' 역할을 끊을까요? 이 토큰으로 접속한 세션이 모두 끊깁니다.':v.role+' 역할을 되살릴까요?'))return;
+    try{await apiSend('POST','roles/'+targetPath(v.role)+(revoke?'/revoke':'/restore'));setNote(id,v.role+(revoke?' 역할을 끊었습니다.':' 역할을 되살렸습니다.'),'ok')}
+    catch(e){setNote(id,e.message,'err')}
+    loadRoles();drawDetail();
+  }));
+  box.append(acts);
+  drawSetNote(box,id);
+  box.append(dl([['역할',v.role],['등록',when(v.created_at)],['끊은 때',v.revoked_at?when(v.revoked_at):'-']]));
+}
+// 노드 (hosting)
 const nodeCols=['노드','기계','OS','버전','마지막 접속','끊은 때'];
 async function loadNodes(){
   if(!hostingOn)return;
-  $('nodesNote').textContent='불러오는 중…';
+  $('settingsNote').textContent='불러오는 중…';
   try{
     const rows=await api('nodes');
-    const body=$('nodesTable');body.replaceChildren();
-    for(const v of rows){
-      const tr=node('tr','',v.revoked_at?'offline':'');
-      cells(tr,nodeCols,[v.name,v.machine||'-',v.os||'-',v.version||'-',when(v.last_seen_at),v.revoked_at?when(v.revoked_at):'-'],['','','','','',v.revoked_at?'revoked':'']);
-      const act=node('td','');
-      if(!v.revoked_at){
-        const b=node('button','끊기');b.type='button';
-        b.onclick=async()=>{
-          if(!confirm(v.name+' 노드를 끊을까요? 연결이 바로 끊기고 이 노드의 토큰은 다시 쓸 수 없습니다.'))return;
-          try{await apiSend('DELETE','nodes/'+encodeURIComponent(v.name));setMsg($('nodesMsg'),v.name+' 노드를 끊었습니다.','ok');loadNodes()}
-          catch(e){setMsg($('nodesMsg'),e.message,'err')}
-        };
-        act.append(b);
+    if(setView!=='nodes')return;
+    const body=$('nodesTable');
+    keepRowFocus(body,()=>{
+      body.replaceChildren();
+      for(const v of rows){
+        const tr=node('tr','',v.revoked_at?'offline':'');
+        const name=cell(v.name,'','strong mono');
+        if(v.revoked_at)name.append(' ',badge('끊김','danger'));
+        const seen=cardText(cell(when(v.last_seen_at),nodeCols[4],'nowrap'),'접속 ');
+        const off=cell(v.revoked_at?when(v.revoked_at):'-',nodeCols[5],v.revoked_at?'revoked cardhide':'cardhide');
+        tr.append(name,cardBreak(),cell(v.machine||'-',nodeCols[1]),cell(v.os||'-',nodeCols[2]),cell(v.version||'-',nodeCols[3]),seen,off);
+        detailRow(tr,'settings','node:'+v.name);
+        body.append(tr);
       }
-      tr.append(act);body.append(tr);
-    }
-    if(!rows.length)emptyRow(body,7,'노드 없음');
+      if(!rows.length)emptyRow(body,nodeCols.length,'노드 없음');
+    });
     const off=rows.filter(v=>v.revoked_at).length;
-    $('nodesNote').textContent=rows.length+'개'+(off?' · 끊김 '+off:'');
-  }catch(e){$('nodesNote').textContent=e.message}
+    $('settingsNote').textContent=rows.length+'개'+(off?' · 끊김 '+off:'');
+  }catch(e){if(setView==='nodes')$('settingsNote').textContent=e.message}
 }
-$('reloadNodes').onclick=loadNodes;
-tabLoaders.settings=()=>{loadSettings();loadRoles();loadNodes()};
+function drawNode(v,box){
+  const id='node:'+v.name;
+  if(!v.revoked_at){
+    const acts=node('div','','detail-acts');
+    acts.append(setButton('끊기','',async()=>{
+      if(!confirm(v.name+' 노드를 끊을까요? 연결이 바로 끊기고 이 노드의 토큰은 다시 쓸 수 없습니다.'))return;
+      try{await apiSend('DELETE','nodes/'+encodeURIComponent(v.name));setNote(id,v.name+' 노드를 끊었습니다.','ok')}
+      catch(e){setNote(id,e.message,'err')}
+      loadNodes();drawDetail();
+    }));
+    box.append(acts);
+  }
+  drawSetNote(box,id);
+  box.append(dl([['노드',v.name],['기계',v.machine||'-'],['OS',v.os||'-'],['버전',v.version||'-'],['등록',when(v.created_at)],['마지막 접속',when(v.last_seen_at)],['끊은 때',v.revoked_at?when(v.revoked_at):'-']]));
+}
+// 다시 알림 (#223): the reminder settings and the server version, as the
+// start-up line reports them.
+async function loadReminders(){
+  $('settingsNote').textContent='불러오는 중…';
+  try{
+    const s=await api('settings');
+    if(setView!=='reminders')return;
+    const r=s.reminders,st=document.createElement('span');
+    st.append(badge(r.on?'켬':'끔',r.on?'success':'neutral'));
+    $('remindBox').replaceChildren(dl([['다시 알림',st],['첫 알림',r.after],['최대 횟수',String(r.max)],['켠 때',r.since?when(r.since):r.on?'첫 점검 전':'-'],['서버 판',s.version],['터미널 호스팅',s.hosting?'켬':'끔']]));
+    $('settingsNote').textContent='';
+  }catch(e){if(setView==='reminders')$('settingsNote').textContent=e.message}
+}
+async function findSetting(kind,key){
+  if(kind==='qs')return (await api('question-settings')).find(x=>x.target===key);
+  if(kind==='role')return (await api('roles')).find(x=>x.role===key);
+  if(kind==='node'&&hostingOn)return (await api('nodes')).find(x=>x.name===key);
+  return undefined;
+}
+registerDetail('settings',{
+  list:'설정',kinds:['settings','terminals'],
+  back:id=>setViewHash[setKindView[id.slice(0,id.indexOf(':'))]]||'settings',
+  load:async id=>{
+    const i=id.indexOf(':'),k=id.slice(0,i),v=i>0?await findSetting(k,id.slice(i+1)):undefined;
+    return v?{k:k,v:v}:null;
+  },
+  head:x=>x.k==='qs'?{title:x.v.target,badge:x.v.can_ask?['질문 가능','success']:['질문 불가','neutral']}
+    :x.k==='role'?{title:x.v.role,badge:x.v.revoked_at?['끊김','danger']:['사용 중','success']}
+    :{title:x.v.name,badge:x.v.revoked_at?['끊김','danger']:null},
+  subs:x=>x.k==='qs'?[['edit','설정']]:[['info','정보']],
+  draw:(x,sub,box)=>x.k==='qs'?drawQS(x.v,box):x.k==='role'?drawRole(x.v,box):drawNode(x.v,box)
+});
 // ---- 권한 요청 ----
 // GET /api/admin/permissions?status=pending and ?status=closed; answers go to
 // POST /api/admin/permissions/{id}/answer, the same server function as
@@ -1897,7 +2031,7 @@ tabLoaders.permissions=loadPermissions;
 // and {type:'change',seq,kinds}; kinds are tab names. The shown tab reloads
 // (not while a field in it has focus), the others reload when next shown.
 // Reconnects back off exponentially (1s to 30s) and resume with boot+after.
-const liveReload={progress:loadProgress,sessions:loadSessions,metrics:loadMetrics,mail:load,permissions:loadPermissions,questions:loadQuestions,settings:()=>{loadSettings();loadRoles()},terminals:loadTerminals};
+const liveReload={progress:loadProgress,sessions:loadSessions,metrics:loadMetrics,mail:load,permissions:loadPermissions,questions:loadQuestions,settings:loadSettingsView,terminals:loadTerminals};
 const liveCounts={questions:refreshQuestionCount,permissions:refreshPermissionCount,metrics:refreshMetricsCount};
 let liveBoot='',liveSeq=0,liveDelay=1000,liveDirty=new Set(),liveStale=new Set(),liveTimer=0,liveDetail=false;
 function liveMark(kinds){
@@ -1940,6 +2074,7 @@ function liveRetry(){
 let curTab='';
 function showTab(name){
   if(name!=='terminals'&&$('termAdd').open)$('termAdd').close();
+  if(name!=='settings'&&$('setAdd').open)$('setAdd').close();
   curTab=name;
   for(const n of tabNames){
     const on=n===name,t=$('tab-'+n);
@@ -1952,7 +2087,8 @@ function showTab(name){
   else if(liveStale.has(name))liveReload[name]();
   liveStale.delete(name);
 }
-// Routes: #progress #sessions #metrics #mail #permissions #questions #settings, #decisions (질문 tab,
+// Routes: #progress #sessions #metrics #mail #permissions #questions #settings, #settings-roles
+// #settings-nodes #settings-reminders (설정 tab views), #decisions (질문 tab,
 // 결정 view), #q=<id> (rewritten to #questions/<id>/answer), #terminal=<id> (an older link: it becomes
 // #terminals/<id>/screen), and #<tab>/<id>/<sub> for a tab with a detail panel
 // (registerDetail). No hash or an unknown one shows 진행.
@@ -1962,6 +2098,7 @@ function route(){
   if(parts.length>1&&details[parts[0]]&&visibleTabs().includes(parts[0])&&parts[1]){
     let id=parts[1];try{id=decodeURIComponent(id)}catch(e){}
     if(parts[0]==='questions')showQuestionView('questions');
+    if(parts[0]==='settings')showSettingsView(setKindView[id.slice(0,id.indexOf(':'))]);
     showTab(parts[0]);showDetail(parts[0],id,parts[2]||'');
     return;
   }
@@ -1973,6 +2110,7 @@ function route(){
     return;
   }
   if(h==='decisions'){showTab('questions');showQuestionView('decisions');return}
+  if(settingsViewOfHash(h)){showSettingsView(settingsViewOfHash(h));showTab('settings');return}
   if(h==='questions'||h.startsWith('q='))showQuestionView('questions');
   if(h.startsWith('q=')){
     // Old question links (Discord, panel) open the question's detail.
@@ -2014,7 +2152,7 @@ $('reloadMetrics').onclick=loadMetrics;
 $('metDays7').onclick=()=>setMetricsDays(7);
 $('metDays30').onclick=()=>setMetricsDays(30);
 $('reloadQuestions').onclick=()=>{setMsg($('questionsMsg'),'');loadQuestions()};
-$('reloadSettings').onclick=loadSettings;
+$('reloadSettings').onclick=()=>{setMsg($('settingsMsg'),'');loadSettingsView()};
 $('reset').onclick=()=>{$('thread').value='';$('task').value='';mailID='';$('search').value='';$('status').value='';$('role').value='';$('box').value='all';load()};
 $('search').addEventListener('keydown',e=>{if(e.key==='Enter')load()});
 $('thread').addEventListener('keydown',e=>{if(e.key==='Enter')load()});

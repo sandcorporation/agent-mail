@@ -208,8 +208,9 @@ func TestDashboardTerminalsTabOnlyWithHosting(t *testing.T) {
 		`tabLoaders.terminals=loadTerminals;`,
 		`api('terminals')`,
 		`confirm(`,
-		`<div id="nodesBox" hidden>`,
-		`$('nodesBox').hidden=!hostingOn;`,
+		`<button type="button" data-view="nodes" aria-pressed="false" hidden>노드</button>`,
+		`setViewButton('nodes').hidden=!hostingOn;`,
+		`if(!setViewHash[v]||(v==='nodes'&&!hostingOn))v='qsettings';`,
 		`api('nodes')`,
 		`apiSend('DELETE','nodes/'+encodeURIComponent(v.name))`,
 	} {
@@ -500,6 +501,52 @@ func TestDashboardWaitAndDetails(t *testing.T) {
 	for _, banned := range []string{"function progressCard(", "function focusQuestion(", "function permPendingCard("} {
 		if strings.Contains(body, banned) {
 			t.Fatalf("old card view left: %q", banned)
+		}
+	}
+}
+
+// #223: 설정 is a list + detail with the views 질문 설정 / 역할 / 노드 / 다시
+// 알림. Every earlier action stays (question setting add, edit and delete;
+// role revoke and restore; node revoke, each behind its confirm), and 다시
+// 알림 reads GET /api/admin/settings.
+func TestDashboardSettingsDetail(t *testing.T) {
+	w := httptest.NewRecorder()
+	Page(w, httptest.NewRequest("GET", "/", nil))
+	body := w.Body.String()
+	for _, want := range []string{
+		`<div class="viewswitch" id="setViews" role="group" aria-label="설정 고르기"><button type="button" data-view="qsettings" aria-pressed="true">질문 설정</button><button type="button" data-view="roles" aria-pressed="false">역할</button><button type="button" data-view="nodes" aria-pressed="false" hidden>노드</button><button type="button" data-view="reminders" aria-pressed="false">다시 알림</button></div>`,
+		`<table id="settingsTbl" class="stack list cards">`,
+		`<table id="rolesTbl" class="stack list cards">`,
+		`<table id="nodesTbl" class="stack list cards">`,
+		`<dialog id="setAdd" class="sc-drawer" aria-labelledby="setAddTitle">`,
+		"const setViewHash={qsettings:'settings',roles:'settings-roles',nodes:'settings-nodes',reminders:'settings-reminders'};",
+		"registerDetail('settings',{",
+		"detailRow(tr,'settings','qs:'+v.target);",
+		"detailRow(tr,'settings','role:'+v.role);",
+		"detailRow(tr,'settings','node:'+v.name);",
+		"back:id=>setViewHash[setKindView[id.slice(0,id.indexOf(':'))]]||'settings',",
+		"function closeDetail(){if(detailCur){const b=details[detailCur.tab].back;location.hash=b?b(detailCur.id):detailCur.tab}}",
+		"if(parts[0]==='settings')showSettingsView(setKindView[id.slice(0,id.indexOf(':'))]);",
+		"apiSend('PUT','question-settings/'+targetPath(v.target),{can_ask:canAsk.checked,watchers:watchers,discord:discord.checked})",
+		"apiSend('PUT','question-settings/'+targetPath(target),{can_ask:$('setCanAsk').checked,watchers:watchers,discord:$('setDiscord').checked})",
+		"if(!confirm(v.target+' 설정을 지울까요?'))return;",
+		"apiSend('DELETE','question-settings/'+targetPath(v.target))",
+		"if(v.target!=='default'){",
+		"apiSend('POST','roles/'+targetPath(v.role)+(revoke?'/revoke':'/restore'))",
+		"confirm(revoke?v.role+' 역할을 끊을까요? 이 토큰으로 접속한 세션이 모두 끊깁니다.':v.role+' 역할을 되살릴까요?')",
+		"confirm(v.name+' 노드를 끊을까요? 연결이 바로 끊기고 이 노드의 토큰은 다시 쓸 수 없습니다.')",
+		"apiSend('DELETE','nodes/'+encodeURIComponent(v.name))",
+		"const s=await api('settings');",
+		"$('setAdd').addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();$('setAdd').close()}});",
+		"settings:loadSettingsView,",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("dashboard missing %q", want)
+		}
+	}
+	for _, gone := range []string{`id="nodesBox"`, `id="rolesMsg"`, `id="nodesMsg"`, `function loadSettings(`} {
+		if strings.Contains(body, gone) {
+			t.Errorf("dashboard still has %q", gone)
 		}
 	}
 }
