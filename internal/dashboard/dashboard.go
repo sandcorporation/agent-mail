@@ -3,6 +3,7 @@
 package dashboard
 
 import (
+	_ "embed"
 	"io"
 	"net/http"
 	"strings"
@@ -39,7 +40,13 @@ const (
 // pageHTML is what Page serves: dashboardHTML with the design system
 // stylesheet (assets/sandcorp.css, see DesignCSS) inlined ahead of the page's
 // own <style>, so the page loads nothing besides itself.
-var pageHTML = strings.Replace(dashboardHTML, "<style>", "<style>\n"+DesignCSS()+"</style>\n<style>", 1)
+var pageHTML = strings.Replace(strings.Replace(dashboardHTML, "<style>", "<style>\n"+DesignCSS()+"</style>\n<style>", 1), "<script>\n", "<script>\n"+markdownJS, 1)
+
+// markdownJS is the report body renderer (mdRender), inlined ahead of the
+// page's script; markdown.test.cjs holds its unit tests.
+//
+//go:embed markdown.js
+var markdownJS string
 
 // dashboardHTML is the page without the design system stylesheet. Colours,
 // spacing and radius come from the design tokens (--color-*, --space-*,
@@ -84,6 +91,22 @@ button:disabled{opacity:.55;cursor:default}
 pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13.5px/1.55 var(--font-mono);margin:0}
 .muted{color:var(--color-muted)}
 .empty{color:var(--color-muted);margin:var(--space-3) 0}
+.reqline{margin:0 0 var(--space-2);overflow-wrap:anywhere}
+.md{min-width:0;overflow-wrap:anywhere;line-height:1.55;margin:var(--space-3) 0}
+.md p{white-space:pre-line;margin:var(--space-2) 0}
+.md h3,.md h4,.md h5,.md h6{margin:var(--space-4) 0 var(--space-2)}
+.md ul,.md ol{padding-left:1.4em;margin:var(--space-2) 0}
+.md pre{overflow-x:auto;max-width:100%;padding:var(--space-2) var(--space-3);background:var(--color-surface-2,var(--color-line));border-radius:var(--radius);white-space:pre}
+.md code{font-family:var(--font-mono,ui-monospace,monospace);font-size:.9em;overflow-wrap:anywhere}
+.md pre code{overflow-wrap:normal}
+.md .md-table{overflow-x:auto;max-width:100%;margin:var(--space-2) 0}
+.md table{border-collapse:collapse;width:auto}
+.md th,.md td{border:1px solid var(--color-line);padding:.2rem .5rem;text-align:left;white-space:nowrap}
+.rthread{border-top:1px solid var(--color-line);padding:var(--space-2) 0}
+.rthread ol{list-style:none;margin:var(--space-1) 0 0;padding-left:var(--space-4);border-left:2px solid var(--color-line)}
+.rthread li{margin:var(--space-2) 0}
+.rline{overflow-wrap:anywhere}
+.rbody{margin:var(--space-1) 0 0;white-space:pre-line;overflow-wrap:anywhere;font-size:.9em}
 #notice{margin:var(--space-2) 0;font-size:.9em}
 #notice:empty{display:none}
 .wide{overflow-x:auto}
@@ -298,6 +321,7 @@ table.cards td.cardhide{display:none}
 <button type="button" class="sc-sidenav-item" title="진행" role="tab" id="tab-progress" data-tab="progress" aria-controls="panel-progress" aria-selected="true" tabindex="0"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h3l2-5 2 10 2-5h3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="tab-name sc-sidenav-label">진행</span><span class="tab-count sc-sidenav-count"></span></button>
 <button type="button" class="sc-sidenav-item" title="세션" role="tab" id="tab-sessions" data-tab="sessions" aria-controls="panel-sessions" aria-selected="false" tabindex="-1"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11v7h-11zM6 13.5h4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="tab-name sc-sidenav-label">세션</span><span class="tab-count sc-sidenav-count"></span></button>
 <button type="button" class="sc-sidenav-item" title="메일" role="tab" id="tab-mail" data-tab="mail" aria-controls="panel-mail" aria-selected="false" tabindex="-1"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3.5h12v9H2zM2 4l6 5 6-5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="tab-name sc-sidenav-label">메일</span><span class="tab-count sc-sidenav-count"></span></button>
+<button type="button" class="sc-sidenav-item" title="보고" role="tab" id="tab-reports" data-tab="reports" aria-controls="panel-reports" aria-selected="false" tabindex="-1"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 1.5h6l3 3v10h-9zM9.5 1.5v3h3M5.5 8h5M5.5 10.5h5M5.5 13h3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="tab-name sc-sidenav-label">보고</span><span class="tab-count sc-sidenav-count"></span></button>
 <div class="sc-sidenav-heading" aria-hidden="true">응답</div>
 <button type="button" class="sc-sidenav-item" title="질문" data-wait role="tab" id="tab-questions" data-tab="questions" aria-controls="panel-questions" aria-selected="false" tabindex="-1"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 14.5a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13zM6.3 6a1.8 1.8 0 1 1 2.4 1.7c-.5.2-.7.6-.7 1.1v.5M8 11.2v.1" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="tab-name sc-sidenav-label">질문</span><span class="tab-count sc-sidenav-count"></span></button>
 <button type="button" class="sc-sidenav-item" title="권한 요청" data-wait role="tab" id="tab-permissions" data-tab="permissions" aria-controls="panel-permissions" aria-selected="false" tabindex="-1"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5l5.5 2v4c0 3.5-2.5 6-5.5 7-3-1-5.5-3.5-5.5-7v-4z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="tab-name sc-sidenav-label">권한 요청</span><span class="tab-count sc-sidenav-count"></span></button>
@@ -368,6 +392,11 @@ table.cards td.cardhide{display:none}
 </div>
 <div id="notice" class="muted"></div>
 <table id="mailTbl" class="stack list"><thead><tr><th class="num">#</th><th>제목</th><th>보낸 쪽 → 받는 쪽</th><th>상태</th><th>시각</th></tr></thead><tbody id="list"></tbody></table>
+</section>
+<section id="panel-reports" role="tabpanel" aria-labelledby="tab-reports" tabindex="0" class="card" hidden>
+<div class="toolbar"><h2>보고</h2><button id="reloadReports">새로 고침</button><span id="reportsNote" class="muted" role="status" aria-live="polite"></span></div>
+<div class="listbar"><div class="chips" id="reportChips" role="group" aria-label="상태 고르기"></div></div>
+<table id="reportsTbl" class="stack list"><thead><tr><th>상태</th><th>제목</th><th>보낸 쪽</th><th>시각</th></tr></thead><tbody id="reports"></tbody></table>
 </section>
 <section id="panel-permissions" role="tabpanel" aria-labelledby="tab-permissions" tabindex="0" class="card" hidden>
 <div class="toolbar"><h2>권한 요청</h2><button id="reloadPerms">새로 고침</button><span id="permsNote" class="muted" role="status" aria-live="polite"></span></div>
@@ -813,8 +842,8 @@ registerDetail('mail',{
 // Each tab's loader runs once, the first time the tab is shown; after that the
 // tab's own 「새로 고침」 button reloads it. #33 sets tabLoaders.permissions and
 // #42 sets tabLoaders.questions / tabLoaders.settings (null = nothing to load).
-const tabNames=['progress','sessions','mail','questions','permissions','metrics','terminals','settings'];
-const tabLoaders={progress:null,sessions:loadSessions,metrics:null,mail:initMail,permissions:null,questions:null,settings:null};
+const tabNames=['progress','sessions','mail','reports','questions','permissions','metrics','terminals','settings'];
+const tabLoaders={progress:null,sessions:loadSessions,reports:loadReports,metrics:null,mail:initMail,permissions:null,questions:null,settings:null};
 const tabLoaded=new Set();
 // setTabCount(name,n) shows n as a small count next to the tab name; n
 // null/undefined hides it.
@@ -1296,6 +1325,95 @@ function answerForm(q){
   return form;
 }
 tabLoaders.questions=loadQuestions;
+// ---- 보고 ----
+// GET /api/admin/reports lists the boss roles' reports, newest first. The
+// status is the server's: 진행 중 while a linked directive is open under the
+// answered rule, else 완료. The count on the menu is the 진행 중 reports.
+const reportCols=['상태','제목','보낸 쪽','시각'];
+const reportStatus={open:['진행 중','info'],done:['완료','success']};
+const reportChips=[['all','전체',()=>true],['open','진행 중',r=>r.status==='open'],['done','완료',r=>r.status==='done']];
+let reportsData=null,reportsFilter='all',reportsSeq=0;
+async function refreshReportCount(){
+  try{setTabCount('reports',(await api('reports')).reports.filter(r=>r.status==='open').length||null)}catch(e){}
+}
+async function loadReports(){
+  const seq=++reportsSeq;
+  $('reportsNote').textContent='불러오는 중…';
+  try{
+    const list=(await api('reports')).reports;
+    if(seq!==reportsSeq)return;
+    reportsData=list;
+    setTabCount('reports',list.filter(r=>r.status==='open').length||null);
+    drawReports();
+  }catch(e){if(seq===reportsSeq)$('reportsNote').textContent=e.message}
+}
+function drawReports(){
+  const list=reportsData;if(!list)return;
+  const chips=$('reportChips');chips.replaceChildren();
+  for(const [k,label,f] of reportChips){
+    const b=node('button',label+' ','sc-chip');b.type='button';b.setAttribute('aria-pressed',k===reportsFilter?'true':'false');
+    b.append(node('span',String(list.filter(f).length),'sc-chip-count'));
+    b.onclick=()=>{reportsFilter=k;drawReports()};
+    chips.append(b);
+  }
+  const keep=reportChips.find(c=>c[0]===reportsFilter)[2],shown=list.filter(keep),body=$('reports');
+  keepRowFocus(body,()=>{
+    body.replaceChildren();
+    for(const r of shown)body.append(reportRow(r));
+    if(!shown.length)emptyRow(body,reportCols.length,'보고 없음');
+  });
+  $('reportsNote').textContent=(shown.length===list.length?'':shown.length+' / ')+list.length+'개';
+}
+function reportRow(r){
+  const [label,tone]=reportStatus[r.status]||[r.status,'neutral'];
+  const tr=node('tr','',r.status==='open'?'':'done');
+  const st=cell('');st.append(badge(label,tone));
+  const t=cell('',reportCols[1],'wrap');t.append(node('strong',r.title));
+  if(r.mail&&r.mail.length)t.append(' ',node('span','지시 '+r.mail.length,'muted'));
+  const at=cell(shortWhen(r.created_at),reportCols[3],'nowrap');at.title=when(r.created_at);
+  tr.append(st,t,cell(r.author,reportCols[2]),at);
+  detailRow(tr,'reports',r.id);
+  return tr;
+}
+// A linked thread: the directive with its state, then the replies in order
+// (답 marks one the answered rule counts). Each opens the mail detail.
+function reportThread(t){
+  const wrap=node('div','','rthread');
+  const st=t.open?['진행 중','info']:t.completed?['완료','success']:t.closed?['닫음','neutral']:['답함','success'];
+  wrap.append(reportMail(t.directive,badge(st[0],st[1]),'div'));
+  if(t.replies.length){
+    const ol=node('ol','');
+    for(const m of t.replies)ol.append(reportMail(m,m.answers?badge('답','success'):null,'li'));
+    wrap.append(ol);
+  }
+  return wrap;
+}
+function reportMail(m,b,tag){
+  const box=node(tag,''),line=node('div','','rline');
+  const a=node('a','#'+m.id+' '+(m.subject||'(제목 없음)'));a.href=detailHash('mail',String(m.id),'body');
+  a.onclick=e=>{e.preventDefault();openMessage(m.id)};
+  line.append(a);if(b)line.append(' ',b);
+  box.append(line,node('div',m.sender+' → '+m.recipient+' · '+shortWhen(m.created_at),'muted'));
+  if(m.body)box.append(node('p',m.body.length>300?m.body.slice(0,300)+'…':m.body,'rbody'));
+  return box;
+}
+registerDetail('reports',{
+  list:'보고',kinds:['reports'],
+  load:async id=>{
+    try{return await api('reports/'+encodeURIComponent(id))}
+    catch(e){if(e.status===404)return null;throw e}
+  },
+  head:r=>({title:r.title,badge:reportStatus[r.status]||[r.status,'neutral']}),
+  subs:()=>[['body','보고']],
+  draw:async(r,sub,box)=>{
+    if(r.request){const q=node('p','','reqline');q.append(node('span','요청 ','muted'),document.createTextNode(r.request));box.append(q)}
+    box.append(dl([['보낸 쪽',r.author],['시각',when(r.created_at)],['ID',String(r.id)]]));
+    const md=node('div','','md');md.append(mdRender(r.body));box.append(md);
+    box.append(node('h3','연결된 지시 '+r.threads.length,'sechead'));
+    if(!r.threads.length)box.append(node('p','연결된 지시 없음','empty'));
+    for(const t of r.threads)box.append(reportThread(t));
+  }
+});
 // ---- 결정 (#50) ----
 // The 결정 view of the 질문 tab lists answered questions as decisions. Its
 // filters build one query used both for the list and for the 「JSON 내보내기」
@@ -2031,8 +2149,8 @@ tabLoaders.permissions=loadPermissions;
 // and {type:'change',seq,kinds}; kinds are tab names. The shown tab reloads
 // (not while a field in it has focus), the others reload when next shown.
 // Reconnects back off exponentially (1s to 30s) and resume with boot+after.
-const liveReload={progress:loadProgress,sessions:loadSessions,metrics:loadMetrics,mail:load,permissions:loadPermissions,questions:loadQuestions,settings:loadSettingsView,terminals:loadTerminals};
-const liveCounts={questions:refreshQuestionCount,permissions:refreshPermissionCount,metrics:refreshMetricsCount};
+const liveReload={progress:loadProgress,sessions:loadSessions,reports:loadReports,metrics:loadMetrics,mail:load,permissions:loadPermissions,questions:loadQuestions,settings:loadSettingsView,terminals:loadTerminals};
+const liveCounts={reports:refreshReportCount,questions:refreshQuestionCount,permissions:refreshPermissionCount,metrics:refreshMetricsCount};
 let liveBoot='',liveSeq=0,liveDelay=1000,liveDirty=new Set(),liveStale=new Set(),liveTimer=0,liveDetail=false;
 function liveMark(kinds){
   for(const k of kinds){
@@ -2151,6 +2269,7 @@ $('reloadProgress').onclick=loadProgress;
 $('reloadMetrics').onclick=loadMetrics;
 $('metDays7').onclick=()=>setMetricsDays(7);
 $('metDays30').onclick=()=>setMetricsDays(30);
+$('reloadReports').onclick=()=>loadReports();
 $('reloadQuestions').onclick=()=>{setMsg($('questionsMsg'),'');loadQuestions()};
 $('reloadSettings').onclick=()=>{setMsg($('settingsMsg'),'');loadSettingsView()};
 $('reset').onclick=()=>{$('thread').value='';$('task').value='';mailID='';$('search').value='';$('status').value='';$('role').value='';$('box').value='all';load()};
@@ -2160,6 +2279,7 @@ $('task').addEventListener('keydown',e=>{if(e.key==='Enter'){mailID='';load()}})
 loadMe();
 route();
 if(!tabLoaded.has('questions'))refreshQuestionCount();
+if(!tabLoaded.has('reports'))refreshReportCount();
 if(!tabLoaded.has('metrics'))refreshMetricsCount();
 if(!tabLoaded.has('permissions'))refreshPermissionCount();
 liveConnect();

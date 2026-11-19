@@ -14,10 +14,10 @@ func TestDashboardTabsSkeleton(t *testing.T) {
 	if !strings.Contains(body, `role="tablist"`) {
 		t.Fatal("dashboard has no tablist")
 	}
-	// Tab order matters: 운영 (진행, 세션, 메일), 응답 (질문, 권한 요청),
+	// Tab order matters: 운영 (진행, 세션, 메일, 보고), 응답 (질문, 권한 요청),
 	// 관리 (지표, 터미널, 설정).
 	last := -1
-	for _, name := range []string{"progress", "sessions", "mail", "questions", "permissions", "metrics", "terminals", "settings"} {
+	for _, name := range []string{"progress", "sessions", "mail", "reports", "questions", "permissions", "metrics", "terminals", "settings"} {
 		tab := `id="tab-` + name + `" data-tab="` + name + `" aria-controls="panel-` + name + `"`
 		i := strings.Index(body, tab)
 		if i < 0 {
