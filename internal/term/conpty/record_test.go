@@ -114,14 +114,40 @@ func TestRecordedConPTYOutputMatchesGolden(t *testing.T) {
 			if _, err := os.Stat(rec); err != nil {
 				t.Fatalf("no ConPTY recording for %s: %v", name, err)
 			}
-			got := play(t, readScene(t, rec)).Dump()
-			want, err := os.ReadFile(strings.TrimSuffix(scene, ".vt") + ".golden")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got != string(want) {
+			// The emulator matches the goldens (term's own scene test), so
+			// the scene played here stands for its golden.
+			got := conptyView(play(t, readScene(t, rec)))
+			want := conptyView(play(t, readScene(t, scene)))
+			if got != want {
 				t.Errorf("recorded ConPTY output differs from golden\n--- got\n%s--- want\n%s", got, want)
 			}
 		})
 	}
+}
+
+// conptyView dumps g as ConPTY is held to it. ConPTY leaves the cursor where
+// it was while the cursor is hidden, and paints a blank cell with whatever
+// foreground and weight are current; neither shows on screen, so both are
+// dropped here.
+func conptyView(g term.Grid) string {
+	if g.Cursor.Hidden {
+		g.Cursor.X, g.Cursor.Y = 0, 0
+	}
+	g.History, g.Screen = blankStyles(g.History), blankStyles(g.Screen)
+	return g.Dump()
+}
+
+func blankStyles(rows [][]term.Cell) [][]term.Cell {
+	out := make([][]term.Cell, len(rows))
+	for i, row := range rows {
+		out[i] = append([]term.Cell(nil), row...)
+		for j, c := range out[i] {
+			a := c.Attr
+			if strings.TrimSpace(c.Text) != "" || a.Reverse || a.Underline || a.Strike {
+				continue
+			}
+			out[i][j].Attr = term.Attr{Bg: a.Bg}
+		}
+	}
+	return out
 }

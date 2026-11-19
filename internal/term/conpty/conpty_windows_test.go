@@ -489,7 +489,7 @@ func (p teeProc) Read(b []byte) (int, error) {
 
 // TestGoldenScenesConPTY plays every golden scene through a real program in
 // a ConPTY and checks the keeper's Grid against the same golden files the
-// emulator and tmux meet. With -conpty.record DIR it also writes each
+// emulator and tmux meet, as conptyView sees both. With -conpty.record DIR it also writes each
 // scene's raw ConPTY output, the testdata/conpty recordings.
 func TestGoldenScenesConPTY(t *testing.T) {
 	paths, err := filepath.Glob(filepath.Join("..", "testdata", "scenes", "*.vt"))
@@ -567,13 +567,13 @@ func TestGoldenScenesConPTY(t *testing.T) {
 				if err := k.Input(name, []byte("n")); err != nil {
 					t.Fatal(err)
 				}
-				want := play(t, term.Scene{Cols: sc.Cols, Rows: sc.Rows, Steps: sc.Steps[:n+1]}).Dump()
+				want := conptyView(play(t, term.Scene{Cols: sc.Cols, Rows: sc.Rows, Steps: sc.Steps[:n+1]}))
 				deadline := time.Now().Add(5 * time.Second)
-				for screen(name).Dump() != want && time.Now().Before(deadline) {
+				for conptyView(screen(name)) != want && time.Now().Before(deadline) {
 					time.Sleep(20 * time.Millisecond)
 				}
 				quiet()
-				if got := screen(name).Dump(); got != want {
+				if got := conptyView(screen(name)); got != want {
 					t.Errorf("step %d\n--- conpty\n%s--- emulator\n%s", n+1, got, want)
 				}
 			}
@@ -588,12 +588,8 @@ func TestGoldenScenesConPTY(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			golden, err := os.ReadFile(strings.TrimSuffix(path, ".vt") + ".golden")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := screen(name).Dump(); got != string(golden) {
-				t.Errorf("grid differs from golden\n--- got\n%s--- want\n%s", got, golden)
+			if got, want := conptyView(screen(name)), conptyView(play(t, sc)); got != want {
+				t.Errorf("grid differs from the scene's golden\n--- got\n%s--- want\n%s", got, want)
 			}
 		})
 	}

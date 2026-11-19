@@ -54,6 +54,20 @@ func (c *Client) dropLocked() error {
 // call sends one request and reads its answer. A request that cannot be
 // written on a kept connection (the keeper was replaced since) is sent once
 // more on a fresh one; nothing is retried once written.
+// closedByPeer reports a connection the other end closed: a clean EOF, or on
+// Windows a reset or abort of a socket closed with data still unread.
+func closedByPeer(err error) bool {
+	if errors.Is(err, io.EOF) {
+		return true
+	}
+	for _, e := range peerResets {
+		if errors.Is(err, e) {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *Client) call(ctx context.Context, req request) (response, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -82,7 +96,7 @@ func (c *Client) call(ctx context.Context, req request) (response, error) {
 		var resp response
 		err = readJSON(c.r, &resp)
 		stop()
-		if errors.Is(err, io.EOF) && !fresh && attempt == 0 && ctx.Err() == nil {
+		if closedByPeer(err) && !fresh && attempt == 0 && ctx.Err() == nil {
 			// The keeper answers every request it reads before reading the
 			// next, so a kept connection closed without an answer was
 			// closed by a keeper that went away (replaced or restarted)
