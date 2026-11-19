@@ -16,4 +16,7 @@ type MailEvent struct {
 	// AddressedTo is the label address the sender used, for label mail.
 	AddressedTo string  `json:"addressed_to,omitempty"`
 	Body        *string `json:"body,omitempty"`
+	// AnswersDirective: the mail answers a directive the recipient sent, and
+	// that directive's state (#275), as on wire.Message.
+	AnswersDirective *DirectiveRef `json:"answers_directive,omitempty"`
 }

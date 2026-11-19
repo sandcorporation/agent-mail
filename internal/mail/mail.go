@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -300,6 +301,10 @@ func (s *Service) List(w http.ResponseWriter, r *http.Request, role string) {
 			out = append(out, m)
 		}
 	}
+	rows.Close()
+	if box == "inbox" {
+		s.withAnswers(role, out)
+	}
 	writeJSON(w, out)
 }
 
@@ -315,6 +320,9 @@ func (s *Service) Read(w http.ResponseWriter, r *http.Request, role string, id i
 	}
 	if v, err := s.View(id); err == nil {
 		m = v
+	}
+	if m.Recipient == role {
+		m.AnswersDirective = s.AnswersDirective(role, id)
 	}
 	writeJSON(w, m)
 }
@@ -416,15 +424,12 @@ func (s *Service) Reply(w http.ResponseWriter, r *http.Request, p identity.Princ
 // recipient marked it complete or it was closed (no_reply), else open.
 // Replies never close it (mail.AnsweredRule version 2).
 func (s *Service) directiveState(id int64) string {
-	var status string
-	var noReply bool
-	if s.db.QueryRow(`SELECT `+StatusExpr+`,m.no_reply FROM messages m `+StatusJoin+` WHERE m.id=?`, id).Scan(&status, &noReply) != nil {
+	st, ok := s.directiveStateOf(id)
+	if !ok {
 		return ""
 	}
-	if noReply || IsCompleteStatus(status) {
-		return "done"
-	}
-	return "open"
+	st.Replied = true
+	return stateName(st)
 }
 
 // isReplyToSender: mail replyTo was received by role and box sent it. A group
@@ -473,7 +478,18 @@ func (s *Service) Watch(w http.ResponseWriter, r *http.Request, role string) {
 		}
 		rows.Close()
 		if len(ids) > 0 {
-			writeJSON(w, map[string]any{"messages": ids, "cursor": ids[len(ids)-1]})
+			resp := map[string]any{"messages": ids, "cursor": ids[len(ids)-1]}
+			// answers_directive: message ID -> the directive it answers (#275).
+			answers := map[string]*wire.DirectiveRef{}
+			for _, id := range ids {
+				if ref := s.AnswersDirective(role, id); ref != nil {
+					answers[strconv.FormatInt(id, 10)] = ref
+				}
+			}
+			if len(answers) > 0 {
+				resp["answers_directive"] = answers
+			}
+			writeJSON(w, resp)
 			return
 		}
 		if time.Now().After(deadline) {
