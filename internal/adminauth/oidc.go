@@ -22,6 +22,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -65,7 +66,9 @@ type oidcLogin struct {
 }
 
 // configureOIDC reads the SWITCHBOARD_OIDC_* settings and SWITCHBOARD_PUBLIC_URL.
-// The error names the missing or invalid settings, never their values.
+// The client secret is SWITCHBOARD_OIDC_CLIENT_SECRET or the content (trimmed) of
+// the file SWITCHBOARD_OIDC_CLIENT_SECRET_FILE names (one of them). The error
+// names the missing or invalid settings, never their values.
 func configureOIDC(getenv func(string) string) (*oidcLogin, error) {
 	get := func(name string) string { return strings.TrimSpace(getenv(config.EnvPrefix + name)) }
 	o := &oidcLogin{
@@ -85,6 +88,19 @@ func configureOIDC(getenv func(string) string) (*oidcLogin, error) {
 			o.emails[strings.ToLower(a)] = true
 		}
 	}
+	var invalid []string
+	if file := get("OIDC_CLIENT_SECRET_FILE"); file != "" {
+		switch b, err := os.ReadFile(file); {
+		case o.clientSecret != "":
+			invalid = append(invalid, config.EnvPrefix+"OIDC_CLIENT_SECRET_FILE (set it or "+config.EnvPrefix+"OIDC_CLIENT_SECRET, not both)")
+		case err != nil:
+			invalid = append(invalid, config.EnvPrefix+"OIDC_CLIENT_SECRET_FILE (cannot read the file)")
+		case strings.TrimSpace(string(b)) == "":
+			invalid = append(invalid, config.EnvPrefix+"OIDC_CLIENT_SECRET_FILE (the file is empty)")
+		default:
+			o.clientSecret = strings.TrimSpace(string(b))
+		}
+	}
 	scope := get("OIDC_SCOPES")
 	if scope == "" {
 		scope = oidcDefaultScope
@@ -92,9 +108,9 @@ func configureOIDC(getenv func(string) string) (*oidcLogin, error) {
 	o.scopes = strings.Fields(scope)
 	public := strings.TrimRight(get("PUBLIC_URL"), "/")
 
-	var missing, invalid []string
+	var missing []string
 	for name, v := range map[string]string{"OIDC_ISSUER": o.issuer, "OIDC_CLIENT_ID": o.clientID, "OIDC_CLIENT_SECRET": o.clientSecret, "PUBLIC_URL": public} {
-		if v == "" {
+		if v == "" && !(name == "OIDC_CLIENT_SECRET" && len(invalid) > 0) {
 			missing = append(missing, config.EnvPrefix+name)
 		}
 	}
@@ -346,10 +362,11 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	case cl.Email != "" && o.emails[strings.ToLower(cl.Email)] && bool(cl.EmailVerified):
 		user = strings.ToLower(cl.Email)
 	case cl.Email != "" && o.emails[strings.ToLower(cl.Email)]:
-		refuse("email not verified")
+		refuse("email not verified (" + oidcSubPrefix + truncate(idt.Subject, 128) + ")")
 		return
 	default:
-		refuse("not on the allowlist")
+		// The subject is what an allowlist entry for this user would be.
+		refuse("not on the allowlist (" + oidcSubPrefix + truncate(idt.Subject, 128) + ")")
 		return
 	}
 	if err := s.startSession(w, r, user, modeOIDC); err != nil {

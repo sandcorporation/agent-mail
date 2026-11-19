@@ -1,5 +1,6 @@
 // Package adminauth is admin login: the modes, sessions, built-in users with
-// password and TOTP, the login rate limit, OIDC, and the `admin` CLI.
+// password and TOTP, the login rate limit, OIDC, the first-run setup page of
+// a hosting PC instance, and the `admin` CLI.
 package adminauth
 
 // Admin login (#71 §1). Every /api/admin/* request and the dashboard page go

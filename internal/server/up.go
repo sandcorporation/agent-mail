@@ -67,7 +67,7 @@ func Up(v, dataDir string, port int, nodeName string) error {
 		ln.Close()
 		return err
 	}
-	run(v, ln, func(ctx context.Context, s *Server) error {
+	run(v, ln, dir, func(ctx context.Context, s *Server) error {
 		token, err := node.EnsureTokenFile(tokenFile)
 		if err != nil {
 			return fmt.Errorf("up: node %s: %w", nodeName, err)
