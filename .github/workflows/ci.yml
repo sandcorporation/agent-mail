@@ -51,9 +51,6 @@ jobs:
       - name: ConPTY backend and keeper
         shell: bash
         run: go test -count=1 -v ./internal/term/conpty/ -args -conpty.record="$RUNNER_TEMP/conpty"
-      - name: Keeper shutdown stress (#259, temporary)
-        shell: bash
-        run: go test -count=200 -run '^(TestDoneMeansListenerClosed|TestServeAfterShutdown|TestShutdownStopsEveryChild)$' ./internal/term/conpty/
       - uses: actions/upload-artifact@v4
         if: always()
         with:
