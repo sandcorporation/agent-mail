@@ -221,6 +221,7 @@ table.stack tbody tr:hover td{background:none}
 <button type="button" role="tab" id="tab-permissions" data-tab="permissions" aria-controls="panel-permissions" aria-selected="false" tabindex="-1"><span class="tab-name">권한 요청</span><span class="tab-count"></span></button>
 <button type="button" role="tab" id="tab-questions" data-tab="questions" aria-controls="panel-questions" aria-selected="false" tabindex="-1"><span class="tab-name">질문</span><span class="tab-count"></span></button>
 <button type="button" role="tab" id="tab-settings" data-tab="settings" aria-controls="panel-settings" aria-selected="false" tabindex="-1"><span class="tab-name">설정</span><span class="tab-count"></span></button>
+<button type="button" role="tab" id="tab-terminals" data-tab="terminals" aria-controls="panel-terminals" aria-selected="false" tabindex="-1" hidden><span class="tab-name">터미널</span><span class="tab-count"></span></button>
 </nav>
 <section id="panel-progress" role="tabpanel" aria-labelledby="tab-progress" tabindex="0" class="card">
 <div class="toolbar"><h2>진행</h2><button id="reloadProgress">새로 고침</button><span id="progressNote" class="muted" role="status" aria-live="polite"></span></div>
@@ -321,6 +322,22 @@ table.stack tbody tr:hover td{background:none}
 <div id="rolesMsg" class="msg" role="status" aria-live="polite"></div>
 <div class="wide"><table id="rolesTbl" class="stack"><thead><tr><th>역할</th><th>등록</th><th>끊은 때</th><th></th></tr></thead><tbody id="rolesTable"></tbody></table></div>
 </section>
+<section id="panel-terminals" role="tabpanel" aria-labelledby="tab-terminals" tabindex="0" class="card" hidden>
+<div class="toolbar"><h2>터미널</h2><button id="reloadTerminals">새로 고침</button><span id="terminalsNote" class="muted"></span></div>
+<div id="terminalsMsg" class="msg" role="status" aria-live="polite"></div>
+<div class="wide"><table id="terminalsTbl" class="stack"><thead><tr><th>노드</th><th>역할</th><th>라벨</th><th>상태</th><th>이후</th><th>폴더</th><th>재시작</th><th>마지막 종료</th><th></th></tr></thead><tbody id="terminals"></tbody></table></div>
+<form id="termForm" class="settings-form">
+<label>노드 <input id="termNode" required autocomplete="off" autocapitalize="off" spellcheck="false" value="local"></label>
+<label>역할 <input id="termBase" required autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="team/worker"></label>
+<label>프로필 <input id="termProfile" required autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="team-worker"></label>
+<label>폴더 <input id="termDir" required autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="/home/me/work/app"></label>
+<label>라벨 <input id="termLabel" autocomplete="off"></label>
+<label>부모 <input id="termParent" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="team/boss"></label>
+<label>재시작 <select id="termRestart"><option value="always">always</option><option value="on-failure">on-failure</option><option value="never">never</option></select></label>
+<label>인자 <input id="termArgs" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="--model opus"></label>
+<div class="row"><button type="submit">추가</button><button type="button" id="termClear">비우기</button></div>
+</form>
+</section>
 <script>
 const sessionLabel={idle:'유휴',busy:'바쁨',compacting:'compact 중',unknown:'모름',offline:'오프라인'};
 function sessionStatus(st){
@@ -341,6 +358,8 @@ async function loadMe(){
     const r=await fetch('/api/admin/me',{credentials:'same-origin',headers:{'Accept':'application/json'}});
     if(!r.ok)return;
     const m=await r.json();adminMode=m.mode||'';hostingOn=m.hosting===true;
+    $('tab-terminals').hidden=!hostingOn;
+    if(hostingOn&&location.hash==='#terminals')route();
     $('whoName').textContent=m.mode==='legacy'?'프록시':m.user;
     $('whoName').title=$('whoName').textContent;
     $('logout').hidden=m.mode==='legacy';
@@ -454,7 +473,7 @@ function card(m){
 // Each tab's loader runs once, the first time the tab is shown; after that the
 // tab's own 「새로 고침」 button reloads it. #33 sets tabLoaders.permissions and
 // #42 sets tabLoaders.questions / tabLoaders.settings (null = nothing to load).
-const tabNames=['progress','sessions','metrics','mail','permissions','questions','settings'];
+const tabNames=['progress','sessions','metrics','mail','permissions','questions','settings','terminals'];
 const tabLoaders={progress:null,sessions:loadSessions,metrics:null,mail:initMail,permissions:null,questions:null,settings:null};
 const tabLoaded=new Set();
 // setTabCount(name,n) shows n as a small count next to the tab name; n
@@ -863,6 +882,49 @@ async function loadSettings(){
     $('settingsNote').textContent=rows.length+'개';
   }catch(e){$('settingsNote').textContent=e.message}
 }
+// ---- 터미널 (hosting) ----
+const termCols=['노드','역할','라벨','상태','이후','폴더','재시작','마지막 종료'];
+const termState={running:'실행 중',starting:'시작 중',stopped:'멈춤',waiting:'대기',crashloop:'반복 실패',unknown:'모름','node offline':'노드 오프라인'};
+async function termAct(v,method,path,body,done){
+  try{await apiSend(method,'terminals/'+v.id+path,body);setMsg($('terminalsMsg'),done,'ok');loadTerminals()}
+  catch(e){setMsg($('terminalsMsg'),e.message,'err')}
+}
+async function loadTerminals(){
+  $('terminalsNote').textContent='불러오는 중…';
+  try{
+    const rows=await api('terminals');
+    const body=$('terminals');body.replaceChildren();
+    for(const v of rows){
+      const rt=v.runtime||{},st=rt.state||'unknown';
+      const want=v.desired==='stopped'&&st!=='stopped'&&st!=='node offline'?' → 멈춤':'';
+      const tr=node('tr',st==='node offline'?'offline':'');
+      cells(tr,termCols,[v.node,v.base,v.label||'-',(termState[st]||st)+want,when(rt.since),v.directory,String(rt.restarts||0),rt.last_exit===null||rt.last_exit===undefined?'-':String(rt.last_exit)],
+        ['','','',st==='running'?'st-idle':st==='node offline'||st==='unknown'?'st-offline':st==='crashloop'?'st-error':'','','dir','num','num']);
+      const dir=tr.children[5];dir.title=v.directory;dir.textContent='\u200e'+v.directory+'\u200e';
+      const act=node('td','');
+      if(v.desired==='stopped'){const b=node('button','시작');b.type='button';b.onclick=()=>termAct(v,'PUT','',{desired:'running'},v.base+' 시작');act.append(b)}
+      else{
+        const b=node('button','멈춤');b.type='button';b.onclick=()=>termAct(v,'PUT','',{desired:'stopped'},v.base+' 멈춤');act.append(b);
+        const r=node('button','재시작');r.type='button';r.onclick=()=>termAct(v,'POST','/restart',undefined,v.base+' 재시작');act.append(r);
+      }
+      const del=node('button','삭제');del.type='button';
+      del.onclick=()=>{if(confirm(v.node+' '+v.base+' '+v.directory+' 세션을 지울까요?'))termAct(v,'DELETE','',undefined,v.base+' 삭제')};
+      act.append(del);tr.append(act);body.append(tr);
+    }
+    if(!rows.length)emptyRow(body,9,'터미널 없음');
+    $('terminalsNote').textContent=rows.length+'개';
+  }catch(e){$('terminalsNote').textContent=e.message}
+}
+tabLoaders.terminals=loadTerminals;
+$('termForm').onsubmit=async e=>{
+  e.preventDefault();
+  const args=$('termArgs').value.split(/\s+/).filter(Boolean);
+  const rec={node:$('termNode').value.trim(),base:$('termBase').value.trim(),profile:$('termProfile').value.trim(),directory:$('termDir').value.trim(),label:$('termLabel').value.trim(),parent:$('termParent').value.trim(),restart:$('termRestart').value,args:args};
+  try{await apiSend('POST','terminals',rec);setMsg($('terminalsMsg'),rec.base+' 추가','ok');$('termForm').reset();loadTerminals()}
+  catch(err){setMsg($('terminalsMsg'),err.message,'err')}
+};
+$('termClear').onclick=()=>{$('termForm').reset();setMsg($('terminalsMsg'),'')};
+$('reloadTerminals').onclick=loadTerminals;
 // targetPath keeps the slashes of a target (svc/coordinator, svc/*) as path separators.
 function targetPath(t){return t.split('/').map(encodeURIComponent).join('/')}
 $('settingsForm').onsubmit=async e=>{
@@ -983,7 +1045,7 @@ tabLoaders.permissions=loadPermissions;
 // and {type:'change',seq,kinds}; kinds are tab names. The shown tab reloads
 // (not while a field in it has focus), the others reload when next shown.
 // Reconnects back off exponentially (1s to 30s) and resume with boot+after.
-const liveReload={progress:loadProgress,sessions:loadSessions,metrics:loadMetrics,mail:load,permissions:loadPermissions,questions:loadQuestions,settings:()=>{loadSettings();loadRoles()}};
+const liveReload={progress:loadProgress,sessions:loadSessions,metrics:loadMetrics,mail:load,permissions:loadPermissions,questions:loadQuestions,settings:()=>{loadSettings();loadRoles()},terminals:loadTerminals};
 const liveCounts={questions:refreshQuestionCount,permissions:refreshPermissionCount,metrics:refreshMetricsCount};
 let liveBoot='',liveSeq=0,liveDelay=1000,liveDirty=new Set(),liveStale=new Set(),liveTimer=0;
 function liveMark(kinds){
@@ -1046,25 +1108,28 @@ function route(){
     focusQuestion(id);
     return;
   }
-  showTab(tabNames.includes(h)?h:'progress');
+  showTab(visibleTabs().includes(h)?h:'progress');
 }
 // selectTab(name) also takes 'decisions' (the 결정 view of the 질문 tab).
 function selectTab(name){
   if(location.hash==='#'+name)route();else location.hash=name;
 }
 for(const n of tabNames)$('tab-'+n).onclick=()=>selectTab(n);
+// visibleTabs leaves out 터미널 unless hosting is on.
+function visibleTabs(){return tabNames.filter(n=>n!=='terminals'||hostingOn)}
 $('tabs').addEventListener('keydown',e=>{
-  const i=tabNames.findIndex(n=>$('tab-'+n)===document.activeElement);
+  const tabs=visibleTabs();
+  const i=tabs.findIndex(n=>$('tab-'+n)===document.activeElement);
   if(i<0)return;
   let j;
-  if(e.key==='ArrowRight')j=(i+1)%tabNames.length;
-  else if(e.key==='ArrowLeft')j=(i-1+tabNames.length)%tabNames.length;
+  if(e.key==='ArrowRight')j=(i+1)%tabs.length;
+  else if(e.key==='ArrowLeft')j=(i-1+tabs.length)%tabs.length;
   else if(e.key==='Home')j=0;
-  else if(e.key==='End')j=tabNames.length-1;
+  else if(e.key==='End')j=tabs.length-1;
   else return;
   e.preventDefault();
-  selectTab(tabNames[j]);
-  $('tab-'+tabNames[j]).focus();
+  selectTab(tabs[j]);
+  $('tab-'+tabs[j]).focus();
 });
 window.addEventListener('hashchange',route);
 

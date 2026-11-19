@@ -71,12 +71,19 @@ func send(t *testing.T, base, method, path string, cookie *http.Cookie, headers 
 // cookie for alice.
 func signedIn(t *testing.T, hosting bool) (string, *http.Cookie) {
 	t.Helper()
+	_, base, c := signedInServer(t, hosting)
+	return base, c
+}
+
+// signedInServer is signedIn with the server itself.
+func signedInServer(t *testing.T, hosting bool) (*Server, string, *http.Cookie) {
+	t.Helper()
 	s, secret, now := builtinServer(t)
 	s.hosting = hosting
 	c := sessionFrom(t, doAuth(s, authReq{method: "POST", path: "/auth/login", body: loginBody("alice", "correct horse battery", codeAt(t, secret, *now, 0))}))
 	srv := httptest.NewServer(s.handler())
 	t.Cleanup(srv.Close)
-	return srv.URL, c
+	return s, srv.URL, c
 }
 
 func TestHostingOffRoutesAre404LikeUnknownRoutes(t *testing.T) {
@@ -111,19 +118,24 @@ func TestHostingOffRoutesAre404LikeUnknownRoutes(t *testing.T) {
 	}
 }
 
-// hostingServed are the hosting routes #184 serves; the rest stay stubs.
+// hostingServed are the hosting routes #184 and #186 serve; the rest stay
+// stubs.
 var hostingServed = map[string]bool{
 	"GET /api/admin/terminals": true, "POST /api/admin/terminals": true,
 	"PUT /api/admin/terminals/7": true, "DELETE /api/admin/terminals/7": true,
-	"GET /api/admin/nodes": true,
+	"POST /api/admin/terminals/7/restart": true,
+	"GET /api/admin/nodes":                true,
 }
 
 func TestHostingOnStubsStayBehindAdminSignIn(t *testing.T) {
 	base, cookie := signedIn(t, true)
 	for _, p := range hostingPaths {
 		if strings.HasPrefix(p.path, "/api/node/") {
-			if got := send(t, base, p.method, p.path, nil, nil); got.code != http.StatusNotImplemented {
-				t.Errorf("%s %s = %d, want the 501 stub", p.method, p.path, got.code)
+			// The node channel answers only a node token.
+			for _, who := range []map[string]string{nil, {"Authorization": "Bearer secret-a", "X-Switchboard-Role": "a"}} {
+				if got := send(t, base, p.method, p.path, cookie, who); got.code != http.StatusUnauthorized {
+					t.Errorf("%s %s without a node token = %d, want 401", p.method, p.path, got.code)
+				}
 			}
 			continue
 		}
@@ -132,7 +144,7 @@ func TestHostingOnStubsStayBehindAdminSignIn(t *testing.T) {
 		}
 		got := send(t, base, p.method, p.path, cookie, nil)
 		if served := hostingServed[p.method+" "+p.path]; served != (got.code != http.StatusNotImplemented) {
-			t.Errorf("%s %s admin = %d (served by #184: %v)", p.method, p.path, got.code, served)
+			t.Errorf("%s %s admin = %d (served: %v)", p.method, p.path, got.code, served)
 		}
 	}
 }

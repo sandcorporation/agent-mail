@@ -30,7 +30,8 @@ type HostedSession struct {
 // HostedRuntime is the observed state of a hosted session, held in host
 // memory and reported by its node.
 type HostedRuntime struct {
-	State         string `json:"state"` // "unknown" until the node reports
+	State         string `json:"state"` // "unknown" until the node reports, "node offline" while its node is away
+	Since         *int64 `json:"since"` // when the host saw State change
 	PID           int    `json:"pid"`
 	Run           int    `json:"run"`
 	StartedAt     *int64 `json:"started_at"`
@@ -75,4 +76,42 @@ type NodeView struct {
 	CreatedAt  int64  `json:"created_at"`
 	LastSeenAt *int64 `json:"last_seen_at"`
 	RevokedAt  *int64 `json:"revoked_at"`
+}
+
+// Node channel (#173): one WebSocket from a node to GET /api/node/socket,
+// carrying NodeFrame JSON both ways.
+const (
+	// Host to node.
+	NodeAssign  = "assign"  // Sessions: the node's full list of records
+	NodeRestart = "restart" // ID: restart one session with resume
+	// Node to host.
+	NodeHelloType = "hello" // Hello: who the node is
+	NodeStateType = "state" // States: what the node observes, every record
+)
+
+// NodeFrame is one message on the node channel; Type says which fields it
+// carries.
+type NodeFrame struct {
+	Type     string            `json:"type"`
+	Sessions []HostedSession   `json:"sessions,omitempty"`
+	ID       string            `json:"id,omitempty"`
+	Hello    *NodeHello        `json:"hello,omitempty"`
+	States   []HostedNodeState `json:"states,omitempty"`
+}
+
+// NodeHello is what a node says about itself when it attaches.
+type NodeHello struct {
+	Name    string `json:"name"`
+	Machine string `json:"machine"`
+	OS      string `json:"os"`
+	Version string `json:"version"`
+	Backend string `json:"backend"`
+}
+
+// HostedNodeState is one record's observed state as its node reports it.
+// Launched tells the host to resume (not start) the conversation next time.
+type HostedNodeState struct {
+	ID       string        `json:"id"`
+	Launched bool          `json:"launched"`
+	Runtime  HostedRuntime `json:"runtime"`
 }

@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -73,6 +74,9 @@ type State struct {
 // Wire is the state as the host shows it.
 func (s State) Wire() wire.HostedRuntime {
 	rt := wire.HostedRuntime{State: s.Observed, PID: s.PID, Run: s.Run, LastExit: s.LastExit}
+	if s.Run > 1 {
+		rt.Restarts = s.Run - 1
+	}
 	if !s.StartedAt.IsZero() {
 		ms := s.StartedAt.UnixMilli()
 		rt.StartedAt = &ms
@@ -294,6 +298,40 @@ func (n *Node) launch(ctx context.Context, r Record, s *state) error {
 	s.Run++
 	s.Observed, s.PID, s.StartedAt = ObservedStarting, 0, n.cfg.Now()
 	return nil
+}
+
+// Restart stops the record's session and launches it again at once with
+// resume, without backoff. A record that should not run, or is not assigned,
+// is left alone.
+func (n *Node) Restart(ctx context.Context, id string) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	i := slices.IndexFunc(n.records, func(r Record) bool { return r.ID == id })
+	if i < 0 || n.records[i].Desired == DesiredStopped {
+		return nil
+	}
+	r := n.records[i]
+	s := n.stateOf(r)
+	name := TerminalName(id)
+	infos, err := n.backend.List(ctx)
+	if err != nil {
+		return fmt.Errorf("node: list sessions: %w", err)
+	}
+	for _, in := range infos {
+		if in.Name != name {
+			continue
+		}
+		s.Launched = true
+		if in.Alive {
+			if err := n.backend.Stop(ctx, name, StopGrace); err != nil {
+				return fmt.Errorf("node: stop %s: %w", name, err)
+			}
+		}
+		if err := n.backend.Forget(ctx, name); err != nil && !errors.Is(err, term.ErrNoSession) {
+			return fmt.Errorf("node: forget %s: %w", name, err)
+		}
+	}
+	return n.launch(ctx, r, s)
 }
 
 // Default terminal size when a record carries none.
