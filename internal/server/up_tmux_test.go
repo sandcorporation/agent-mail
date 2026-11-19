@@ -17,8 +17,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
+
 	"github.com/sandcorporation/switchboard/internal/adminauth"
+	"github.com/sandcorporation/switchboard/internal/node/fakeagent"
 	"github.com/sandcorporation/switchboard/internal/store"
+	"github.com/sandcorporation/switchboard/internal/term"
 	"github.com/sandcorporation/switchboard/internal/term/tmux"
 	"github.com/sandcorporation/switchboard/internal/wire"
 )
@@ -65,7 +69,8 @@ func newUpRig(t *testing.T) *upRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	script := fmt.Sprintf("#!/bin/sh\nSWITCHBOARD_FAKE_AGENT=1 SWITCHBOARD_FAKE_AGENT_DIR=%s exec %s \"$@\"\n", filepath.Join(r.dir, "transcripts"), exe)
+	script := fmt.Sprintf("#!/bin/sh\nSWITCHBOARD_FAKE_AGENT=1 SWITCHBOARD_FAKE_AGENT_DIR=%s SWITCHBOARD_FAKE_AGENT_SCENES=%s exec %s \"$@\"\n",
+		filepath.Join(r.dir, "transcripts"), fakeagent.ScenesDir(), exe)
 	if err := os.WriteFile(agent, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -237,4 +242,74 @@ func TestUpRunsAHostedSessionInTmuxAcrossRestarts(t *testing.T) {
 	if strings.Contains(string(screen), "SWITCHBOARD_TOKEN") || !strings.Contains(string(screen), "env SWITCHBOARD_PROFILE=team-worker") {
 		t.Errorf("child environment:\n%s", screen)
 	}
+}
+
+// tmuxScreen is the session's screen and history as tmux renders it.
+func (r *upRig) tmuxScreen(id string) string {
+	out, _ := exec.Command("tmux", "-L", r.socket, "capture-pane", "-p", "-S", "-", "-t", "=sb-"+id+":").Output()
+	return string(out)
+}
+
+// TestUpTerminalViewShowsTheTmuxScreen opens the browser terminal socket of a
+// fake agent in tmux: the snapshot carries what it printed before anyone
+// looked and the golden screen of its last draw, then the stream follows.
+func TestUpTerminalViewShowsTheTmuxScreen(t *testing.T) {
+	r := newUpRig(t)
+	work := t.TempDir()
+	body, _ := json.Marshal(wire.HostedSessionCreate{Node: "local", Base: "team/worker", Profile: "team-worker", Directory: work, Desired: "stopped"})
+	got := adminCall(t, r.base(), "POST", "/api/admin/terminals", r.cookie, true, string(body))
+	var rec wire.HostedSession
+	if err := json.Unmarshal([]byte(got.body), &rec); err != nil {
+		t.Fatalf("create = %d %s", got.code, got.body)
+	}
+	id := rec.ID
+	// The size of the golden scene, so its screen compares as is.
+	db, err := store.Open(filepath.Join(r.dir, upDatabase))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`UPDATE hosted_sessions SET cols=24, rows=6 WHERE id=?`, id)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := adminCall(t, r.base(), "PUT", "/api/admin/terminals/"+id, r.cookie, true, `{"desired":"running"}`); got.code != http.StatusOK {
+		t.Fatalf("start = %d %s", got.code, got.body)
+	}
+	r.wait("the agent started", func() bool {
+		return r.session(id).Runtime.State == "running" && strings.Contains(r.tmuxScreen(id), "argv")
+	})
+	if err := exec.Command("tmux", "-L", r.socket, "send-keys", "-t", "=sb-"+id+":", "draw full-redraw", "Enter").Run(); err != nil {
+		t.Fatal(err)
+	}
+	r.wait("the scene drawn", func() bool { return strings.Contains(r.tmuxScreen(id), "list the files ok") })
+
+	tk := adminCall(t, r.base(), "POST", "/api/admin/terminals/"+id+"/ticket", r.cookie, true, `{"mode":"view"}`)
+	var ticket wire.TerminalTicket
+	if err := json.Unmarshal([]byte(tk.body), &ticket); err != nil {
+		t.Fatalf("ticket = %d %s", tk.code, tk.body)
+	}
+	c, code := dialTerminal(t, r.base(), id, ticket.Ticket, r.cookie, r.base())
+	if c == nil {
+		t.Fatalf("socket = %d", code)
+	}
+	var hello wire.TerminalMessage
+	if err := json.Unmarshal(readFrame(t, c, websocket.MessageText), &hello); err != nil || hello.State != "running" || hello.Cols != 24 || hello.Rows != 6 {
+		t.Fatalf("hello %+v %v", hello, err)
+	}
+	emu := term.NewEmulator(hello.Cols, hello.Rows, 1000)
+	_, _ = emu.Write(readFrame(t, c, websocket.MessageBinary))
+	_, golden := scene(t, "full-redraw")
+	if got := screenDump(emu.Grid(-1)); got != golden {
+		t.Errorf("snapshot screen\n%s--- golden\n%s", got, golden)
+	}
+	if !strings.Contains(emu.Grid(-1).Dump(), "argv") {
+		t.Errorf("history before the viewer attached is missing:\n%s", emu.Grid(-1).Dump())
+	}
+
+	// The stream follows: a line typed into tmux comes back as output.
+	if err := exec.Command("tmux", "-L", r.socket, "send-keys", "-t", "=sb-"+id+":", "hi there", "Enter").Run(); err != nil {
+		t.Fatal(err)
+	}
+	readUntil(t, c, emu, func([]wire.TerminalMessage) bool { return strings.Contains(emu.Grid(0).Dump(), "echo hi there") })
 }

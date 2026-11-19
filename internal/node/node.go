@@ -129,6 +129,18 @@ func (n *Node) Assign(recs []Record) {
 	}
 }
 
+// owns reports whether id is one of the assigned records.
+func (n *Node) owns(id string) bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for _, r := range n.records {
+		if r.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 // States reports the observed state of every assigned record, in
 // assignment order.
 func (n *Node) States() []State {

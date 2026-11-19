@@ -155,6 +155,24 @@ func (s *Service) Identify(r *http.Request) (Identity, bool) {
 	return s.lookupSession(c.Value)
 }
 
+// Session is Identify plus a key for the sign-in itself (the hash of its
+// session cookie; "proxy" under the transition rule), so what is issued to
+// one sign-in can be refused to another.
+func (s *Service) Session(r *http.Request) (Identity, string, bool) {
+	who, ok := s.Identify(r)
+	if !ok {
+		return who, "", false
+	}
+	if who.Mode == ModeLegacy {
+		return who, "proxy", true
+	}
+	c, err := r.Cookie(sessionCookie)
+	if err != nil {
+		return Identity{}, "", false
+	}
+	return who, store.TokenHash(c.Value), true
+}
+
 func (s *Service) sessionTTL() time.Duration {
 	if s.cfg.sessionTTL > 0 {
 		return s.cfg.sessionTTL

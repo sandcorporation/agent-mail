@@ -13,6 +13,7 @@ import (
 
 	"github.com/sandcorporation/switchboard/internal/adminauth"
 	"github.com/sandcorporation/switchboard/internal/config"
+	"github.com/sandcorporation/switchboard/internal/dashboard"
 	"github.com/sandcorporation/switchboard/internal/hosting"
 	"github.com/sandcorporation/switchboard/internal/identity"
 	"github.com/sandcorporation/switchboard/internal/store"
@@ -115,10 +116,29 @@ func (s *Server) hostingAdmin(w http.ResponseWriter, r *http.Request, path strin
 	hostingStub(w)
 }
 
+// assets serves the dashboard's vendored files (the terminal view's
+// xterm.js) while hosting is on; with it off they are an unknown path.
+func (s *Server) assets(w http.ResponseWriter, r *http.Request) {
+	if !s.hosting {
+		s.root(w, r)
+		return
+	}
+	dashboard.Assets(w, r)
+}
+
 // hostingHub is the node channel over this server's database; its changes
 // publish the live kind "terminals".
 func (s *Server) hostingHub() *hosting.Hub {
-	s.hubOnce.Do(func() { s.nodeHub = hosting.NewHub(s.hostingService(), s.live.Publish) })
+	s.hubOnce.Do(func() {
+		s.nodeHub = hosting.NewHub(s.hostingService(), s.live.Publish)
+		a := s.termLimits
+		a.Session = func(r *http.Request) (string, string, bool) {
+			who, key, ok := s.adminAuth().Session(r)
+			return who.User, key, ok
+		}
+		a.Origin = s.liveOriginAllowed
+		s.nodeHub.SetAdmin(a)
+	})
 	return s.nodeHub
 }
 

@@ -92,15 +92,42 @@ type NodeJoined struct {
 }
 
 // Node channel (#173): one WebSocket from a node to GET /api/node/socket,
-// carrying NodeFrame JSON both ways.
+// carrying NodeFrame JSON both ways and, from node to host, binary terminal
+// frames (EncodeTermFrame) for terminals a browser viewer is attached to.
 const (
 	// Host to node.
 	NodeAssign  = "assign"  // Sessions: the node's full list of records
 	NodeRestart = "restart" // ID: restart one session with resume
+	NodeAttach  = "attach"  // ID: a browser viewer wants this terminal: stream it, starting with a fresh snapshot
+	NodeDetach  = "detach"  // ID: no viewer is left: stop streaming it
 	// Node to host.
 	NodeHelloType = "hello" // Hello: who the node is
 	NodeStateType = "state" // States: what the node observes, every record
 )
+
+// Terminal frames are the binary messages of the node channel, node to host:
+// one byte kind, one byte id length, the record id, then the VT bytes.
+const (
+	TermSnapshot byte = 's' // the screen and history, serialised (term.Grid.Snapshot)
+	TermOutput   byte = 'o' // the terminal's output since the last frame
+)
+
+// EncodeTermFrame builds a terminal frame. id must be at most 255 bytes.
+func EncodeTermFrame(kind byte, id string, payload []byte) []byte {
+	b := make([]byte, 0, 2+len(id)+len(payload))
+	b = append(b, kind, byte(len(id)))
+	b = append(b, id...)
+	return append(b, payload...)
+}
+
+// DecodeTermFrame splits a terminal frame; ok is false for a malformed one.
+func DecodeTermFrame(b []byte) (kind byte, id string, payload []byte, ok bool) {
+	if len(b) < 2 || len(b) < 2+int(b[1]) {
+		return 0, "", nil, false
+	}
+	n := 2 + int(b[1])
+	return b[0], string(b[2:n]), b[n:], true
+}
 
 // NodeFrame is one message on the node channel; Type says which fields it
 // carries.
@@ -127,4 +154,26 @@ type HostedNodeState struct {
 	ID       string        `json:"id"`
 	Launched bool          `json:"launched"`
 	Runtime  HostedRuntime `json:"runtime"`
+}
+
+// TerminalTicketRequest is the body of POST /api/admin/terminals/{id}/ticket.
+type TerminalTicketRequest struct {
+	Mode string `json:"mode"` // "view" or "input"
+}
+
+// TerminalTicket is a one-time ticket for the browser terminal socket.
+type TerminalTicket struct {
+	Ticket    string `json:"ticket"`
+	Mode      string `json:"mode"`
+	ExpiresAt int64  `json:"expires_at"` // unix milliseconds
+}
+
+// TerminalMessage is a text frame of the browser terminal socket, host to
+// browser: "hello" first (State, Cols, Rows), then "state" on changes.
+// Binary frames carry VT bytes: a snapshot, then output.
+type TerminalMessage struct {
+	Type  string `json:"type"`
+	State string `json:"state"`
+	Cols  int    `json:"cols,omitempty"`
+	Rows  int    `json:"rows,omitempty"`
 }
