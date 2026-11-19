@@ -40,7 +40,9 @@ type upRig struct {
 	tmuxDir string
 }
 
-func newUpRig(t *testing.T) *upRig {
+// newUpRig starts the rig; extraEnv is added to up's environment (and so to
+// every agent it launches).
+func newUpRig(t *testing.T, extraEnv ...string) *upRig {
 	t.Helper()
 	if _, err := tmux.Check(context.Background(), ""); err != nil {
 		if os.Getenv("SWITCHBOARD_TEST_TMUX") == "require" {
@@ -108,6 +110,7 @@ func newUpRig(t *testing.T) *upRig {
 	r.env = append(append(os.Environ(), clearNewEnv...), "SWITCHBOARD_TEST_CLI=1", "SWITCHBOARD_TEST_ARGS="+string(args),
 		"SWITCHBOARD_ADMIN_AUTH=builtin", "SWITCHBOARD_HOSTING_AGENT="+agent, "SWITCHBOARD_HOSTING_MACHINE=pc-1", "TMUX_TMPDIR="+d,
 		"SWITCHBOARD_TOKEN=role-secret-of-the-operator")
+	r.env = append(r.env, extraEnv...)
 	r.start()
 
 	code, err := adminauth.TOTPCode(secret, time.Now().Unix()/adminauth.TOTPStep)
@@ -380,5 +383,63 @@ func TestUpTerminalInputTypesIntoTmux(t *testing.T) {
 	var hits int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM terminal_log WHERE session LIKE ? OR admin_user LIKE ? OR kind LIKE ?`, "%"+line+"%", "%"+line+"%", "%"+line+"%").Scan(&hits); err != nil || hits != 0 {
 		t.Errorf("typed text in terminal_log: %d %v", hits, err)
+	}
+}
+
+// The fake agent plays the plugin with its profile: the hosted session is
+// team/worker-1 in the list, /clear moves the record to the new
+// conversation without a relaunch, a crash relaunches it with --resume of
+// the new id under the same number, and an up restart keeps all of it.
+func TestUpHostedSessionHoldsItsSlotAndFollowsClear(t *testing.T) {
+	conf := t.TempDir()
+	if err := os.WriteFile(filepath.Join(conf, "team-worker.json"), []byte(`{"role":"team/worker","token":"worker-secret"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := newUpRig(t, "SWITCHBOARD_CONFIG_DIR="+conf, "SWITCHBOARD_FAKE_AGENT_HEARTBEAT=200ms")
+	work := t.TempDir()
+	code, out, errOut := hostCLI(t, filepath.Join(r.dir, upDatabase), "add", "--node", "local", "--base", "team/worker", "--profile", "team-worker", "--dir", work)
+	if code != 0 {
+		t.Fatalf("host add = %d %s %s", code, out, errOut)
+	}
+	id := strings.TrimSpace(out)
+	online := func(sid string) func() bool {
+		return func() bool {
+			h := r.session(id)
+			return h.Slot != nil && h.Slot.Role == "team/worker-1" && h.Presence == wire.PresenceOnline && (sid == "" || h.Slot.SessionID == sid)
+		}
+	}
+	first := r.session(id).AgentSessionID
+	r.wait("team/worker-1 online", online(first))
+	pid := r.panePID(id)
+
+	if err := exec.Command("tmux", "-L", r.socket, "send-keys", "-t", "=sb-"+id+":", "clear", "Enter").Run(); err != nil {
+		t.Fatal(err)
+	}
+	r.wait("the cleared conversation followed", func() bool {
+		h := r.session(id)
+		return h.AgentSessionID != first && h.Slot != nil && h.Slot.SessionID == h.AgentSessionID
+	})
+	next := r.session(id).AgentSessionID
+	if !r.session(id).Launched || r.panePID(id) != pid {
+		t.Fatalf("following relaunched: pane %q (was %q), %+v", r.panePID(id), pid, r.session(id))
+	}
+
+	// A crash relaunches into the followed conversation, same number.
+	if err := exec.Command("tmux", "-L", r.socket, "send-keys", "-t", "=sb-"+id+":", "exit 1", "Enter").Run(); err != nil {
+		t.Fatal(err)
+	}
+	r.wait("relaunched", func() bool { return r.session(id).Runtime.Run >= 2 && r.session(id).Runtime.State == "running" })
+	r.wait("team/worker-1 online again", online(next))
+	if screen := r.tmuxScreen(id); !strings.Contains(screen, "argv --resume "+next) {
+		t.Fatalf("relaunch did not resume %s:\n%s", next, screen)
+	}
+
+	// An up restart keeps the process, its number and its conversation.
+	pid = r.panePID(id)
+	r.stop()
+	r.start()
+	r.wait("adopted with its slot", online(next))
+	if h := r.session(id); h.AgentSessionID != next || r.panePID(id) != pid {
+		t.Fatalf("after up restart pane %q (was %q), %+v", r.panePID(id), pid, h)
 	}
 }

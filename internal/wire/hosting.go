@@ -36,6 +36,30 @@ type HostedSession struct {
 	CreatedAt  int64         `json:"created_at"`
 	UpdatedAt  int64         `json:"updated_at"`
 	Runtime    HostedRuntime `json:"runtime"`
+	// Slot is the numbered slot the session's plugin holds (the host's
+	// list only; nodes never get it), and Presence what it says:
+	// PresenceOnline while its lease runs, PresenceProcessAlive when the
+	// lease ended but the process runs, PresenceOffline otherwise.
+	Slot     *HostedSlot `json:"slot,omitempty"`
+	Presence string      `json:"presence,omitempty"`
+}
+
+// Presence values of a HostedSession.
+const (
+	PresenceOnline       = "online"
+	PresenceOffline      = "offline"
+	PresenceProcessAlive = "offline (process alive)"
+)
+
+// HostedSlot is the slot a hosted session's plugin registered: the role
+// with its number (team/worker-1), the conversation it reported and when
+// its lease ends (Unix ms).
+type HostedSlot struct {
+	Role       string `json:"role"`
+	Directory  string `json:"directory"`
+	SessionID  string `json:"session_id,omitempty"`
+	LeaseUntil int64  `json:"lease_until"`
+	Online     bool   `json:"online"`
 }
 
 // HostedRuntime is the observed state of a hosted session, held in host

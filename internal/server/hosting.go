@@ -149,8 +149,22 @@ func (s *Server) hostingHub() *hosting.Hub {
 		}
 		sort.Strings(bosses)
 		s.nodeHub.SetNotify(s.hostingNotify, bosses)
+		s.nodeHub.SetSlotOf(s.hostingSlotOf)
 	})
 	return s.nodeHub
+}
+
+// hostingSlotOf is the hub's SlotOf, read from presence's slots: the slot
+// of base at machine in directory or its session-marked form. Seen is the
+// last register or heartbeat (the lease end minus one lease).
+func (s *Server) hostingSlotOf(base, machine, directory string) (hosting.Slot, bool, error) {
+	p := s.presence()
+	v, ok, err := p.FolderSlot(base, machine, directory)
+	if !ok || err != nil {
+		return hosting.Slot{}, false, err
+	}
+	return hosting.Slot{Role: v.Role, Directory: v.Directory, SessionID: v.SessionID, LeaseUntil: v.LeaseExpiresAt,
+		Seen: v.LeaseExpiresAt.Add(-p.LeaseLength()), Live: v.LeaseExpiresAt.After(s.now())}, true, nil
 }
 
 // hostingNotify is the hub's Notify: one system mail per role's mailbox in

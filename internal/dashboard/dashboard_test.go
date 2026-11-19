@@ -220,3 +220,28 @@ func TestDashboardTerminalsTabOnlyWithHosting(t *testing.T) {
 		t.Error("dashboard renders HTML from strings")
 	}
 }
+
+// Hosted sessions: the Terminals tab shows the slot role and presence, and
+// the Sessions tab marks a session a hosted record holds with a link to its
+// terminal row (#terminal=<id>), rendered as text.
+func TestDashboardSessionsMarkHostedSessions(t *testing.T) {
+	w := httptest.NewRecorder()
+	Page(w, httptest.NewRequest("GET", "/", nil))
+	body := w.Body.String()
+	for _, want := range []string{
+		`const hosted=hostingOn?await hostedBySlot():new Map();`,
+		`if(v.slot&&v.slot.role)m.set(v.slot.role,v)`,
+		`const h=hosted.get(v.role);`,
+		`node('a','터미널','hosted');a.href='#terminal='+encodeURIComponent(h.id)`,
+		`if(h.startsWith('terminal=')){`,
+		`v.slot&&v.slot.role?v.slot.role:v.base`,
+		`'offline (process alive)':'오프라인 (프로세스 살아 있음)'`,
+		`if(v.id===termFocus){tr.classList.add('focus')`,
+		`const termCols=['노드','역할','접속',`,
+		`<thead><tr><th>노드</th><th>역할</th><th>접속</th><th>라벨</th>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("dashboard missing %q", want)
+		}
+	}
+}
