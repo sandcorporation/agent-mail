@@ -358,6 +358,10 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 				s.mail().Reply(w, r, who, id)
 				return
 			}
+			if parts[2] == "close" {
+				s.mail().Close(w, role, id)
+				return
+			}
 			if parts[2] == "ack" || parts[2] == "complete" || parts[2] == "read" {
 				s.mail().Status(w, r, role, id, parts[2])
 				return
@@ -421,6 +425,17 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	if rest, ok := strings.CutPrefix(path, "invites"); ok && (rest == "" || strings.HasPrefix(rest, "/")) {
 		s.ids().AdminInvitesAPI(w, r, who.User, strings.TrimPrefix(rest, "/"))
+		return
+	}
+	if rest, ok := strings.CutPrefix(path, "messages/"); ok && r.Method == http.MethodPost {
+		// POST /api/admin/messages/{id}/close: the dashboard closes a directive.
+		idText, action, _ := strings.Cut(rest, "/")
+		id, err := wire.ParseID(idText)
+		if err != nil || action != "close" {
+			http.NotFound(w, r)
+			return
+		}
+		s.mail().Close(w, "", id)
 		return
 	}
 	if r.Method != http.MethodGet {

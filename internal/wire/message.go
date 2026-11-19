@@ -42,3 +42,10 @@ func ValidRole(role string) bool {
 }
 
 func ParseID(x string) (int64, error) { return strconv.ParseInt(x, 10, 64) }
+
+// Closed is the answer of POST /api/messages/{id}/close and
+// /api/admin/messages/{id}/close: the directive needs no answer any more.
+type Closed struct {
+	ID     int64 `json:"id"`
+	Closed bool  `json:"closed"`
+}
