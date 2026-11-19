@@ -9,6 +9,14 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+# A new commit on a pull request cancels that pull request's older run (#272).
+# Every other run gets a group of its own and is never cancelled: a work push,
+# a manual run, and promote.yml's check (under workflow_call github.event_name
+# and github.workflow are the caller's, "push" and "promote", so it lands in
+# ci-promote-<run_id>, which promote.yml never uses).
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-{0}-{1}', github.workflow, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   test:
     runs-on: ubuntu-latest
