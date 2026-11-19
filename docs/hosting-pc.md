@@ -643,33 +643,36 @@ Reinstall: a removed node (revoked in the dashboard, Settings) cannot come back 
 
 Instead of names, passwords and TOTP, the instance can sign admins in with an OpenID Connect provider of the installer's choice. Do this after W8 / L8: the checks there sign in as `pcadmin`, which the oidc mode no longer accepts (`sblogin` gets `401`).
 
-At the provider, register a web application (confidential client) with:
+At the provider, register the instance as a public client (native or desktop application, no client secret). Many providers accept a loopback `http` redirect URI only for public clients (RFC 8252), and a program on a PC cannot keep a secret anyway. Register a confidential client (web application, with a secret) only at a provider that has no public clients or refuses loopback redirects for them.
 
-| Setting | Value |
-| --- | --- |
-| Redirect URI | `http://127.0.0.1:8090/auth/callback` (the instance's port) |
-| Grant | authorization code, with PKCE `S256` |
-| Scopes | `openid email profile` (`openid` is required; `email` is what an email entry below needs) |
+| Setting | Public client (default) | Confidential client |
+| --- | --- | --- |
+| Redirect URI | `http://127.0.0.1:8090/auth/callback` (the instance's port) | same |
+| Grant | authorization code | authorization code |
+| PKCE | `S256` | `S256` |
+| Token endpoint auth method | `none` | `client_secret_basic` or `client_secret_post` |
+| Scopes | `openid email profile` (`openid` is required; `email` is what an email entry below needs) | same |
+| ID token signing | an algorithm the provider's discovery lists in `id_token_signing_alg_values_supported` (RS256, ES256, EdDSA, …) | same |
+| Settings | no `SWITCHBOARD_OIDC_CLIENT_SECRET*` | `SWITCHBOARD_OIDC_CLIENT_SECRET_FILE` |
 
-Then note the issuer and the client ID, and copy the client secret.
+Then note the issuer and the client ID (and, for a confidential client, copy the client secret). `up.log` says which kind is in force at start: `oidc: public client (PKCE)` or `oidc: confidential client`.
 
 | Provider | `SWITCHBOARD_OIDC_ISSUER` |
 | --- | --- |
-| Google | `https://accounts.google.com` |
+| Google (confidential client) | `https://accounts.google.com` |
 | Microsoft Entra ID | `https://login.microsoftonline.com/<tenant-id>/v2.0` |
-| Self-hosted (Keycloak, Authentik, …) | its issuer, e.g. `https://auth.example/realms/<realm>` or `https://auth.example/application/o/<app>/` |
+| Self-hosted (Keycloak, Authentik, …) | its issuer, e.g. `https://id.example/realms/<realm>` or `https://id.example/application/o/<app>/` |
 
 `SWITCHBOARD_OIDC_ADMINS` is the allow list, comma separated. An entry is an email, matched against the ID token's `email` claim only when the token also says `email_verified: true`, or `sub:<subject>`, matched against the `sub` claim. Providers that send no `email_verified` (Entra ID among them) need `sub:` entries. A refused sign-in logs its subject in `up.log` (`oidc: login refused: "not on the allowlist (sub:…)"`); add that entry and restart `up` to let that account in. Removing an entry and restarting ends that admin's sessions.
 
-The client secret stays in a file in the data directory (`SWITCHBOARD_OIDC_CLIENT_SECRET_FILE`), not in `up.cmd` or the unit. Open the dashboard at `http://127.0.0.1:8090/` exactly (not `localhost`): the redirect URI and the sign-in cookies are tied to that address.
+Open the dashboard at `http://127.0.0.1:8090/` exactly (not `localhost`): the redirect URI and the sign-in cookies are tied to that address.
 
 Windows (fill in the first three lines):
 
 ```powershell
-$issuer = 'https://accounts.google.com'
+$issuer = 'https://id.example/realms/home'
 $clientId = '<client-id>'
 $admins = 'you@example.com'
-[Net.NetworkCredential]::new('', (Read-Host 'Client secret' -AsSecureString)).Password | Set-Content "$data\oidc-client-secret"
 @"
 @echo off
 set SWITCHBOARD_ADMIN_AUTH=oidc
@@ -677,7 +680,6 @@ set SWITCHBOARD_INSECURE_COOKIE=1
 set "SWITCHBOARD_PUBLIC_URL=http://127.0.0.1:$port"
 set "SWITCHBOARD_OIDC_ISSUER=$issuer"
 set "SWITCHBOARD_OIDC_CLIENT_ID=$clientId"
-set "SWITCHBOARD_OIDC_CLIENT_SECRET_FILE=%~dp0oidc-client-secret"
 set "SWITCHBOARD_OIDC_ADMINS=$admins"
 set "SWITCHBOARD_CONFIG_DIR=%~dp0config"
 set "SWITCHBOARD_HOSTING_AGENT=$agent"
@@ -692,10 +694,9 @@ curl.exe -sS -o NUL -w '%{redirect_url}\n' "http://127.0.0.1:$port/auth/login"
 Linux (fill in the first three lines):
 
 ```sh
-SBISSUER='https://accounts.google.com'
+SBISSUER='https://id.example/realms/home'
 SBCLIENTID='<client-id>'
 SBADMINS='you@example.com'
-(umask 077; read -rsp 'Client secret: ' s; echo; printf '%s\n' "$s" > "$SBDATA/oidc-client-secret")
 cat > "$HOME/.config/systemd/user/switchboard-pc.service" <<EOF
 [Unit]
 Description=switchboard hosting instance on this PC
@@ -706,7 +707,6 @@ Environment=SWITCHBOARD_INSECURE_COOKIE=1
 Environment=SWITCHBOARD_PUBLIC_URL=http://127.0.0.1:$SBPORT
 Environment=SWITCHBOARD_OIDC_ISSUER=$SBISSUER
 Environment=SWITCHBOARD_OIDC_CLIENT_ID=$SBCLIENTID
-Environment=SWITCHBOARD_OIDC_CLIENT_SECRET_FILE=$SBDATA/oidc-client-secret
 Environment=SWITCHBOARD_OIDC_ADMINS=$SBADMINS
 Environment=SWITCHBOARD_CONFIG_DIR=$SBDATA/config
 Environment=SWITCHBOARD_HOSTING_AGENT=$AGENT
@@ -726,9 +726,11 @@ sbwait 60 sbhealth
 curl -sS -o /dev/null -w '%{redirect_url}\n' "http://127.0.0.1:$SBPORT/auth/login"
 ```
 
+For a confidential client, keep the secret in a file in the data directory, not in `up.cmd` or the unit, and add one setting to the block before running it. Windows: run `[Net.NetworkCredential]::new('', (Read-Host 'Client secret' -AsSecureString)).Password | Set-Content "$data\oidc-client-secret"` and add the line `set "SWITCHBOARD_OIDC_CLIENT_SECRET_FILE=%~dp0oidc-client-secret"` to `up.cmd`. Linux: run `(umask 077; read -rsp 'Client secret: ' s; echo; printf '%s\n' "$s" > "$SBDATA/oidc-client-secret")` and add the line `Environment=SWITCHBOARD_OIDC_CLIENT_SECRET_FILE=$SBDATA/oidc-client-secret` to the unit.
+
 Check: the last line prints the provider's authorization address with `redirect_uri=http%3A%2F%2F127.0.0.1%3A8090%2Fauth%2Fcallback`. Opening `http://127.0.0.1:8090/` then shows one 로그인 button, which goes to the provider and back signed in.
 
-If it fails: health times out → `up.log` names the missing or invalid `SWITCHBOARD_OIDC_*` setting (never its value). The provider says the redirect URI does not match → register exactly the URI above, with `127.0.0.1` and the port. `403 login failed` after the provider → `up.log` has the reason (`oidc: login refused: …`): `not on the allowlist (sub:…)` or `email not verified (sub:…)` → add that `sub:` entry to the admins line and run the block again; `state mismatch` or `no flow cookie` → the dashboard was opened at another address than `http://127.0.0.1:<port>/`. To go back to names and passwords, run W6 / L6 again.
+If it fails: health times out → `up.log` names the missing or invalid `SWITCHBOARD_OIDC_*` setting (never its value). The provider says the redirect URI does not match → register exactly the URI above, with `127.0.0.1` and the port. `403 login failed` with `code exchange failed` in `up.log` → the registration and the settings disagree on the client kind: a public client needs auth method `none` and no secret setting, a confidential client the secret file. `id token rejected` → the provider signs ID tokens with an algorithm its discovery does not list. `403 login failed` after the provider → `up.log` has the reason (`oidc: login refused: …`): `not on the allowlist (sub:…)` or `email not verified (sub:…)` → add that `sub:` entry to the admins line and run the block again; `state mismatch` or `no flow cookie` → the dashboard was opened at another address than `http://127.0.0.1:<port>/`. To go back to names and passwords, run W6 / L6 again.
 
 Providers that only speak OAuth 2.0 (GitHub and similar) are not supported: they issue no ID token and have no issuer discovery.
 
