@@ -61,6 +61,12 @@ func e2eBinary(t *testing.T, dir string) string {
 		}
 		return abs
 	}
+	return e2eBuild(t, dir, "e2e")
+}
+
+// e2eBuild builds switchboard into dir with version as its version string.
+func e2eBuild(t *testing.T, dir, version string) string {
+	t.Helper()
 	goTool, err := exec.LookPath("go")
 	if err != nil {
 		goTool = filepath.Join(runtime.GOROOT(), "bin", "go")
@@ -72,7 +78,7 @@ func e2eBinary(t *testing.T, dir string) string {
 	if runtime.GOOS == "windows" {
 		bin += ".exe"
 	}
-	cmd := exec.Command(goTool, "build", "-o", bin, "-ldflags", "-X main.version=e2e", "github.com/sandcorporation/switchboard/cmd/switchboard")
+	cmd := exec.Command(goTool, "build", "-o", bin, "-ldflags", "-X main.version="+version, "github.com/sandcorporation/switchboard/cmd/switchboard")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
