@@ -85,6 +85,22 @@ jobs:
           echo "FAIL lines: $(grep -c -- '--- FAIL' "$RUNNER_TEMP/r0.txt")"
           grep -o -- '--- FAIL: [A-Za-z0-9]*' "$RUNNER_TEMP/r0.txt" | sort | uniq -c; echo "RemoveAll lines: $(grep -c RemoveAll "$RUNNER_TEMP/r0.txt")"; grep -m3 -B1 'RemoveAll\|_test.go:[0-9]*:' "$RUNNER_TEMP/r0.txt" | cut -c1-220
           git checkout -- internal/term/conpty
+      - name: Slow keeper exit, x5 (#261, temporary)
+        shell: bash
+        continue-on-error: true
+        run: |
+          set +e
+          go test -count=5 -v -run '^TestCleanupWaitsForTheReplacedKeeper$' ./internal/term/conpty/ > "$RUNNER_TEMP/h.txt" 2>&1; echo "exit=$?"
+          grep -- '--- \(PASS\|FAIL\)\|RemoveAll\|temp dir after' "$RUNNER_TEMP/h.txt" | cut -c1-220
+      - name: Keeper tests x100 (#261, temporary)
+        shell: bash
+        continue-on-error: true
+        run: |
+          set +e
+          go test -timeout 40m -count=100 -run 'TestKeeper' ./internal/term/conpty/ > "$RUNNER_TEMP/r.txt" 2>&1; echo "exit=$?"
+          echo "FAIL lines: $(grep -c -- '--- FAIL' "$RUNNER_TEMP/r.txt")"
+          echo "RemoveAll lines: $(grep -c RemoveAll "$RUNNER_TEMP/r.txt")"
+          tail -n 2 "$RUNNER_TEMP/r.txt"
       - name: ConPTY backend and keeper
         shell: bash
         run: go test -count=1 -v ./internal/term/conpty/ -args -conpty.record="$RUNNER_TEMP/conpty"

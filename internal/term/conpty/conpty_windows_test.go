@@ -55,6 +55,18 @@ func runKeeper(args []string) int {
 		return 2
 	}
 	v, _ := os.ReadFile(o.LogFile + ".version")
+	// <log file>.hold makes the keeper process keep keeper.log open that
+	// long after Run returns: a keeper slow to exit once its pipe is gone.
+	if h, err := os.ReadFile(o.LogFile + ".hold"); err == nil {
+		if d, err := time.ParseDuration(strings.TrimSpace(string(h))); err == nil {
+			if f, err := os.OpenFile(o.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
+				defer func() {
+					time.Sleep(d)
+					_ = f.Close()
+				}()
+			}
+		}
+	}
 	if err := conpty.Run(o, strings.TrimSpace(string(v))); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -469,6 +481,33 @@ func TestKeeperOfAnotherVersionIsReplaced(t *testing.T) {
 	}
 	if ki, err := c2.Version(ctx(t)); err != nil || ki.Version != "v2" {
 		t.Fatalf("version %+v %v", ki, err)
+	}
+}
+
+// TestCleanupWaitsForTheReplacedKeeper: a replaced keeper still holds
+// keeper.log after its pipe is gone until its process exits; keeperOpts'
+// cleanup waits for that, so the temp dir is removed (#261). The v1 keeper
+// here exits 3 s late, past the 2 s TempDir cleanup retries.
+func TestCleanupWaitsForTheReplacedKeeper(t *testing.T) {
+	var dir string
+	t.Run("replace", func(t *testing.T) {
+		o := keeperOpts(t, "v1")
+		dir = filepath.Dir(o.LogFile)
+		hold := o.LogFile + ".hold"
+		if err := os.WriteFile(hold, []byte("3s"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		connect(t, o, "v1")
+		if err := os.Remove(hold); err != nil {
+			t.Fatal(err)
+		}
+		setVersion(t, o, "v2")
+		if _, how := connect(t, o, "v2"); how != conpty.Replaced {
+			t.Fatalf("keeper %s", how)
+		}
+	})
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("temp dir after the keepers' cleanup: %v", err)
 	}
 }
 
