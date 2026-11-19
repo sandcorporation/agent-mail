@@ -99,7 +99,10 @@ func Init(db *sql.DB) error {
 	if e = migrateHandoffs(db); e != nil {
 		return e
 	}
-	return migrateRoleAliases(db)
+	if e = migrateRoleAliases(db); e != nil {
+		return e
+	}
+	return migrateHosting(db)
 }
 
 func HasColumn(db *sql.DB, table, column string) (bool, error) {
@@ -434,5 +437,14 @@ func InTx(ctx context.Context, db *sql.DB, f func(*sql.Tx) error) error {
 // new role.
 func migrateRoleAliases(db *sql.DB) error {
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS role_aliases(alias TEXT PRIMARY KEY, role TEXT NOT NULL, created_at TEXT NOT NULL)`)
+	return err
+}
+
+// migrateHosting adds the terminal hosting tables (#173): hosted_sessions,
+// the host's records of what should run on a node, and nodes, the node
+// registry. Both stay empty unless hosting is used. Times are Unix ms.
+func migrateHosting(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS hosted_sessions(id TEXT PRIMARY KEY, node TEXT NOT NULL, base TEXT NOT NULL, label TEXT NOT NULL DEFAULT '', parent TEXT NOT NULL DEFAULT '', profile TEXT NOT NULL, directory TEXT NOT NULL, agent_session_id TEXT NOT NULL, launched INTEGER NOT NULL DEFAULT 0, args TEXT NOT NULL DEFAULT '[]', env TEXT NOT NULL DEFAULT '{}', restart TEXT NOT NULL DEFAULT 'always', desired TEXT NOT NULL DEFAULT 'running', cols INTEGER NOT NULL DEFAULT 120, rows INTEGER NOT NULL DEFAULT 40, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE(node, base, directory));
+CREATE TABLE IF NOT EXISTS nodes(name TEXT PRIMARY KEY, token_hash TEXT NOT NULL, machine TEXT NOT NULL DEFAULT '', os TEXT NOT NULL DEFAULT '', version TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, last_seen_at INTEGER, revoked_at INTEGER);`)
 	return err
 }

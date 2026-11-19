@@ -45,6 +45,7 @@ type command struct {
 	args     string // positional synopsis, e.g. "ID"
 	nargs    int    // exact number of positional arguments (at most, with optArgs)
 	optArgs  bool   // the positional arguments may be left out
+	extra    bool   // arguments after -- are passed through (parsedArgs.extra), not positional
 	synopsis string // extra usage text after the positional arguments
 	summary  string
 	options  []option
@@ -195,6 +196,18 @@ var commands = []command{
 			{"--status", "STATUS", "list: only pending, answered or withdrawn questions"},
 			optJSON, optProfile,
 		}},
+	{name: "host", args: "ACTION [ID]", nargs: 2, optArgs: true, extra: true, synopsis: "(ACTION: add | list | start ID | stop ID | remove ID) [-- AGENT ARGS...]",
+		summary: "Manage hosted sessions in this instance's database (DB_PATH, not the container default): add a record, list them, set one to run or stop, remove one",
+		options: []option{
+			{"--node", "NAME", "add: node the session runs on"},
+			{"--base", "ROLE", "add: base role (must exist)"},
+			{"--profile", "NAME", "add: credential profile on the node (SWITCHBOARD_PROFILE)"},
+			{"--dir", "PATH", "add: absolute working directory on the node"},
+			{"--label", "TEXT", "add: label (SWITCHBOARD_LABEL)"},
+			{"--parent", "ROLE", "add: parent role (SWITCHBOARD_PARENT)"},
+			{"--restart", "POLICY", "add: always (default), on-failure or never"},
+			optJSON,
+		}},
 	{name: "admin", args: "ACTION NAME", nargs: 2, synopsis: "(ACTION: create | passwd | totp-reset | disable) NAME",
 		summary: "Manage built-in dashboard admins in the server database (DB_PATH; run inside the server container); create and passwd read the password from the terminal or the first line of stdin",
 		options: []option{optJSON}},
@@ -222,6 +235,11 @@ func findCommand(name string) (command, bool) {
 	return command{}, false
 }
 
+// HostFunc runs `host ACTION [ID]` against the server's database, which the
+// client never opens, so the binary supplies it. add is the record for
+// `host add`; id names the record for start, stop and remove.
+type HostFunc func(action, id string, add wire.HostedSessionCreate, jsonOut bool, stdout io.Writer) (int, error)
+
 // AdminFunc runs `admin ACTION NAME [--json]`. Admin users live in the
 // server's database, which the client never opens, so the binary supplies it.
 type AdminFunc func(action, name string, jsonOut bool, stdin io.Reader, stdout, stderr io.Writer) (int, error)
@@ -229,12 +247,13 @@ type AdminFunc func(action, name string, jsonOut bool, stdin io.Reader, stdout, 
 var (
 	version string    // build version, from Run
 	admin   AdminFunc // the admin command, from Run
+	host    HostFunc  // the host command, from Run
 )
 
 // Run runs the client command in args (the arguments after the program name)
 // and returns the process exit code.
-func Run(args []string, buildVersion string, adminCmd AdminFunc) int {
-	version, admin = buildVersion, adminCmd
+func Run(args []string, buildVersion string, adminCmd AdminFunc, hostCmd HostFunc) int {
+	version, admin, host = buildVersion, adminCmd, hostCmd
 	return runCLI(args)
 }
 
@@ -308,6 +327,11 @@ func dispatch(args []string) (int, error) {
 	p, err := parseCommandArgs(cmd, rest)
 	if err != nil {
 		return 0, usagef("%s: %s (see '%s %s --help')", name, err.Error(), progName(), name)
+	}
+	if name == "host" {
+		// Its --profile names the hosted session's profile, not this
+		// client's credentials.
+		return cliHost(p, os.Stdout)
 	}
 	if v, ok := p.values["--profile"]; ok {
 		profileFlag = v
@@ -403,6 +427,7 @@ func dispatch(args []string) (int, error) {
 type parsedArgs struct {
 	values map[string]string
 	pos    []string
+	extra  []string // after --, for a command with extra
 }
 
 func (p parsedArgs) bool(name string) bool { _, ok := p.values[name]; return ok }
@@ -417,6 +442,10 @@ func parseCommandArgs(cmd command, args []string) (parsedArgs, error) {
 	}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
+		if a == "--" && cmd.extra {
+			p.extra = append([]string{}, args[i+1:]...)
+			break
+		}
 		if a == "--" {
 			p.pos = append(p.pos, args[i+1:]...)
 			break
@@ -457,6 +486,9 @@ func parseCommandArgs(cmd command, args []string) (parsedArgs, error) {
 
 func hasHelp(args []string) bool {
 	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
 		if arg == "-h" || arg == "--help" {
 			return true
 		}

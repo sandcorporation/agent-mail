@@ -349,7 +349,7 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	path := strings.TrimPrefix(r.URL.Path, "/api/admin/")
 	if s.hosting && hostingAdminPath(path) {
-		hostingStub(w)
+		s.hostingAdmin(w, r, path)
 		return
 	}
 	if path == "live" && r.Method == http.MethodGet {

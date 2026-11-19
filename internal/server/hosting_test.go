@@ -111,6 +111,13 @@ func TestHostingOffRoutesAre404LikeUnknownRoutes(t *testing.T) {
 	}
 }
 
+// hostingServed are the hosting routes #184 serves; the rest stay stubs.
+var hostingServed = map[string]bool{
+	"GET /api/admin/terminals": true, "POST /api/admin/terminals": true,
+	"PUT /api/admin/terminals/7": true, "DELETE /api/admin/terminals/7": true,
+	"GET /api/admin/nodes": true,
+}
+
 func TestHostingOnStubsStayBehindAdminSignIn(t *testing.T) {
 	base, cookie := signedIn(t, true)
 	for _, p := range hostingPaths {
@@ -123,8 +130,9 @@ func TestHostingOnStubsStayBehindAdminSignIn(t *testing.T) {
 		if got := send(t, base, p.method, p.path, nil, nil); got.code != http.StatusUnauthorized {
 			t.Errorf("%s %s anonymous = %d, want 401", p.method, p.path, got.code)
 		}
-		if got := send(t, base, p.method, p.path, cookie, nil); got.code != http.StatusNotImplemented {
-			t.Errorf("%s %s admin = %d, want the 501 stub", p.method, p.path, got.code)
+		got := send(t, base, p.method, p.path, cookie, nil)
+		if served := hostingServed[p.method+" "+p.path]; served != (got.code != http.StatusNotImplemented) {
+			t.Errorf("%s %s admin = %d (served by #184: %v)", p.method, p.path, got.code, served)
 		}
 	}
 }

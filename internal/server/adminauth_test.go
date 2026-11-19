@@ -445,10 +445,10 @@ func TestAdminCLI(t *testing.T) {
 // TestAdminCommandNeedsNoClientConfig: admin runs without a profile or
 // endpoint, and its usage errors go through the usual CLI path.
 func TestAdminCommandNeedsNoClientConfig(t *testing.T) {
-	if code := cli.Run([]string{"admin", "create"}, version, adminauth.CLI); code != cli.ExitUsage {
+	if code := cli.Run([]string{"admin", "create"}, version, adminauth.CLI, HostCLI); code != cli.ExitUsage {
 		t.Fatalf("missing name: %v", code)
 	}
-	if code := cli.Run([]string{"admin", "frobnicate", "alice"}, version, adminauth.CLI); code != cli.ExitUsage {
+	if code := cli.Run([]string{"admin", "frobnicate", "alice"}, version, adminauth.CLI, HostCLI); code != cli.ExitUsage {
 		t.Fatalf("bad action: %v", code)
 	}
 }
