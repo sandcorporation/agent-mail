@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -251,6 +252,17 @@ func (r *e2eUp) start() {
 	})
 }
 
+// kill ends up from outside (SIGKILL, TerminateProcess): no exit line, its
+// backend server and sessions left running.
+func (r *e2eUp) kill() {
+	r.t.Helper()
+	if err := r.cmd.Process.Kill(); err != nil {
+		r.t.Fatal(err)
+	}
+	<-r.done
+	r.cmd = nil
+}
+
 // stop ends up (SIGTERM on Linux, as Ctrl-C; terminated on Windows).
 func (r *e2eUp) stop() {
 	if r.cmd == nil {
@@ -481,6 +493,26 @@ func TestE2E_HostingUp(t *testing.T) {
 			r.wait("the runtime reported", func() bool { return r.session(id).Runtime.State == "running" })
 			if h := r.session(id); h.Runtime.PID != pid || h.Runtime.Run != runNo || h.AgentSessionID != sessionID {
 				t.Fatalf("after up restart %+v, was pid %d run %d", h.Runtime, pid, runNo)
+			}
+		}},
+		{"UpKilledWithOnlyTheKeeperLeftAdoptsIt", func(t *testing.T) {
+			// #257: up killed from outside (no exit line), its backend
+			// server (keeper, tmux server) and sessions still running.
+			// The next up adopts them: no relaunch, same conversation.
+			r.kill()
+			mark := len(r.log())
+			r.start()
+			r.wait("the session adopted", online(sessionID))
+			r.wait("the runtime reported", func() bool { return r.session(id).Runtime.State == "running" })
+			if h := r.session(id); h.Runtime.PID != pid || h.Runtime.Run != runNo || h.AgentSessionID != sessionID {
+				t.Fatalf("after up killed and started %+v, was pid %d run %d session %s", h.Runtime, pid, runNo, sessionID)
+			}
+			since := r.log()[mark:]
+			if !regexp.MustCompile(`node: (keeper|tmux server) \S+ \(adopted\)`).MatchString(since) {
+				t.Fatalf("up.log since the restart has no adopted line:\n%s", since)
+			}
+			if strings.Contains(since, "--resume") {
+				t.Fatalf("a session was relaunched:\n%s", since)
 			}
 		}},
 		{"CrashRelaunchesWithResume", func(t *testing.T) {

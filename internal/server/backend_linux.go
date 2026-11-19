@@ -4,6 +4,7 @@ package server
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"github.com/sandcorporation/switchboard/internal/term"
@@ -21,5 +22,12 @@ func newNodeBackend(o backendOptions) (nodeBackend, backendInfo, error) {
 	if err != nil {
 		return nil, backendInfo{}, err
 	}
+	// Like the keeper's line on Windows: a server still holding sessions
+	// (up ended, tmux kept running) is adopted with them.
+	how := "started on first launch"
+	if infos, err := b.List(ctx); err == nil && len(infos) > 0 {
+		how = "adopted"
+	}
+	log.Printf("node: tmux server %s (%s)", b.Socket(), how)
 	return b, backendInfo{name: "tmux", socket: b.Socket()}, nil
 }

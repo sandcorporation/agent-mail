@@ -6,7 +6,7 @@
 #   bash scripts/ci/e2e.sh
 set -euo pipefail
 pattern='^TestE2E_'
-want=12
+want=13
 out="$(SWITCHBOARD_TEST_E2E=require SWITCHBOARD_TEST_TMUX=require go test -count=1 -v -timeout 15m -run "$pattern" ./internal/server/ 2>&1)" || { echo "$out"; exit 1; }
 echo "$out" | grep -E '^(=== RUN|--- |    --- |ok|FAIL|PASS)' || true
 ran=$(grep -c '^    --- PASS: TestE2E_' <<<"$out" || true)

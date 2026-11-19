@@ -36,7 +36,18 @@ const (
 // node's backend (tmux server, keeper) is touched, so a port held by
 // another process ends up at once with nothing left running. It returns
 // only when start-up fails; otherwise it serves until SIGINT or SIGTERM.
-func Up(v, dataDir string, port int, nodeName string) error {
+// Every way it ends leaves its exit line in the log (exit.go).
+func Up(v, dataDir string, port int, nodeName string) (err error) {
+	// From the first moment: an event before run's signal.Notify still
+	// ends up (STATUS_CONTROL_C_EXIT), and now leaves its line.
+	logConsoleEvents()
+	defer recoverExit("up")
+	defer func() {
+		if err != nil {
+			log.Printf("exit 1: %v", err)
+			_ = os.Stderr.Sync()
+		}
+	}()
 	dir, err := filepath.Abs(dataDir)
 	if err != nil {
 		return err
@@ -80,7 +91,11 @@ func Up(v, dataDir string, port int, nodeName string) error {
 			return err
 		}
 		log.Printf("node %s: %s backend, socket %s", nodeName, part.backendName, part.socket)
-		go func() { _ = link.Run(ctx) }()
+		goSafe("node "+nodeName, func() {
+			if err := link.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				log.Printf("node %s: stopped: %v", nodeName, err)
+			}
+		})
 		return nil
 	})
 	return nil
