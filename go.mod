@@ -10,6 +10,7 @@ require (
 	github.com/coreos/go-oidc/v3 v3.17.0
 	golang.org/x/crypto v0.40.0
 	golang.org/x/oauth2 v0.32.0
+	golang.org/x/sys v0.41.0
 	golang.org/x/term v0.33.0
 	modernc.org/sqlite v1.38.2
 )
@@ -34,7 +35,6 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
 	golang.org/x/sync v0.19.0 // indirect
-	golang.org/x/sys v0.41.0 // indirect
 	modernc.org/libc v1.66.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect

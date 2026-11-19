@@ -4,9 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/sandcorporation/switchboard/internal/store"
 	"github.com/sandcorporation/switchboard/internal/wire"
@@ -22,68 +21,172 @@ var (
 	ErrBadNodeToken = errors.New("unknown node token")
 )
 
-// tokenFileMode keeps a node token readable by its owner only.
-const tokenFileMode = 0o600
+// NodeInviteTTL is how long a code from `switchboard node invite` stays
+// valid; each code is used once.
+const NodeInviteTTL = 15 * time.Minute
 
-// EnsureNodeToken is what `switchboard up` does on start for its loopback
-// node: it reads the token in path, creating it (mode 0600) when missing,
-// and makes the nodes row name carry its hash. A revoked node is refused.
-func (s *Service) EnsureNodeToken(name, path string) (string, error) {
+var (
+	// ErrInviteExpired means the invite code was valid but is older than
+	// NodeInviteTTL.
+	ErrInviteExpired = errors.New("invite code expired; run switchboard node invite again")
+	// ErrInviteInvalid means no unused invite has this code.
+	ErrInviteInvalid = errors.New("invite code is unknown or already used")
+	// ErrNodeExists means a node of that name is already registered.
+	ErrNodeExists = errors.New("a node of that name already exists")
+	// ErrNoSuchNode means no node of that name is registered.
+	ErrNoSuchNode = errors.New("no such node")
+)
+
+func checkNodeName(name string) error {
 	if !nodeNamePattern.MatchString(name) {
-		return "", invalidf("node: invalid name %q (1-64 of A-Z a-z 0-9 . _ -, starting with a letter or digit)", name)
+		return invalidf("node: invalid name %q (1-64 of A-Z a-z 0-9 . _ -, starting with a letter or digit)", name)
 	}
-	token, err := ReadTokenFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		var suffix string
-		if suffix, err = randomHex(32); err != nil {
-			return "", err
-		}
-		token = "sbn_" + suffix
-		if err = writeTokenFile(path, token); err != nil {
-			return "", err
-		}
-	} else if err != nil {
-		return "", err
+	return nil
+}
+
+func newNodeToken() (string, error) {
+	suffix, err := randomHex(32)
+	return "sbn_" + suffix, err
+}
+
+// RegisterLocalNode is what `switchboard up` does on start for its loopback
+// node, whose token it keeps in its data directory: it makes the nodes row
+// name carry the token's hash, creating the row when missing. A revoked node
+// is refused.
+func (s *Service) RegisterLocalNode(name, token string) error {
+	if err := checkNodeName(name); err != nil {
+		return err
 	}
 	var revoked sql.NullInt64
-	switch err = s.db.QueryRow(`SELECT revoked_at FROM nodes WHERE name=?`, name).Scan(&revoked); {
+	switch err := s.db.QueryRow(`SELECT revoked_at FROM nodes WHERE name=?`, name).Scan(&revoked); {
 	case errors.Is(err, sql.ErrNoRows):
 		_, err = s.db.Exec(`INSERT INTO nodes(name,token_hash,created_at) VALUES(?,?,?)`, name, store.TokenHash(token), s.clock().UnixMilli())
+		return err
 	case err != nil:
+		return err
 	case revoked.Valid:
-		return "", fmt.Errorf("node %s: %w", name, ErrNodeRevoked)
+		return fmt.Errorf("node %s: %w", name, ErrNodeRevoked)
 	default:
 		_, err = s.db.Exec(`UPDATE nodes SET token_hash=? WHERE name=?`, store.TokenHash(token), name)
+		return err
 	}
-	return token, err
 }
 
-// ReadTokenFile reads a node token file (one line).
-func ReadTokenFile(path string) (string, error) {
-	b, err := os.ReadFile(path)
+// InviteNode makes a one-time code for a new node name, valid for
+// NodeInviteTTL; only its hash is stored. A new code replaces an unused one
+// for the same name. A registered name, live or revoked, is refused.
+func (s *Service) InviteNode(name string) (code string, expiresAt time.Time, err error) {
+	if err = checkNodeName(name); err != nil {
+		return "", time.Time{}, err
+	}
+	if s.nodeKnown(name) {
+		return "", time.Time{}, fmt.Errorf("node %s: %w", name, ErrNodeExists)
+	}
+	suffix, err := randomHex(16)
 	if err != nil {
-		return "", err
+		return "", time.Time{}, err
 	}
-	token := strings.TrimSpace(string(b))
-	if token == "" {
-		return "", fmt.Errorf("node token file %s is empty", path)
+	code = "sbj_" + suffix
+	now := s.clock()
+	expiresAt = now.Add(NodeInviteTTL)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return "", time.Time{}, err
 	}
-	return token, nil
+	defer tx.Rollback()
+	if _, err = tx.Exec(`DELETE FROM node_invites WHERE (name=? AND used_at IS NULL) OR expires_at<=?`, name, now.UnixMilli()); err != nil {
+		return "", time.Time{}, err
+	}
+	if _, err = tx.Exec(`INSERT INTO node_invites(code_hash,name,created_at,expires_at) VALUES(?,?,?,?)`, store.TokenHash(code), name, now.UnixMilli(), expiresAt.UnixMilli()); err != nil {
+		return "", time.Time{}, err
+	}
+	return code, expiresAt, tx.Commit()
 }
 
-func writeTokenFile(path, token string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
+// JoinNode spends an invite code: it registers the invited node with a new
+// token and returns the name and the token, which the host keeps only as a
+// hash. A code works once and only before it expires.
+func (s *Service) JoinNode(code string) (wire.NodeJoined, error) {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return wire.NodeJoined{}, ErrInviteInvalid
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, tokenFileMode)
+	tx, err := s.db.Begin()
 	if err != nil {
-		return err
+		return wire.NodeJoined{}, err
 	}
-	if _, err = f.WriteString(token + "\n"); err != nil {
-		f.Close()
-		return err
+	defer tx.Rollback()
+	var name string
+	var expires int64
+	hash := store.TokenHash(code)
+	switch err = tx.QueryRow(`SELECT name,expires_at FROM node_invites WHERE code_hash=? AND used_at IS NULL`, hash).Scan(&name, &expires); {
+	case errors.Is(err, sql.ErrNoRows):
+		return wire.NodeJoined{}, ErrInviteInvalid
+	case err != nil:
+		return wire.NodeJoined{}, err
 	}
-	return f.Close()
+	now := s.clock().UnixMilli()
+	if now >= expires {
+		return wire.NodeJoined{}, ErrInviteExpired
+	}
+	res, err := tx.Exec(`UPDATE node_invites SET used_at=? WHERE code_hash=? AND used_at IS NULL`, now, hash)
+	if err != nil {
+		return wire.NodeJoined{}, err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return wire.NodeJoined{}, ErrInviteInvalid
+	}
+	token, err := newNodeToken()
+	if err != nil {
+		return wire.NodeJoined{}, err
+	}
+	res, err = tx.Exec(`INSERT INTO nodes(name,token_hash,created_at) VALUES(?,?,?) ON CONFLICT(name) DO NOTHING`, name, store.TokenHash(token), now)
+	if err != nil {
+		return wire.NodeJoined{}, err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return wire.NodeJoined{}, fmt.Errorf("node %s: %w", name, ErrNodeExists)
+	}
+	if err = tx.Commit(); err != nil {
+		return wire.NodeJoined{}, err
+	}
+	return wire.NodeJoined{Name: name, Token: token}, nil
+}
+
+// RevokeNode revokes a node's credential: from now on its token is refused.
+// Revoking a revoked node changes nothing. The hub closes its socket.
+func (s *Service) RevokeNode(name string) (wire.NodeView, error) {
+	if _, err := s.db.Exec(`UPDATE nodes SET revoked_at=? WHERE name=? AND revoked_at IS NULL`, s.clock().UnixMilli(), name); err != nil {
+		return wire.NodeView{}, err
+	}
+	nodes, err := s.Nodes()
+	if err != nil {
+		return wire.NodeView{}, err
+	}
+	for _, n := range nodes {
+		if n.Name == name {
+			return n, nil
+		}
+	}
+	return wire.NodeView{}, ErrNoSuchNode
+}
+
+// revokedNodes is the set of revoked node names.
+func (s *Service) revokedNodes() (map[string]bool, error) {
+	rows, err := s.db.Query(`SELECT name FROM nodes WHERE revoked_at IS NOT NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out[n] = true
+	}
+	return out, rows.Err()
 }
 
 // NodeByToken returns the name of the live node whose token this is.
@@ -105,9 +208,31 @@ func (s *Service) NodeByToken(token string) (string, error) {
 	return name, nil
 }
 
-// nodeSeen records a node's hello and the time it was last attached.
+// nodeSeen records a node's hello (machine, OS, version) and when it was
+// last seen.
 func (s *Service) nodeSeen(name string, h wire.NodeHello) error {
 	_, err := s.db.Exec(`UPDATE nodes SET machine=?,os=?,version=?,last_seen_at=? WHERE name=?`, h.Machine, h.OS, h.Version, s.clock().UnixMilli(), name)
+	return err
+}
+
+// checkNodeUsable refuses a record for a node that is not registered or is
+// revoked.
+func (s *Service) checkNodeUsable(name string) error {
+	var revoked sql.NullInt64
+	switch err := s.db.QueryRow(`SELECT revoked_at FROM nodes WHERE name=?`, name).Scan(&revoked); {
+	case errors.Is(err, sql.ErrNoRows):
+		return invalidf("node: no node named %s (switchboard up registers its own; switchboard node invite adds one)", name)
+	case err != nil:
+		return err
+	case revoked.Valid:
+		return invalidf("node: %s is revoked", name)
+	}
+	return nil
+}
+
+// nodeLeft records when a node's socket closed.
+func (s *Service) nodeLeft(name string) error {
+	_, err := s.db.Exec(`UPDATE nodes SET last_seen_at=? WHERE name=?`, s.clock().UnixMilli(), name)
 	return err
 }
 

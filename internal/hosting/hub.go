@@ -95,7 +95,16 @@ func (h *Hub) Sync() error {
 		byNode[r.Node] = append(byNode[r.Node], r)
 		owner[r.ID] = r.Node
 	}
+	revoked, err := h.svc.revokedNodes()
+	if err != nil {
+		return err
+	}
 	h.mu.Lock()
+	for name, c := range h.conns {
+		if revoked[name] {
+			c.cancel()
+		}
+	}
 	changed := h.digest != "" && h.digest != string(b)
 	h.digest = string(b)
 	h.owner = owner
@@ -198,9 +207,13 @@ func (h *Hub) Restart(id string) (wire.HostedSession, error) {
 	return r, nil
 }
 
-// NodeAPI serves /api/node/ paths (prefix removed) for a node presenting its
-// token: today only the socket.
+// NodeAPI serves /api/node/ paths (prefix removed): join for a node
+// presenting an invite code, the socket for a node presenting its token.
 func (h *Hub) NodeAPI(w http.ResponseWriter, r *http.Request, path string) {
+	if path == "join" {
+		h.svc.joinAPI(w, r)
+		return
+	}
 	name, err := h.svc.NodeByToken(bearer(r))
 	if err != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -301,7 +314,27 @@ func (h *Hub) detach(c *nodeConn) {
 	delete(h.conns, c.name)
 	h.away[c.name] = h.svc.clock().UnixMilli()
 	h.mu.Unlock()
+	if err := h.svc.nodeLeft(c.name); err != nil {
+		log.Printf("hosting: node %s left: %v", c.name, err)
+	}
 	h.publish("terminals")
+}
+
+// Revoke revokes node name and closes its socket; its sessions show
+// "node offline" and its token is refused from now on.
+func (h *Hub) Revoke(name string) (wire.NodeView, error) {
+	n, err := h.svc.RevokeNode(name)
+	if err != nil {
+		return n, err
+	}
+	h.mu.Lock()
+	c, ok := h.conns[name]
+	if ok {
+		c.cancel()
+	}
+	h.mu.Unlock()
+	h.publish("terminals")
+	return n, nil
 }
 
 // receive handles one node frame: hello updates the registry, state the

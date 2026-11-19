@@ -215,11 +215,12 @@ var commands = []command{
 			{"--port", "PORT", "loopback port to listen on"},
 			{"--node", "NAME", "name of this machine's node, as host add --node names it (default local)"},
 		}},
-	{name: "node",
-		summary: "Run a node for this machine attached to a hosting instance (loopback only in this release)",
+	{name: "node", args: "[invite NAME]", nargs: 2, optArgs: true,
+		summary: "Run a node for this machine attached to a hosting instance (loopback only in this release); node invite NAME prints a one-time join code (15 min) from this instance's database (DB_PATH)",
 		options: []option{
 			{"--host", "URL", "the instance's URL, e.g. http://127.0.0.1:8090"},
-			{"--token-file", "PATH", "node token file (up writes DIR/node.token)"},
+			{"--join", "CODE", "exchange a code from node invite for this node's token, saved to --token-file"},
+			{"--token-file", "PATH", "node token file (default node.token in the config directory; up writes DIR/node.token)"},
 		}},
 	{name: "admin", args: "ACTION NAME", nargs: 2, synopsis: "(ACTION: create | passwd | totp-reset | disable) NAME",
 		summary: "Manage built-in dashboard admins in the server database (DB_PATH; run inside the server container); create and passwd read the password from the terminal or the first line of stdin",
@@ -261,16 +262,21 @@ type AdminFunc func(action, name string, jsonOut bool, stdin io.Reader, stdout, 
 type UpFunc func(dataDir string, port int, nodeName string) error
 
 // NodeFunc runs `node`: a node attached to the host at hostURL, until
-// stopped.
-type NodeFunc func(hostURL, tokenFile string) error
+// stopped. A non-empty joinCode is first exchanged for the token written to
+// tokenFile.
+type NodeFunc func(hostURL, tokenFile, joinCode string) error
+
+// NodeInviteFunc runs `node invite NAME` against the server's database.
+type NodeInviteFunc func(name string, stdout io.Writer) (int, error)
 
 // Commands are the commands the binary supplies because they run the server
 // or open its database.
 type Commands struct {
-	Admin AdminFunc
-	Host  HostFunc
-	Up    UpFunc
-	Node  NodeFunc
+	Admin      AdminFunc
+	Host       HostFunc
+	Up         UpFunc
+	Node       NodeFunc
+	NodeInvite NodeInviteFunc
 }
 
 var (
@@ -383,7 +389,7 @@ func dispatch(args []string) (int, error) {
 	case "up":
 		return cliUp(p)
 	case "node":
-		return cliNode(p)
+		return cliNode(p, os.Stdout)
 	case "join":
 		return cliJoin(p, os.Stdout)
 	case "config":

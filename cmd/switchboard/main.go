@@ -25,6 +25,9 @@ func main() {
 		Admin: adminauth.CLI,
 		Host:  server.HostCLI,
 		Up:    func(dir string, port int, node string) error { return server.Up(version, dir, port, node) },
-		Node:  func(host, tokenFile string) error { return server.Node(version, host, tokenFile) },
+		Node: func(host, tokenFile, joinCode string) error {
+			return server.Node(version, host, tokenFile, joinCode)
+		},
+		NodeInvite: server.NodeInviteCLI,
 	}))
 }

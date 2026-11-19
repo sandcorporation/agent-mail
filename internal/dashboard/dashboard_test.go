@@ -207,6 +207,10 @@ func TestDashboardTerminalsTabOnlyWithHosting(t *testing.T) {
 		`tabLoaders.terminals=loadTerminals;`,
 		`api('terminals')`,
 		`confirm(`,
+		`<div id="nodesBox" hidden>`,
+		`$('nodesBox').hidden=!hostingOn;`,
+		`api('nodes')`,
+		`apiSend('DELETE','nodes/'+encodeURIComponent(v.name))`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("dashboard missing %q", want)

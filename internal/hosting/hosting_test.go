@@ -16,7 +16,20 @@ import (
 	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
+// newService is a service whose registry holds the nodes pc and laptop.
 func newService(t *testing.T) *Service {
+	t.Helper()
+	s := bareService(t)
+	for _, n := range []string{"pc", "laptop"} {
+		if err := s.RegisterLocalNode(n, "sbn_"+n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return s
+}
+
+// bareService is a service over an empty database.
+func bareService(t *testing.T) *Service {
 	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "host.db"))
 	if err != nil {
@@ -202,7 +215,7 @@ func TestValidationRules(t *testing.T) {
 }
 
 func TestNodesListsTheRegistry(t *testing.T) {
-	s := newService(t)
+	s := bareService(t)
 	if n, err := s.Nodes(); err != nil || len(n) != 0 {
 		t.Fatalf("empty registry: %v %v", n, err)
 	}

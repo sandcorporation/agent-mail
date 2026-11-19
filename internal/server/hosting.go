@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -108,7 +109,7 @@ func (s *Server) hostingAdmin(w http.ResponseWriter, r *http.Request, path strin
 	if rest, ok := strings.CutPrefix(path, "terminals"); ok && s.hostingHub().AdminTerminalsAPI(w, r, strings.TrimPrefix(rest, "/")) {
 		return
 	}
-	if rest, ok := strings.CutPrefix(path, "nodes"); ok && s.hostingService().AdminNodesAPI(w, r, strings.TrimPrefix(rest, "/")) {
+	if rest, ok := strings.CutPrefix(path, "nodes"); ok && s.hostingHub().AdminNodesAPI(w, r, strings.TrimPrefix(rest, "/")) {
 		return
 	}
 	hostingStub(w)
@@ -130,20 +131,40 @@ func (s *Server) hostingService() *hosting.Service {
 // DB_PATH, which must name this instance's own database (the same rule as
 // SWITCHBOARD_HOSTING=on), so the operations database never gains records.
 func HostCLI(action, id string, add wire.HostedSessionCreate, jsonOut bool, stdout io.Writer) (int, error) {
+	return withInstanceDB("host", func(svc *hosting.Service) error { return svc.RunCLI(action, id, add, jsonOut, stdout) })
+}
+
+// NodeInviteCLI is the binary's `node invite NAME`: a one-time code for a new
+// node, valid 15 minutes, against DB_PATH (the same rule as `host`). The code
+// is printed once; the database keeps only its hash.
+func NodeInviteCLI(name string, stdout io.Writer) (int, error) {
+	return withInstanceDB("node invite", func(svc *hosting.Service) error {
+		code, expires, err := svc.InviteNode(name)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(stdout, "%s\nnode %s: use once before %s with\n  switchboard node --host URL --join %s\n", code, name, expires.Local().Format("2006-01-02 15:04:05"), code)
+		return err
+	})
+}
+
+// withInstanceDB runs fn over the hosting service of DB_PATH, which must name
+// this instance's own database, so the operations database never gains
+// hosting rows.
+func withInstanceDB(cmd string, fn func(*hosting.Service) error) (int, error) {
 	path := os.Getenv("DB_PATH")
 	switch {
 	case path == "":
-		return 0, errors.New("host: DB_PATH is unset; name this instance's own database")
+		return 0, errors.New(cmd + ": DB_PATH is unset; name this instance's own database")
 	case filepath.ToSlash(filepath.Clean(path)) == containerDBPath:
-		return 0, errors.New("host: DB_PATH is the container default " + containerDBPath + "; name this instance's own database")
+		return 0, errors.New(cmd + ": DB_PATH is the container default " + containerDBPath + "; name this instance's own database")
 	}
 	db, err := store.Open(path)
 	if err != nil {
 		return 0, err
 	}
 	defer db.Close()
-	svc := hosting.New(db, time.Now, func(base string) bool { return identity.RoleExists(db, base) })
-	if err = svc.RunCLI(action, id, add, jsonOut, stdout); err != nil {
+	if err = fn(hosting.New(db, time.Now, func(base string) bool { return identity.RoleExists(db, base) })); err != nil {
 		return 0, err
 	}
 	return 0, nil

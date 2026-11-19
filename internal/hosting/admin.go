@@ -62,23 +62,67 @@ func (s *Service) AdminTerminalsAPI(w http.ResponseWriter, r *http.Request, rest
 	return true
 }
 
-// AdminNodesAPI serves GET /api/admin/nodes (rest ""). It reports false for
-// a path it does not serve (revoke, a later ticket).
-func (s *Service) AdminNodesAPI(w http.ResponseWriter, r *http.Request, rest string) bool {
-	if rest != "" {
+// AdminNodesAPI serves GET /api/admin/nodes (rest "") and DELETE
+// /api/admin/nodes/{name} (rest = name): revoke, which also closes the node's
+// socket. The server has already identified the admin and applied the write
+// guard. It reports false for a path it does not serve.
+func (h *Hub) AdminNodesAPI(w http.ResponseWriter, r *http.Request, rest string) bool {
+	if strings.Contains(rest, "/") {
 		return false
 	}
-	if r.Method != http.MethodGet {
+	if rest == "" {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return true
+		}
+		out, err := h.svc.Nodes()
+		if err != nil {
+			http.Error(w, "query failed", http.StatusInternalServerError)
+			return true
+		}
+		writeJSON(w, http.StatusOK, out)
+		return true
+	}
+	if r.Method != http.MethodDelete {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return true
 	}
-	out, err := s.Nodes()
-	if err != nil {
-		http.Error(w, "query failed", http.StatusInternalServerError)
-		return true
+	n, err := h.Revoke(rest)
+	switch {
+	case errors.Is(err, ErrNoSuchNode):
+		http.Error(w, err.Error(), http.StatusNotFound)
+	case err != nil:
+		http.Error(w, "update failed", http.StatusInternalServerError)
+	default:
+		writeJSON(w, http.StatusOK, n)
 	}
-	writeJSON(w, http.StatusOK, out)
 	return true
+}
+
+// joinAPI serves POST /api/node/join: an invite code for the node's name and
+// token. The code is the credential; no bearer token is asked for.
+func (s *Service) joinAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var j wire.NodeJoin
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxBody)).Decode(&j); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	out, err := s.JoinNode(j.Code)
+	switch {
+	case errors.Is(err, ErrInviteExpired), errors.Is(err, ErrInviteInvalid):
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+	case errors.Is(err, ErrNodeExists):
+		http.Error(w, err.Error(), http.StatusConflict)
+	case err != nil:
+		http.Error(w, "join failed", http.StatusInternalServerError)
+	default:
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, out)
+	}
 }
 
 // decode reads a JSON body of type T; unknown fields are refused so a
@@ -110,7 +154,7 @@ func writeResult(w http.ResponseWriter, ok int, h wire.HostedSession, err error)
 	}
 }
 
-func writeJSON[T wire.HostedSession | []wire.HostedSession | []wire.NodeView](w http.ResponseWriter, code int, v T) {
+func writeJSON[T wire.HostedSession | []wire.HostedSession | wire.NodeView | []wire.NodeView | wire.NodeJoined](w http.ResponseWriter, code int, v T) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)

@@ -42,7 +42,11 @@ func adminCall(t *testing.T, base, method, path string, cookie *http.Cookie, gua
 const newRecord = `{"node":"pc","base":"a","profile":"team-a","directory":"/work/app","label":"42","args":["--model","opus"]}`
 
 func TestHostingRecordsThroughAdminAPI(t *testing.T) {
-	base, cookie := signedIn(t, true)
+	s, base, cookie := signedInServer(t, true)
+	if got := adminCall(t, base, "POST", "/api/admin/terminals", cookie, true, newRecord); got.code != http.StatusBadRequest || !strings.Contains(got.body, "node: no node named pc") {
+		t.Fatalf("create on an unregistered node = %d %s", got.code, got.body)
+	}
+	nodeToken(t, s, "pc")
 
 	if got := adminCall(t, base, "POST", "/api/admin/terminals", nil, true, newRecord); got.code != http.StatusUnauthorized {
 		t.Fatalf("anonymous create = %d", got.code)
@@ -113,7 +117,7 @@ func TestHostingRecordsThroughAdminAPI(t *testing.T) {
 	if got = adminCall(t, base, "GET", "/api/admin/terminals", cookie, false, ""); strings.TrimSpace(got.body) != "[]" {
 		t.Errorf("list after delete = %s", got.body)
 	}
-	if got = adminCall(t, base, "GET", "/api/admin/nodes", cookie, false, ""); got.code != http.StatusOK || strings.TrimSpace(got.body) != "[]" {
+	if got = adminCall(t, base, "GET", "/api/admin/nodes", cookie, false, ""); got.code != http.StatusOK || !strings.HasPrefix(got.body, `[{"name":"pc",`) || strings.Contains(got.body, "token") || strings.Contains(got.body, "sha256") {
 		t.Errorf("nodes = %d %s", got.code, got.body)
 	}
 }
@@ -137,8 +141,15 @@ func TestHostingOffStoresNoRecords(t *testing.T) {
 // hostCLI runs `switchboard host …` in a child process against dbPath.
 func hostCLI(t *testing.T, dbPath string, args ...string) (int, string, string) {
 	t.Helper()
+	return binaryCLI(t, dbPath, append([]string{"host"}, args...)...)
+}
+
+// binaryCLI runs the binary's client with args against dbPath and returns
+// its exit code, stdout and stderr.
+func binaryCLI(t *testing.T, dbPath string, args ...string) (int, string, string) {
+	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run=^TestCLIHelperProcess$")
-	argJSON, _ := json.Marshal(append([]string{"host"}, args...))
+	argJSON, _ := json.Marshal(args)
 	cmd.Env = append(append(os.Environ(), clearNewEnv...), "SWITCHBOARD_TEST_CLI=1", "SWITCHBOARD_TEST_ARGS="+string(argJSON), "DB_PATH="+dbPath)
 	var out, errOut strings.Builder
 	cmd.Stdout, cmd.Stderr = &out, &errOut
@@ -159,6 +170,9 @@ func TestHostCLIManagesRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err = db.Exec(`INSERT INTO roles(role,token,created_at) VALUES('team/worker','h','now')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO nodes(name,token_hash,created_at) VALUES('pc','h',1)`); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()

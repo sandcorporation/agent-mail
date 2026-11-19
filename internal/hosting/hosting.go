@@ -171,8 +171,11 @@ func cleanDirectory(dir string) (string, error) {
 
 // validate checks a new record and fills its defaults.
 func (s *Service) validate(c *wire.HostedSessionCreate) error {
-	if !nodeNamePattern.MatchString(c.Node) {
-		return invalidf("node: invalid name %q (1-64 of A-Z a-z 0-9 . _ -, starting with a letter or digit)", c.Node)
+	if err := checkNodeName(c.Node); err != nil {
+		return err
+	}
+	if err := s.checkNodeUsable(c.Node); err != nil {
+		return err
 	}
 	if !wire.ValidRole(c.Base) {
 		return invalidf("base: invalid role %q", c.Base)
