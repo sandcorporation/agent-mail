@@ -30,3 +30,25 @@ func TestEnvAliasNewWinsOldFallsBack(t *testing.T) {
 		t.Fatal("envAlias must read the process environment, new name first")
 	}
 }
+
+func TestHostingOffByDefaultOnlyOnEnables(t *testing.T) {
+	if on, from := HostingFrom(fakeEnv(nil)); on || from != "SWITCHBOARD_HOSTING" {
+		t.Fatalf("default: %v %q", on, from)
+	}
+	for _, v := range []string{"off", "true", "1", "yes", "ON", "enabled"} {
+		if on, _ := HostingFrom(fakeEnv(map[string]string{"SWITCHBOARD_HOSTING": v})); on {
+			t.Fatalf("%q turned hosting on", v)
+		}
+	}
+	for _, v := range []string{"on", " on "} {
+		if on, _ := HostingFrom(fakeEnv(map[string]string{"SWITCHBOARD_HOSTING": v})); !on {
+			t.Fatalf("%q left hosting off", v)
+		}
+	}
+	if on, from := HostingFrom(fakeEnv(map[string]string{"AGENT_MAIL_HOSTING": "on"})); !on || from != "AGENT_MAIL_HOSTING" {
+		t.Fatalf("old name: %v %q", on, from)
+	}
+	if on, from := HostingFrom(fakeEnv(map[string]string{"SWITCHBOARD_HOSTING": "off", "AGENT_MAIL_HOSTING": "on"})); on || from != "SWITCHBOARD_HOSTING" {
+		t.Fatalf("new name must win: %v %q", on, from)
+	}
+}

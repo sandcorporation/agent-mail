@@ -10,6 +10,7 @@ package config
 import (
 	"os"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -97,4 +98,17 @@ func Env(k, d string) string {
 		return x
 	}
 	return d
+}
+
+// HostingName is SWITCHBOARD_HOSTING without the prefix: terminal hosting
+// (#173). The operations instance never sets it; a test keeps it out of the
+// deployment files.
+const HostingName = "HOSTING"
+
+// HostingFrom reports whether terminal hosting is on: only the value "on"
+// (under either prefix, new name first) enables it. from names the variable
+// that held the value, for messages.
+func HostingFrom(getenv func(string) string) (on bool, from string) {
+	v, from := EnvAliasFrom(getenv, HostingName)
+	return strings.TrimSpace(v) == "on", from
 }

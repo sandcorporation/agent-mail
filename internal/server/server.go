@@ -52,6 +52,7 @@ type Server struct {
 	joinLimits  adminauth.Limiter   // failed POST /api/join per client IP (identity.Service.Join)
 	live        live.Bus            // dashboard change stream (internal/live, served by live.go)
 	publicURL   string              // SWITCHBOARD_PUBLIC_URL; a WebSocket Origin it also accepts
+	hosting     bool                // SWITCHBOARD_HOSTING=on (hosting.go); off answers every hosting route 404
 }
 
 // version is the build version /health reports (set by Run).
@@ -61,11 +62,15 @@ var version = "dev"
 // until SIGINT or SIGTERM. v is the build version.
 func Run(v string) {
 	version = v
+	hosting, e := hostingStart(os.Getenv)
+	if e != nil {
+		log.Fatal(e)
+	}
 	db, e := store.Open(config.Env("DB_PATH", "/data/mail.db"))
 	if e != nil {
 		log.Fatal(e)
 	}
-	s := &Server{db: db, tokens: map[string]string{}, admin: adminauth.Config{ProxyToken: config.EnvAlias("ADMIN_PROXY_TOKEN")}, done: make(chan struct{}), publicURL: strings.TrimRight(config.EnvAlias("PUBLIC_URL"), "/")}
+	s := &Server{db: db, tokens: map[string]string{}, admin: adminauth.Config{ProxyToken: config.EnvAlias("ADMIN_PROXY_TOKEN")}, done: make(chan struct{}), publicURL: strings.TrimRight(config.EnvAlias("PUBLIC_URL"), "/"), hosting: hosting}
 	if v, from := config.EnvAliasFrom(os.Getenv, "SSE_KEEPALIVE"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil || d <= 0 {
@@ -115,15 +120,13 @@ func Run(v string) {
 	if old := config.OldEnvNames(); len(old) > 0 {
 		log.Printf("old environment names in use (rename AGENT_MAIL_* to SWITCHBOARD_*): %s", strings.Join(old, ", "))
 	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", health)
-	mux.HandleFunc("/api/", s.api)
-	mux.HandleFunc("/auth/", s.authAPI)
-	mux.HandleFunc("/", s.root)
-	addr := config.Env("LISTEN_ADDR", ":8080")
+	if s.hosting {
+		log.Printf("terminal hosting is on")
+	}
+	addr := config.Env("LISTEN_ADDR", defaultListenAddr)
 	// No WriteTimeout: /api/events responses stay open indefinitely and
 	// /api/events/poll waits up to SWITCHBOARD_POLL_MAX.
-	srv := &http.Server{Addr: addr, Handler: secureHeaders(mux), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Addr: addr, Handler: s.handler(), ReadHeaderTimeout: 10 * time.Second}
 	srv.RegisterOnShutdown(func() { close(s.done) })
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
@@ -143,6 +146,17 @@ func Run(v string) {
 	<-stopped
 	waitSweeper()
 	_ = db.Close()
+}
+
+// handler is the server's HTTP handler: health, API, admin sign-in and the
+// dashboard page, behind the security headers.
+func (s *Server) handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", health)
+	mux.HandleFunc("/api/", s.api)
+	mux.HandleFunc("/auth/", s.authAPI)
+	mux.HandleFunc("/", s.root)
+	return secureHeaders(mux)
 }
 
 // configureAlerts reads the metrics alert thresholds.
@@ -202,6 +216,10 @@ func (s *Server) auth(r *http.Request) (string, bool) {
 func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/api/admin/") {
 		s.adminAPI(w, r)
+		return
+	}
+	if s.hosting && hostingNodePath(strings.TrimPrefix(r.URL.Path, "/api/")) {
+		hostingStub(w)
 		return
 	}
 	if r.URL.Path == "/api/register" {
@@ -330,6 +348,10 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := strings.TrimPrefix(r.URL.Path, "/api/admin/")
+	if s.hosting && hostingAdminPath(path) {
+		hostingStub(w)
+		return
+	}
 	if path == "live" && r.Method == http.MethodGet {
 		s.liveSocket(w, r)
 		return
@@ -366,7 +388,12 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	switch path {
 	case "me":
-		writeJSON(w, who)
+		// The dashboard's bootstrap call; hosting tells it whether to show
+		// the terminal tab.
+		writeJSON(w, struct {
+			adminauth.Identity
+			Hosting bool `json:"hosting"`
+		}{who, s.hosting})
 	case "slots":
 		out, err := s.presence().ActiveSlots("")
 		if err != nil {
