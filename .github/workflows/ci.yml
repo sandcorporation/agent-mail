@@ -65,11 +65,6 @@ jobs:
       - name: Exit paths leave a line (#257)
         shell: bash
         run: go test -count=1 -v -run '^TestExitPathsLeaveALine$' ./internal/server/
-      - name: Console events reaching up (#257, temporary)
-        shell: bash
-        env:
-          SB_EXIT_REPRO: "1"
-        run: go test -count=1 -v -timeout 5m -run '^TestExitReproConsole$' ./internal/server/
       - name: Terminal packages
         run: go test -count=1 ./internal/term/...
       - run: go build ./...
