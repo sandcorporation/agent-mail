@@ -196,8 +196,8 @@ var commands = []command{
 			{"--status", "STATUS", "list: only pending, answered or withdrawn questions"},
 			optJSON, optProfile,
 		}},
-	{name: "host", args: "ACTION [ID]", nargs: 2, optArgs: true, extra: true, synopsis: "(ACTION: add | list | start ID | stop ID | remove ID) [-- AGENT ARGS...]",
-		summary: "Manage hosted sessions in this instance's database (DB_PATH, not the container default): add a record, list them, set one to run or stop, remove one",
+	{name: "host", args: "ACTION [ID]", nargs: 2, optArgs: true, extra: true, synopsis: "(ACTION: add | list | start ID | stop ID | restart ID | new-conversation ID | remove ID) [-- AGENT ARGS...]",
+		summary: "Manage hosted sessions in this instance's database (DB_PATH, not the container default): add a record, list them, set one to run or stop, restart one with resume (clears a crash loop), start one in a new conversation, remove one",
 		options: []option{
 			{"--node", "NAME", "add: node the session runs on"},
 			{"--base", "ROLE", "add: base role (must exist)"},
@@ -221,6 +221,7 @@ var commands = []command{
 			{"--host", "URL", "the instance's URL, e.g. http://127.0.0.1:8090"},
 			{"--join", "CODE", "exchange a code from node invite for this node's token, saved to --token-file"},
 			{"--token-file", "PATH", "node token file (default node.token in the config directory; up writes DIR/node.token)"},
+			{"--restart-sessions", "", "stop every hosted session on this machine at start and relaunch each with resume"},
 		}},
 	{name: "admin", args: "ACTION NAME", nargs: 2, synopsis: "(ACTION: create | passwd | totp-reset | disable) NAME",
 		summary: "Manage built-in dashboard admins in the server database (DB_PATH; run inside the server container); create and passwd read the password from the terminal or the first line of stdin",
@@ -264,7 +265,7 @@ type UpFunc func(dataDir string, port int, nodeName string) error
 // NodeFunc runs `node`: a node attached to the host at hostURL, until
 // stopped. A non-empty joinCode is first exchanged for the token written to
 // tokenFile.
-type NodeFunc func(hostURL, tokenFile, joinCode string) error
+type NodeFunc func(hostURL, tokenFile, joinCode string, restartSessions bool) error
 
 // NodeInviteFunc runs `node invite NAME` against the server's database.
 type NodeInviteFunc func(name string, stdout io.Writer) (int, error)

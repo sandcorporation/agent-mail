@@ -62,6 +62,14 @@ func (r *rig) reconcile(n *node.Node) {
 	}
 }
 
+// relaunch passes the exit, waits out the first backoff and reconciles.
+func (r *rig) relaunch(n *node.Node) {
+	r.t.Helper()
+	r.reconcile(n)
+	r.now = r.now.Add(node.BackoffBase)
+	r.reconcile(n)
+}
+
 func (r *rig) state(n *node.Node, id string) node.State {
 	r.t.Helper()
 	for _, s := range n.States() {
@@ -116,7 +124,7 @@ func TestFirstLaunchUsesSessionIDThenResume(t *testing.T) {
 	if err := r.fake.Exit("sb-a", 1); err != nil {
 		t.Fatal(err)
 	}
-	r.reconcile(n)
+	r.relaunch(n)
 	want := [][]string{
 		{"/opt/agent/claude", "--session-id", "conv-a", "--model", "opus"},
 		{"/opt/agent/claude", "--resume", "conv-a", "--model", "opus"},
@@ -165,7 +173,7 @@ func TestLiveSessionSurvivesNodeRestart(t *testing.T) {
 	if err := r.fake.Exit("sb-a", 0); err != nil {
 		t.Fatal(err)
 	}
-	r.reconcile(n2)
+	r.relaunch(n2)
 	if got := r.launches(); len(got) != 2 || got[1][1] != "--resume" || got[1][2] != "conv-a" {
 		t.Fatalf("launches %q", got)
 	}
@@ -219,8 +227,7 @@ func TestRestartPolicies(t *testing.T) {
 		if err := r.fake.Exit("sb-a", c.code); err != nil {
 			t.Fatal(err)
 		}
-		r.reconcile(n)
-		r.reconcile(n)
+		r.relaunch(n)
 		st := r.state(n, "a")
 		if got := len(r.launches()) == 2; got != c.relaunch {
 			t.Errorf("%s exit %d: relaunched %v, want %v", c.policy, c.code, got, c.relaunch)
@@ -423,7 +430,7 @@ func TestLaunchCommandRunsFakeAgent(t *testing.T) {
 	if err := r.fake.Exit("sb-a", 0); err != nil {
 		t.Fatal(err)
 	}
-	r.reconcile(n)
+	r.relaunch(n)
 	for i, spec := range r.fake.Launches() {
 		cmd := exec.Command(spec.Argv[0], spec.Argv[1:]...)
 		cmd.Env, cmd.Dir = spec.Env, dir

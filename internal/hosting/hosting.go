@@ -273,7 +273,7 @@ func (s *Service) Create(c wire.HostedSessionCreate) (wire.HostedSession, error)
 
 func unknownRuntime() wire.HostedRuntime { return wire.HostedRuntime{State: StateUnknown} }
 
-const sessionColumns = `id,node,base,label,parent,profile,directory,agent_session_id,launched,args,env,restart,desired,cols,rows,created_at,updated_at`
+const sessionColumns = `id,node,base,label,parent,profile,directory,agent_session_id,launched,args,env,restart,desired,cols,rows,restart_gen,start_gen,created_at,updated_at`
 
 type rowScanner interface{ Scan(dest ...any) error }
 
@@ -281,7 +281,7 @@ func scanSession(r rowScanner) (wire.HostedSession, error) {
 	var h wire.HostedSession
 	var launched int
 	var args, env string
-	if err := r.Scan(&h.ID, &h.Node, &h.Base, &h.Label, &h.Parent, &h.Profile, &h.Directory, &h.AgentSessionID, &launched, &args, &env, &h.Restart, &h.Desired, &h.Cols, &h.Rows, &h.CreatedAt, &h.UpdatedAt); err != nil {
+	if err := r.Scan(&h.ID, &h.Node, &h.Base, &h.Label, &h.Parent, &h.Profile, &h.Directory, &h.AgentSessionID, &launched, &args, &env, &h.Restart, &h.Desired, &h.Cols, &h.Rows, &h.RestartGen, &h.StartGen, &h.CreatedAt, &h.UpdatedAt); err != nil {
 		return h, err
 	}
 	h.Launched = launched != 0
@@ -369,10 +369,15 @@ func (s *Service) Update(id string, c wire.HostedSessionChange) (wire.HostedSess
 		}
 	}
 	h.UpdatedAt = s.clock().UnixMilli()
+	if c.Desired != nil && *c.Desired == DesiredRunning {
+		// Start, even of a record that should already run: its node clears
+		// backoff and a crash loop and relaunches an ended session.
+		h.StartGen++
+	}
 	args, _ := json.Marshal(h.Args)
 	env, _ := json.Marshal(h.Env)
-	res, err := s.db.Exec(`UPDATE hosted_sessions SET label=?,parent=?,args=?,env=?,restart=?,desired=?,updated_at=? WHERE id=?`,
-		h.Label, h.Parent, string(args), string(env), h.Restart, h.Desired, h.UpdatedAt, id)
+	res, err := s.db.Exec(`UPDATE hosted_sessions SET label=?,parent=?,args=?,env=?,restart=?,desired=?,start_gen=start_gen+?,updated_at=? WHERE id=?`,
+		h.Label, h.Parent, string(args), string(env), h.Restart, h.Desired, startBump(c), h.UpdatedAt, id)
 	if err != nil {
 		return h, err
 	}
@@ -380,6 +385,79 @@ func (s *Service) Update(id string, c wire.HostedSessionChange) (wire.HostedSess
 		return h, ErrNotFound
 	}
 	return h, nil
+}
+
+func startBump(c wire.HostedSessionChange) int {
+	if c.Desired != nil && *c.Desired == DesiredRunning {
+		return 1
+	}
+	return 0
+}
+
+// Restart asks the record's node to stop the session and resume it at once,
+// clearing backoff and a crash loop. A stopped record is set to run instead.
+func (s *Service) Restart(id string) (wire.HostedSession, error) {
+	h, err := s.Get(id)
+	if err != nil {
+		return h, err
+	}
+	if h.Desired == DesiredStopped {
+		return s.SetDesired(id, DesiredRunning)
+	}
+	h.UpdatedAt = s.clock().UnixMilli()
+	h.RestartGen++
+	return h, s.exec1(`UPDATE hosted_sessions SET restart_gen=restart_gen+1,updated_at=? WHERE id=?`, h.UpdatedAt, id)
+}
+
+// NewConversation gives the record a new agent session id, so its node
+// stops the session and starts the new conversation with --session-id, and
+// sets it to run.
+func (s *Service) NewConversation(id string) (wire.HostedSession, error) {
+	h, err := s.Get(id)
+	if err != nil {
+		return h, err
+	}
+	sid, err := newSessionID()
+	if err != nil {
+		return h, err
+	}
+	h.UpdatedAt = s.clock().UnixMilli()
+	bump := 0
+	if h.Desired != DesiredRunning {
+		h.Desired, h.StartGen, bump = DesiredRunning, h.StartGen+1, 1
+	}
+	h.AgentSessionID, h.Launched = sid, false
+	return h, s.exec1(`UPDATE hosted_sessions SET agent_session_id=?,launched=0,desired=?,start_gen=start_gen+?,updated_at=? WHERE id=?`,
+		sid, h.Desired, bump, h.UpdatedAt, id)
+}
+
+// replaceConversation gives the record a new agent session id after its
+// node could not resume old; it does nothing (changed false) when the
+// record no longer holds old.
+func (s *Service) replaceConversation(id, old string) (h wire.HostedSession, changed bool, err error) {
+	sid, err := newSessionID()
+	if err != nil {
+		return h, false, err
+	}
+	res, err := s.db.Exec(`UPDATE hosted_sessions SET agent_session_id=?,launched=0,updated_at=? WHERE id=? AND agent_session_id=?`,
+		sid, s.clock().UnixMilli(), id, old)
+	if err != nil {
+		return h, false, err
+	}
+	n, _ := res.RowsAffected()
+	h, err = s.Get(id)
+	return h, n > 0, err
+}
+
+func (s *Service) exec1(query string, args ...any) error {
+	res, err := s.db.Exec(query, args...)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // SetDesired records whether the session should run.

@@ -82,9 +82,10 @@ func Up(v, dataDir string, port int, nodeName string) error {
 // Node is `switchboard node`: a node for this machine attached to the host at
 // hostURL with the token in tokenFile, until SIGINT or SIGTERM. With a join
 // code it first exchanges the code for a token and writes tokenFile (user
-// only; an existing file is never replaced). Only a loopback host is accepted
-// in this release.
-func Node(v, hostURL, tokenFile, joinCode string) error {
+// only; an existing file is never replaced). restartSessions stops every
+// session at start so each relaunches with resume. Only a loopback host is
+// accepted in this release.
+func Node(v, hostURL, tokenFile, joinCode string, restartSessions bool) error {
 	if err := checkNodeHost(hostURL); err != nil {
 		return err
 	}
@@ -114,6 +115,14 @@ func Node(v, hostURL, tokenFile, joinCode string) error {
 	log.Printf("node: %s backend, socket %s", part.backendName, part.socket)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	if restartSessions {
+		// Every session stops now and is launched again with resume once
+		// the host's assign arrives.
+		if err = link.Node.RestartSessions(ctx); err != nil {
+			return err
+		}
+		log.Printf("node: sessions stopped; relaunching with resume")
+	}
 	if err = link.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}

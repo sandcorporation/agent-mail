@@ -1,13 +1,17 @@
 package server
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -16,6 +20,7 @@ import (
 	"github.com/sandcorporation/switchboard/internal/dashboard"
 	"github.com/sandcorporation/switchboard/internal/hosting"
 	"github.com/sandcorporation/switchboard/internal/identity"
+	"github.com/sandcorporation/switchboard/internal/mail"
 	"github.com/sandcorporation/switchboard/internal/store"
 	"github.com/sandcorporation/switchboard/internal/wire"
 )
@@ -138,8 +143,52 @@ func (s *Server) hostingHub() *hosting.Hub {
 		}
 		a.Origin = s.liveOriginAllowed
 		s.nodeHub.SetAdmin(a)
+		bosses := make([]string, 0, len(s.bossRoles))
+		for r := range s.bossRoles {
+			bosses = append(bosses, r)
+		}
+		sort.Strings(bosses)
+		s.nodeHub.SetNotify(s.hostingNotify, bosses)
 	})
 	return s.nodeHub
+}
+
+// hostingNotify is the hub's Notify: one system mail per role's mailbox in
+// one transaction, idempotent by key (suffixed with the mailbox when there
+// are several, since keys are unique per sender). A role without a mailbox
+// is skipped.
+func (s *Server) hostingNotify(to []string, subject, body, key string) error {
+	var woke []string
+	err := store.InTx(context.Background(), s.db, func(tx *sql.Tx) error {
+		woke = woke[:0]
+		seen := map[string]bool{}
+		for _, role := range to {
+			box, ok := identity.Mailbox(tx, role)
+			if !ok || seen[box] {
+				if !ok {
+					log.Printf("hosting notice %s skipped for %q: not a registered role", key, role)
+				}
+				continue
+			}
+			seen[box] = true
+			idem := key
+			if len(to) > 1 {
+				idem = key + ":" + box
+			}
+			if err := mail.InsertSystemMail(tx, box, subject, body, "", "normal", idem, s.now()); err != nil {
+				return err
+			}
+			woke = append(woke, box)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	for _, box := range woke {
+		s.hub.Publish(box)
+	}
+	return nil
 }
 
 // hostingService is the hosted-session store over this server's database.

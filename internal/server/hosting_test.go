@@ -125,10 +125,10 @@ func TestHostingOffRoutesAre404LikeUnknownRoutes(t *testing.T) {
 var hostingServed = map[string]bool{
 	"GET /api/admin/terminals": true, "POST /api/admin/terminals": true,
 	"PUT /api/admin/terminals/7": true, "DELETE /api/admin/terminals/7": true,
-	"POST /api/admin/terminals/7/restart": true,
-	"GET /api/admin/nodes":                true,
-	"DELETE /api/admin/nodes/pc":          true,
-	"POST /api/admin/terminals/7/ticket":  true, "GET /api/admin/terminals/7/socket": true,
+	"POST /api/admin/terminals/7/restart": true, "POST /api/admin/terminals/7/new-conversation": true,
+	"GET /api/admin/nodes":               true,
+	"DELETE /api/admin/nodes/pc":         true,
+	"POST /api/admin/terminals/7/ticket": true, "GET /api/admin/terminals/7/socket": true,
 	"GET /api/admin/terminals/7/log": true,
 }
 

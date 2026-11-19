@@ -24,7 +24,7 @@ func cliHost(p parsedArgs, stdout io.Writer) (int, error) {
 				return 0, usagef("host add requires --node, --base, --profile and --dir (missing %s)", o)
 			}
 		}
-	case "list", "start", "stop", "remove":
+	case "list", "start", "stop", "restart", "new-conversation", "remove":
 		if action == "list" && id != "" {
 			return 0, usagef("host list: unexpected argument %q", id)
 		}
@@ -40,7 +40,7 @@ func cliHost(p parsedArgs, stdout io.Writer) (int, error) {
 			return 0, usagef("host %s: arguments after -- are for host add", action)
 		}
 	default:
-		return 0, usagef("host: unknown action %q (add, list, start, stop, remove)", action)
+		return 0, usagef("host: unknown action %q (add, list, start, stop, restart, new-conversation, remove)", action)
 	}
 	add := wire.HostedSessionCreate{
 		Node: p.values["--node"], Base: p.values["--base"], Profile: p.values["--profile"], Directory: p.values["--dir"],

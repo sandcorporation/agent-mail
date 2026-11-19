@@ -137,6 +137,67 @@ func TestUpdateChangesOnlyGivenFields(t *testing.T) {
 	}
 }
 
+func TestStartRestartAndNewConversationCountRequests(t *testing.T) {
+	s := newService(t)
+	h, err := s.Create(record())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Start counts even when the record already runs (it clears a crash
+	// loop on the node); a stop does not.
+	if got, err := s.SetDesired(h.ID, DesiredRunning); err != nil || got.StartGen != 1 {
+		t.Fatalf("start: %+v %v", got, err)
+	}
+	if got, err := s.SetDesired(h.ID, DesiredStopped); err != nil || got.StartGen != 1 {
+		t.Fatalf("stop: %+v %v", got, err)
+	}
+	// Restart of a stopped record starts it.
+	if got, err := s.Restart(h.ID); err != nil || got.Desired != DesiredRunning || got.StartGen != 2 || got.RestartGen != 0 {
+		t.Fatalf("restart stopped: %+v %v", got, err)
+	}
+	if got, err := s.Restart(h.ID); err != nil || got.RestartGen != 1 {
+		t.Fatalf("restart: %+v %v", got, err)
+	}
+	if _, err := s.db.Exec(`UPDATE hosted_sessions SET launched=1 WHERE id=?`, h.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.NewConversation(h.ID)
+	if err != nil || got.AgentSessionID == h.AgentSessionID || got.Launched || got.Desired != DesiredRunning {
+		t.Fatalf("new conversation: %+v %v", got, err)
+	}
+	stored, _ := s.Get(h.ID)
+	if stored.AgentSessionID != got.AgentSessionID || stored.Launched || stored.RestartGen != 1 || stored.StartGen != 2 {
+		t.Fatalf("stored %+v", stored)
+	}
+	// A launched report about the old conversation is ignored.
+	if err := s.markLaunched(h.ID, h.AgentSessionID); err != nil {
+		t.Fatal(err)
+	}
+	if stored, _ = s.Get(h.ID); stored.Launched {
+		t.Fatal("old conversation's report marked the new one launched")
+	}
+	if err := s.markLaunched(h.ID, got.AgentSessionID); err != nil {
+		t.Fatal(err)
+	}
+	if stored, _ = s.Get(h.ID); !stored.Launched {
+		t.Fatal("not marked launched")
+	}
+	// The resume-failure replacement happens once per failed conversation.
+	again, changed, err := s.replaceConversation(h.ID, h.AgentSessionID)
+	if err != nil || changed || again.AgentSessionID != got.AgentSessionID {
+		t.Fatalf("stale replacement: %+v %v %v", again, changed, err)
+	}
+	fresh, changed, err := s.replaceConversation(h.ID, got.AgentSessionID)
+	if err != nil || !changed || fresh.AgentSessionID == got.AgentSessionID || fresh.Launched {
+		t.Fatalf("replacement: %+v %v %v", fresh, changed, err)
+	}
+	for _, f := range []func(string) (wire.HostedSession, error){s.Restart, s.NewConversation} {
+		if _, err := f("hs_00000000000000000000000000000000"); !errors.Is(err, ErrNotFound) {
+			t.Errorf("missing: %v", err)
+		}
+	}
+}
+
 func TestDeleteRemovesTheRecord(t *testing.T) {
 	s := newService(t)
 	h, err := s.Create(record())

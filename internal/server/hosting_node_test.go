@@ -225,6 +225,19 @@ func TestNodeChannelAssignsReportsAndGoesOffline(t *testing.T) {
 	if got := adminCall(t, base, "POST", "/api/admin/terminals/hs_00000000000000000000000000000000/restart", cookie, true, ""); got.code != http.StatusNotFound {
 		t.Errorf("restart unknown = %d", got.code)
 	}
+	// New conversation: the session stops and starts with a new id.
+	before = len(fake.Launches())
+	got = adminCall(t, base, "POST", "/api/admin/terminals/"+second.ID+"/new-conversation", cookie, true, "")
+	var renewed wire.HostedSession
+	if err := json.Unmarshal([]byte(got.body), &renewed); err != nil || got.code != http.StatusOK || renewed.AgentSessionID == second.AgentSessionID {
+		t.Fatalf("new conversation = %d %s", got.code, got.body)
+	}
+	eventually(t, "started in the new conversation", func() bool {
+		l := launchArgs(fake)
+		return len(l) == before+1 && l[before] == "sb-"+second.ID+" --session-id "+renewed.AgentSessionID
+	})
+	eventually(t, "new conversation persisted as launched", func() bool { h, _ := s.hostingService().Get(second.ID); return h.Launched })
+	second = renewed
 
 	// The node goes away: its sessions show "node offline" and keep running.
 	stop()

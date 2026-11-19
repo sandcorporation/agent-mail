@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -162,7 +163,7 @@ func (l *Link) report() {
 	sts := l.Node.States()
 	out := make([]wire.HostedNodeState, 0, len(sts))
 	for _, s := range sts {
-		out = append(out, wire.HostedNodeState{ID: s.ID, Launched: s.Launched, Runtime: s.Wire()})
+		out = append(out, wire.HostedNodeState{ID: s.ID, Launched: s.Launched, AgentSessionID: s.AgentSessionID, Runtime: s.Wire()})
 	}
 	l.mu.Lock()
 	l.states = out
@@ -218,6 +219,7 @@ func (l *Link) session(ctx context.Context, url string) (attached bool, err erro
 		}
 	}()
 	sent := "\x00"
+	told := map[string]bool{} // notices sent on this connection
 	for {
 		cur := l.current()
 		b, _ := json.Marshal(cur)
@@ -226,6 +228,16 @@ func (l *Link) session(ctx context.Context, url string) (attached bool, err erro
 				return true, err
 			}
 			sent = string(b)
+		}
+		for _, nt := range l.Node.Notices() {
+			key := nt.Kind + ":" + nt.ID + ":" + strconv.Itoa(nt.Run)
+			if told[key] {
+				continue
+			}
+			if err := write(wire.NodeFrame{Type: wire.NodeNoticeType, Notice: &nt}); err != nil {
+				return true, err
+			}
+			told[key] = true
 		}
 		select {
 		case <-sctx.Done():

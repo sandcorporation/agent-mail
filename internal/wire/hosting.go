@@ -22,9 +22,14 @@ type HostedSession struct {
 	Desired        string            `json:"desired"`
 	Cols           int               `json:"cols"`
 	Rows           int               `json:"rows"`
-	CreatedAt      int64             `json:"created_at"`
-	UpdatedAt      int64             `json:"updated_at"`
-	Runtime        HostedRuntime     `json:"runtime"`
+	// RestartGen and StartGen count Restart and Start requests; a node
+	// acts when one grows (Restart: stop and resume at once; Start: clear
+	// backoff and crash loop).
+	RestartGen int64         `json:"restart_gen"`
+	StartGen   int64         `json:"start_gen"`
+	CreatedAt  int64         `json:"created_at"`
+	UpdatedAt  int64         `json:"updated_at"`
+	Runtime    HostedRuntime `json:"runtime"`
 }
 
 // HostedRuntime is the observed state of a hosted session, held in host
@@ -38,6 +43,9 @@ type HostedRuntime struct {
 	LastExit      *int   `json:"last_exit"`
 	Restarts      int    `json:"restarts"`
 	NextAttemptAt *int64 `json:"next_attempt_at"`
+	// ResumeFailed marks a conversation that replaced one whose --resume
+	// failed.
+	ResumeFailed bool `json:"resume_failed,omitempty"`
 }
 
 // HostedSessionCreate is the body of POST /api/admin/terminals and what
@@ -97,15 +105,37 @@ type NodeJoined struct {
 const (
 	// Host to node.
 	NodeAssign  = "assign"  // Sessions: the node's full list of records
-	NodeRestart = "restart" // ID: restart one session with resume
+	NodeRestart = "restart" // ID: restart one session with resume (older hosts; records carry RestartGen)
 	NodeAttach  = "attach"  // ID: a browser viewer wants this terminal: stream it, starting with a fresh snapshot
 	NodeDetach  = "detach"  // ID: no viewer is left: stop streaming it
 	NodeInput   = "input"   // ID, Data: type these bytes into the terminal
 	NodeResize  = "resize"  // ID, Cols, Rows: resize the terminal
 	// Node to host.
-	NodeHelloType = "hello" // Hello: who the node is
-	NodeStateType = "state" // States: what the node observes, every record
+	NodeHelloType  = "hello"  // Hello: who the node is
+	NodeStateType  = "state"  // States: what the node observes, every record
+	NodeNoticeType = "notice" // Notice: a crash loop or a resume failure
 )
+
+// Notice kinds.
+const (
+	NoticeCrashLoop    = "crashloop"
+	NoticeResumeFailed = "resumefail"
+)
+
+// NodeNotice is something the host tells a person about once. A node sends
+// it again on every new connection while it holds; the host acts on it
+// idempotently (keyed by Kind, ID and Run).
+type NodeNotice struct {
+	ID   string `json:"id"`
+	Kind string `json:"kind"`
+	Run  int    `json:"run"`
+	// AgentSessionID is the conversation the notice is about; for a resume
+	// failure the host replaces it only while the record still holds it.
+	AgentSessionID string `json:"agent_session_id"`
+	LastExit       int    `json:"last_exit"`
+	// Runs is how many short runs led to it.
+	Runs int `json:"runs"`
+}
 
 // Terminal frames are the binary messages of the node channel, node to host:
 // one byte kind, one byte id length, the record id, then the VT bytes.
@@ -142,6 +172,7 @@ type NodeFrame struct {
 	Data     []byte            `json:"data,omitempty"`
 	Cols     int               `json:"cols,omitempty"`
 	Rows     int               `json:"rows,omitempty"`
+	Notice   *NodeNotice       `json:"notice,omitempty"`
 }
 
 // NodeHello is what a node says about itself when it attaches.
@@ -156,9 +187,12 @@ type NodeHello struct {
 // HostedNodeState is one record's observed state as its node reports it.
 // Launched tells the host to resume (not start) the conversation next time.
 type HostedNodeState struct {
-	ID       string        `json:"id"`
-	Launched bool          `json:"launched"`
-	Runtime  HostedRuntime `json:"runtime"`
+	ID       string `json:"id"`
+	Launched bool   `json:"launched"`
+	// AgentSessionID is the conversation Launched is about; the host
+	// ignores Launched for a conversation the record no longer holds.
+	AgentSessionID string        `json:"agent_session_id,omitempty"`
+	Runtime        HostedRuntime `json:"runtime"`
 }
 
 // TerminalTicketRequest is the body of POST /api/admin/terminals/{id}/ticket.

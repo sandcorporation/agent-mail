@@ -242,9 +242,10 @@ func (s *Service) nodeKnown(name string) bool {
 	return s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE name=?`, name).Scan(&n) == nil && n > 0
 }
 
-// markLaunched records that a session's conversation exists, so its next
-// launch resumes it.
-func (s *Service) markLaunched(id string) error {
-	_, err := s.db.Exec(`UPDATE hosted_sessions SET launched=1 WHERE id=? AND launched=0`, id)
+// markLaunched records that a session's conversation sid exists, so its
+// next launch resumes it; a report about a conversation the record no longer
+// holds (empty sid: any) changes nothing.
+func (s *Service) markLaunched(id, sid string) error {
+	_, err := s.db.Exec(`UPDATE hosted_sessions SET launched=1 WHERE id=? AND launched=0 AND (?='' OR agent_session_id=?)`, id, sid, sid)
 	return err
 }

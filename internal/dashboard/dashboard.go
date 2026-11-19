@@ -898,7 +898,16 @@ async function loadSettings(){
 }
 // ---- 터미널 (hosting) ----
 const termCols=['노드','역할','라벨','상태','이후','폴더','재시작','마지막 종료'];
-const termState={running:'실행 중',starting:'시작 중',stopped:'멈춤',waiting:'대기',crashloop:'반복 실패',unknown:'모름','node offline':'노드 오프라인',gone:'삭제됨'};
+const termState={running:'실행 중',starting:'시작 중',stopped:'멈춤',waiting:'대기',crashloop:'반복 실패','backing off':'재시도 대기','resume failed':'재개 실패',relaunching:'다시 띄우는 중',unknown:'모름','node offline':'노드 오프라인',gone:'삭제됨'};
+function termStateText(st,rt){
+  let t=termState[st]||st;
+  if(st==='backing off'&&rt.next_attempt_at){
+    const s=Math.max(0,Math.ceil((rt.next_attempt_at-Date.now())/1000));
+    t+=' · '+(s<60?s+'초':Math.floor(s/60)+'분 '+(s%60)+'초')+' 뒤';
+  }
+  if(rt.resume_failed)t+=' · 새 대화(재개 실패)';
+  return t;
+}
 async function termAct(v,method,path,body,done){
   try{await apiSend(method,'terminals/'+v.id+path,body);setMsg($('terminalsMsg'),done,'ok');loadTerminals()}
   catch(e){setMsg($('terminalsMsg'),e.message,'err')}
@@ -912,8 +921,8 @@ async function loadTerminals(){
       const rt=v.runtime||{},st=rt.state||'unknown';
       const want=v.desired==='stopped'&&st!=='stopped'&&st!=='node offline'?' → 멈춤':'';
       const tr=node('tr','',st==='node offline'?'offline':'');
-      cells(tr,termCols,[v.node,v.base,v.label||'-',(termState[st]||st)+want,when(rt.since),v.directory,String(rt.restarts||0),rt.last_exit===null||rt.last_exit===undefined?'-':String(rt.last_exit)],
-        ['','','',st==='running'?'st-idle':st==='node offline'||st==='unknown'?'st-offline':st==='crashloop'?'st-error':'','','dir','num','num']);
+      cells(tr,termCols,[v.node,v.base,v.label||'-',termStateText(st,rt)+want,when(rt.since),v.directory,String(rt.restarts||0),rt.last_exit===null||rt.last_exit===undefined?'-':String(rt.last_exit)],
+        ['','','',st==='running'?'st-idle':st==='node offline'||st==='unknown'?'st-offline':st==='crashloop'||st==='resume failed'?'st-error':'','','dir','num','num']);
       const dir=tr.children[5];dir.title=v.directory;dir.textContent='\u200e'+v.directory+'\u200e';
       const act=node('td','');
       const view=node('button','보기');view.type='button';view.onclick=()=>termOpen(v);act.append(view);
@@ -922,6 +931,9 @@ async function loadTerminals(){
         const b=node('button','멈춤');b.type='button';b.onclick=()=>termAct(v,'PUT','',{desired:'stopped'},v.base+' 멈춤');act.append(b);
         const r=node('button','재시작');r.type='button';r.onclick=()=>termAct(v,'POST','/restart',undefined,v.base+' 재시작');act.append(r);
       }
+      const fresh=node('button','새 대화');fresh.type='button';
+      fresh.onclick=()=>{if(confirm(v.node+' '+v.base+' '+v.directory+' 세션을 새 대화로 시작할까요? 지금 대화로는 돌아가지 않습니다.'))termAct(v,'POST','/new-conversation',undefined,v.base+' 새 대화')};
+      act.append(fresh);
       const del=node('button','삭제');del.type='button';
       del.onclick=()=>{if(confirm(v.node+' '+v.base+' '+v.directory+' 세션을 지울까요?'))termAct(v,'DELETE','',undefined,v.base+' 삭제')};
       act.append(del);tr.append(act);body.append(tr);
