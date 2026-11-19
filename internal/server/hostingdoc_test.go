@@ -516,12 +516,16 @@ case "$cmd" in
 esac
 `
 
-// TestE2E_HostingDocWindows runs steps W3 to W5 of the Windows variant in
+// TestE2E_HostingDocWindows runs steps W3 to W6 of the Windows variant in
 // Windows PowerShell: W3 with a release zip of this tree's binary and the
 // fake agent as claude.exe on PATH, W4 and W5 as written (admin, the setup
-// run of up, register, profiles). Then the doc's Get-SbTotp is compared
-// with the server's TOTP. W1, W2 (network) and W6 to W9 (Task Scheduler,
-// a real agent) are not run.
+// run of up, register, profiles), W6 (up.cmd, the scheduled task, builtin).
+// Then, with up running from up.cmd, the OIDC sign-in block against a fake
+// provider and W6 again (the way back): both rewrite up.cmd, and up.log
+// must show exactly one start per block, in the new mode (#240: a batch
+// file rewritten under a running cmd.exe restarted the old up). Then the
+// doc's Get-SbTotp is compared with the server's TOTP. W1, W2 (network)
+// and W7 to W9 (a real agent) are not run.
 func TestE2E_HostingDocWindows(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("the Windows variant runs on Windows")
@@ -535,7 +539,14 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 	}
 	b := e2eBackendFor(t)
 	var blocks []string
+	var w6, oidcBlock string
 	for _, d := range readDocBlocks(t) {
+		if d.section == "Windows" && strings.HasPrefix(d.step, "W6.") && w6 == "" {
+			w6 = "Write-Output '>>> W6.'\n" + strings.Join(d.lines, "\n")
+		}
+		if d.section == "OIDC sign-in" && d.lang == "powershell" {
+			oidcBlock = "Write-Output '>>> OIDC sign-in'\n" + strings.Join(d.lines, "\n")
+		}
 		if d.section == "Windows" && (strings.HasPrefix(d.step, "W3.") || strings.HasPrefix(d.step, "W4.") || strings.HasPrefix(d.step, "W5.")) {
 			pre := ""
 			if strings.HasPrefix(d.step, "W5.") && !strings.Contains(strings.Join(blocks, "\n"), ">>> W5.") {
@@ -551,12 +562,35 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 	if len(blocks) != 6 {
 		t.Fatalf("W3 to W5 have %d blocks, want 6", len(blocks))
 	}
+	if w6 == "" || oidcBlock == "" {
+		t.Fatal("no W6 or Windows OIDC sign-in block")
+	}
+	idp := newFakeIdP(t)
+	for _, r := range [][2]string{{"$issuer = 'https://id.example/realms/home'\n", "$issuer = '" + idp.srv.URL + "'\n"}, {"$clientId = '<client-id>'\n", "$clientId = '" + idp.clientID + "'\n"}} {
+		if !strings.Contains(oidcBlock, r[0]) {
+			t.Fatalf("the OIDC sign-in block has no line %q", r[0])
+		}
+		oidcBlock = strings.Replace(oidcBlock, r[0], r[1], 1)
+	}
+	blocks = append(blocks, w6, oidcBlock, strings.Replace(w6, ">>> W6.", ">>> W6. again", 1))
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+	ln.Close()
 	root, err := os.MkdirTemp("", "sbdocw")
 	if err != nil {
 		t.Fatal(err)
 	}
 	data := filepath.Join(root, "local", "switchboard-pc")
 	t.Cleanup(func() {
+		// What the script leaves running: the task's up and the task.
+		stop := "Get-NetTCPConnection -LocalPort " + port + " -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }\n" +
+			"Unregister-ScheduledTask -TaskName 'switchboard-pc' -Confirm:$false -ErrorAction SilentlyContinue\n"
+		if out, err := exec.Command(ps, "-NoProfile", "-NonInteractive", "-Command", stop).CombinedOutput(); err != nil {
+			t.Logf("cleanup: %v\n%s", err, out)
+		}
 		b.end(instanceFor(filepath.Join(data, upNodeToken)))
 		deadline := time.Now().Add(15 * time.Second)
 		for os.RemoveAll(root) != nil && time.Now().Before(deadline) {
@@ -585,12 +619,6 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dl, asset), hostingDocZip(t, bin), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
-	ln.Close()
 	body := strings.Join(blocks, "\n")
 	if !strings.Contains(body, "$port = 8090\n") {
 		t.Fatal("W3 does not set $port = 8090")
@@ -620,9 +648,30 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	after := time.Now().Unix() / adminauth.TOTPStep
 	setupLog, _ := os.ReadFile(filepath.Join(data, "setup.log"))
-	t.Logf("W3 to W5 output:\n%s", out)
+	upLog, _ := os.ReadFile(filepath.Join(data, "up.log"))
+	t.Logf("W3 to W6 output:\n%s", out)
 	if err != nil {
-		t.Fatalf("W3 to W5: %v\n%s\nsetup.log:\n%s", err, out, setupLog)
+		t.Fatalf("W3 to W6: %v\n%s\nsetup.log:\n%s\nup.log:\n%s", err, out, setupLog, upLog)
+	}
+	// One start per block that wrote up.cmd, each in that block's mode: no
+	// second start of the old up from the rewritten file.
+	var modes []string
+	for _, l := range strings.Split(string(upLog), "\n") {
+		if _, m, ok := strings.Cut(strings.TrimRight(l, "\r"), "admin auth: "); ok {
+			modes = append(modes, m)
+		}
+	}
+	if want := []string{"builtin", "oidc (public client, PKCE)", "builtin"}; !slices.Equal(modes, want) {
+		t.Errorf("up.log admin auth lines %q, want %q\nup.log:\n%s", modes, want, upLog)
+	}
+	// sbstarted: the mode line and /health's version (e2eBinary's "e2e").
+	for _, want := range []string{"admin auth: builtin", "admin auth: oidc (public client, PKCE)", "version e2e"} {
+		if !hasLine(string(out), want) {
+			t.Errorf("output has no line %q (sbstarted)", want)
+		}
+	}
+	if want := "redirect_uri=http%3A%2F%2F127.0.0.1%3A" + port + "%2Fauth%2Fcallback"; !strings.Contains(string(out), idp.srv.URL+"/authorize?") || !strings.Contains(string(out), want) {
+		t.Errorf("/auth/login did not redirect to the provider with %s", want)
 	}
 	for _, want := range append(docPrints(t, "W4."), "LEFT[]", "PERSON person", "404", "False") {
 		if !hasLine(string(out), want) {
