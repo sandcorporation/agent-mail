@@ -11,6 +11,7 @@ import (
 	"github.com/sandcorporation/switchboard/internal/config"
 	"github.com/sandcorporation/switchboard/internal/hosting"
 	"github.com/sandcorporation/switchboard/internal/identity"
+	"github.com/sandcorporation/switchboard/internal/insight"
 	"github.com/sandcorporation/switchboard/internal/presence"
 	"github.com/sandcorporation/switchboard/internal/wire"
 )
@@ -21,8 +22,9 @@ import (
 // mail from the system sender: offline notices to a session's presence parent
 // (presence.Service.SweepOffline) and label stall notices to the sender of
 // mail held longer than SWITCHBOARD_LABEL_STALL (mail.Service.SweepLabels).
-// The same sweep sends due metrics alerts and prunes old presence_log,
-// alerts and terminal_log rows.
+// The same sweep sends due metrics alerts and directive reminders
+// (presence.SweepReminders, SWITCHBOARD_REMIND, off by default) and prunes
+// old presence_log, alerts and terminal_log rows.
 
 const (
 	defaultSweepInterval = 30 * time.Second
@@ -110,6 +112,7 @@ type sweepResult struct {
 	Offline int
 	Label   int
 	Alerts  int
+	Remind  int
 }
 
 // sweep sends every due stall notice and metrics alert once and prunes old
@@ -126,6 +129,9 @@ func (s *Server) sweep(ctx context.Context) (sweepResult, error) {
 		return out, err
 	}
 	if out.Alerts, err = s.insight().SweepAlerts(ctx); err != nil {
+		return out, err
+	}
+	if out.Remind, err = s.presence().SweepReminders(ctx, insight.NewBaseResolver(s.db).Of); err != nil {
 		return out, err
 	}
 	if _, err = presence.PruneLog(s.db, s.now()); err != nil {
@@ -146,6 +152,9 @@ func (s *Server) publishSweep(res sweepResult) {
 	}
 	if res.Alerts > 0 {
 		kinds = append(kinds, "mail", "metrics")
+	}
+	if res.Remind > 0 {
+		kinds = append(kinds, "mail")
 	}
 	s.live.Publish(kinds...)
 }

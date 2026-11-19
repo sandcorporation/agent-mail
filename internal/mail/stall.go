@@ -113,7 +113,18 @@ func labelBody(addr string, ids []int64, after time.Duration) string {
 // InsertSystemMail stores mail from identity.SystemSender inside tx. idem, when not
 // empty, makes a second insert with the same key a no-op.
 func InsertSystemMail(tx *sql.Tx, to, subject, body, task, priority, idem string, now time.Time) error {
-	_, err := tx.Exec(`INSERT OR IGNORE INTO messages(sender,recipient,subject,body,created_at,task_id,priority,status,idem) VALUES(?,?,?,?,?,?,?,'pending',?)`,
-		identity.SystemSender, to, subject, body, now.UTC().Format(time.RFC3339Nano), nullable(task), priority, nullable(idem))
+	_, err := InsertSystemMailOnce(tx, to, subject, body, task, priority, idem, now)
 	return err
+}
+
+// InsertSystemMailOnce is InsertSystemMail that also reports whether a row
+// was stored (false: the idem key was already used).
+func InsertSystemMailOnce(tx *sql.Tx, to, subject, body, task, priority, idem string, now time.Time) (bool, error) {
+	res, err := tx.Exec(`INSERT OR IGNORE INTO messages(sender,recipient,subject,body,created_at,task_id,priority,status,idem) VALUES(?,?,?,?,?,?,?,'pending',?)`,
+		identity.SystemSender, to, subject, body, now.UTC().Format(time.RFC3339Nano), nullable(task), priority, nullable(idem))
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
 }

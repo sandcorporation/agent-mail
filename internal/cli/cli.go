@@ -58,6 +58,7 @@ var (
 	optBodyF   = option{"--body-file", "PATH", "read the message body from a file (stdin is used when neither is given)"}
 	optSubject = option{"--subject", "TEXT", "message subject"}
 	optUrgent  = option{"--urgent", "", "mark the message urgent (default priority is normal)"}
+	optNoReply = option{"--no-reply", "", "the message needs no answer: never an open directive, never reminded"}
 )
 
 var commands = []command{
@@ -97,7 +98,7 @@ var commands = []command{
 			{"--to", "ROLE", "recipient role, or label:BASE/LABEL for the session of BASE carrying LABEL"},
 			optSubject, optBody, optBodyF,
 			{"--task", "ID", "task identifier to attach"},
-			optUrgent,
+			optUrgent, optNoReply,
 			{"--idempotency-key", "KEY", "retry-safe key; resending with the same key returns the first message"},
 			optJSON, optProfile,
 		}},
@@ -138,6 +139,7 @@ var commands = []command{
 			{"--to", "ROLE", "send the reply to ROLE instead of the original sender"},
 			optUrgent,
 			{"--directive", "", "the reply carries new work: count it as a directive in progress"},
+			optNoReply,
 			optJSON, optProfile,
 		}},
 	{name: "ack", args: "ID", nargs: 1, summary: "Acknowledge a message", options: []option{optJSON, optProfile}},
@@ -845,11 +847,16 @@ func listURL(c Config, box, q, status string) string {
 	return endpoint(c, "/api/messages?"+v.Encode())
 }
 
-// withPriority adds "priority":"urgent" for --urgent. Normal mail omits the
-// field so servers that predate message priority accept the request unchanged.
+// withPriority adds "priority":"urgent" for --urgent and "no_reply":true for
+// --no-reply. Without the flags the fields are omitted, so servers that
+// predate them accept the request unchanged.
 func withPriority(p parsedArgs, req map[string]any) map[string]any {
 	if p.bool("--urgent") {
 		req["priority"] = "urgent"
+	}
+	if p.bool("--no-reply") {
+		// Omitted otherwise, so older servers accept the request unchanged.
+		req["no_reply"] = true
 	}
 	return req
 }

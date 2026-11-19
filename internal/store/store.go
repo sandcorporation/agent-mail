@@ -108,7 +108,10 @@ func Init(db *sql.DB) error {
 	if e = migrateTerminalLog(db); e != nil {
 		return e
 	}
-	return migrateHostingLimit(db)
+	if e = migrateHostingLimit(db); e != nil {
+		return e
+	}
+	return migrateRemind(db)
 }
 
 func HasColumn(db *sql.DB, table, column string) (bool, error) {
@@ -509,5 +512,23 @@ func migrateHostingLimit(db *sql.DB) error {
 		}
 	}
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS hosting_limit(id INTEGER PRIMARY KEY CHECK(id=1), operator INTEGER NOT NULL DEFAULT 0, set_at INTEGER NOT NULL DEFAULT 0, cleared_at INTEGER NOT NULL DEFAULT 0)`)
+	return err
+}
+
+// migrateRemind adds messages.no_reply (1: sent with --no-reply, never an
+// open directive) and remind_state, whose one row records when directive
+// reminders were first switched on (presence.SweepReminders). The row is
+// written by the first sweep with SWITCHBOARD_REMIND=on, never here.
+func migrateRemind(db *sql.DB) error {
+	has, err := HasColumn(db, "messages", "no_reply")
+	if err != nil {
+		return err
+	}
+	if !has {
+		if _, err = db.Exec(`ALTER TABLE messages ADD COLUMN no_reply INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+	}
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS remind_state(id INTEGER PRIMARY KEY CHECK(id=1), enabled_at INTEGER NOT NULL)`)
 	return err
 }

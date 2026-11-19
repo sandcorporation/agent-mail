@@ -73,7 +73,8 @@ func TestProgressAnsweredWithSlotLikeRoleNames(t *testing.T) {
 				}
 				return m.ID
 			}
-			// (b) task rule.
+			// (b) task rule: an answer for the metrics only (mail.Answers); the
+			// progress view keeps d1 open (mail.Replies, #214).
 			d1 := send(c.bossAs, map[string]any{"recipient": c.recipient, "subject": "retro", "task_id": "dev-kit-retro"})
 			send(c.worker, map[string]any{"recipient": "sandcorp/boss", "subject": "report", "task_id": "dev-kit-retro"})
 			// (a) thread rule: a directive inside the worker's report thread.
@@ -98,8 +99,8 @@ func TestProgressAnsweredWithSlotLikeRoleNames(t *testing.T) {
 					open = append(open, d.ID)
 				}
 			}
-			if len(open) != 1 || open[0] != d3 {
-				t.Fatalf("directives %d,%d answered and %d open: open %v", d1, d2, d3, open)
+			if len(open) != 2 || open[0] != d1 || open[1] != d3 {
+				t.Fatalf("directive %d replied and %d,%d open: open %v", d2, d1, d3, open)
 			}
 			if fr := mustMetrics(t, s, 7).FirstReply; fr.Count != 3 || fr.Answered != 2 {
 				t.Fatalf("first_reply %+v, want 2 of 3 answered", fr.LatencyStats)
@@ -109,7 +110,9 @@ func TestProgressAnsweredWithSlotLikeRoleNames(t *testing.T) {
 }
 
 // The rows of the two production cases of #65 as the server stores them
-// (RFC 3339 created_at with varying fraction lengths); both are answered.
+// (RFC 3339 created_at with varying fraction lengths). Both are answered for
+// the metrics; for progress only 363 (a thread reply), since 355 got task
+// reports only (#214).
 func TestProgressReplicaOfProductionCases(t *testing.T) {
 	s, _ := slotServer(t)
 	s.bossRoles = map[string]bool{"sandcorp/boss": true}
@@ -128,7 +131,7 @@ func TestProgressReplicaOfProductionCases(t *testing.T) {
 	ins(364, "sandcorp/worker-1", "sandcorp/boss", "2026-11-17T09:06:00Z", "", 361, 363)
 	ins(370, "sandcorp/boss", "sandcorp/worker-1", "2026-11-17T09:10:00Z", "", 0, 0) // control: unanswered
 	got := serviceNamed(t, mustProgress(t, s), "sandcorp").OpenDirectives
-	if len(got) != 1 || got[0].ID != 370 {
+	if len(got) != 2 || got[0].ID != 355 || got[1].ID != 370 {
 		t.Fatalf("open %+v", got)
 	}
 }

@@ -84,6 +84,59 @@ type progressMailRow struct {
 	ThreadID, ReplyTo          int64
 }
 
+// openDirectives lists the open directives, oldest first: mail from a boss
+// role that is a directive (a send, or a reply sent with --directive), not
+// sent with --no-reply, not completed by its recipient and not replied to
+// (mail.Replies: reply_to or the directive's thread, back to the sender's
+// base; a mention of #id or a shared task id elsewhere does not count). The
+// progress view lists them whatever their status; the reminders
+// (SweepReminders) take only the read ones to non-boss roles.
+func (s *Service) openDirectives(base func(string) string, isBossName func(string) bool) ([]progressMailRow, error) {
+	senders, err := s.distinctNames("sender")
+	if err != nil {
+		return nil, err
+	}
+	var bossSenders []string
+	for _, r := range senders {
+		if !identity.IsSystemSender(r) && isBossName(r) {
+			bossSenders = append(bossSenders, r)
+		}
+	}
+	if len(bossSenders) == 0 {
+		return nil, nil
+	}
+	directives, err := s.progressMailQuery(`m.sender IN (`+placeholders(len(bossSenders))+`) AND (COALESCE(m.reply_to,0)=0 OR m.directive=1) AND m.no_reply=0 AND `+mail.StatusExpr+` NOT IN ('complete','completed')`, anySlice(bossSenders)...)
+	if err != nil {
+		return nil, err
+	}
+	ds := make([]mail.FlowMail, len(directives))
+	for i, m := range directives {
+		ds[i] = mail.FlowMail{ID: m.ID, Sender: m.Sender, Recipient: m.Recipient, Created: m.At, TaskID: m.TaskID, ThreadID: m.ThreadID, ReplyTo: m.ReplyTo}
+	}
+	candidates, err := mail.ReplyCandidates(s.db, ds)
+	if err != nil {
+		return nil, err
+	}
+	byThread := map[int64][]mail.FlowMail{}
+	for _, c := range candidates {
+		byThread[c.ThreadID] = append(byThread[c.ThreadID], c)
+	}
+	var out []progressMailRow
+directive:
+	for i, m := range directives {
+		d := ds[i]
+		for _, group := range [][]mail.FlowMail{byThread[d.Thread()], byThread[d.ID]} {
+			for _, c := range group {
+				if mail.Replies(d, c, base) {
+					continue directive
+				}
+			}
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
 func (s *Service) progressMailQuery(where string, args ...any) ([]progressMailRow, error) {
 	rows, err := s.db.Query(`SELECT m.id,m.sender,m.recipient,m.subject,COALESCE(m.task_id,''),`+mail.StatusExpr+`,m.created_at,COALESCE(m.thread_id,0),COALESCE(m.reply_to,0) FROM messages m `+mail.StatusJoin+` WHERE `+where+` ORDER BY m.id`, args...)
 	if err != nil {
@@ -213,60 +266,15 @@ func (s *Service) Progress(pending time.Duration, base func(string) string) (wir
 		}
 	}
 
-	// Open directives: mail from a boss role that is a directive (a send, or
-	// a reply sent with --directive), neither completed by its recipient nor
-	// answered (mail.Answers), oldest first.
-	senders, err := s.distinctNames("sender")
+	// Open directives (openDirectives), oldest first.
+	directives, err := s.openDirectives(base, isBossName)
 	if err != nil {
 		return out, err
 	}
-	var bossSenders []string
-	for _, r := range senders {
-		if !identity.IsSystemSender(r) && isBossName(r) {
-			bossSenders = append(bossSenders, r)
-		}
-	}
-	if len(bossSenders) > 0 {
-		directives, err := s.progressMailQuery(`m.sender IN (`+placeholders(len(bossSenders))+`) AND (COALESCE(m.reply_to,0)=0 OR m.directive=1) AND `+mail.StatusExpr+` NOT IN ('complete','completed')`, anySlice(bossSenders)...)
-		if err != nil {
-			return out, err
-		}
-		ds := make([]mail.FlowMail, len(directives))
-		for i, m := range directives {
-			ds[i] = mail.FlowMail{ID: m.ID, Sender: m.Sender, Recipient: m.Recipient, Created: m.At, TaskID: m.TaskID, ThreadID: m.ThreadID, ReplyTo: m.ReplyTo}
-		}
-		candidates, err := mail.AnswerCandidates(s.db, ds, base, isBossName)
-		if err != nil {
-			return out, err
-		}
-		byThread, byTask, byMention := map[int64][]mail.FlowMail{}, map[string][]mail.FlowMail{}, map[int64][]mail.FlowMail{}
-		for _, c := range candidates {
-			byThread[c.ThreadID] = append(byThread[c.ThreadID], c)
-			if c.TaskID != "" {
-				byTask[c.TaskID] = append(byTask[c.TaskID], c)
-			}
-			for _, id := range c.Mentioned() {
-				byMention[id] = append(byMention[id], c)
-			}
-		}
-	directive:
-		for i, m := range directives {
-			d := ds[i]
-			var near []mail.FlowMail
-			if d.TaskID != "" {
-				near = byTask[d.TaskID]
-			}
-			for _, group := range [][]mail.FlowMail{byThread[d.Thread()], byThread[d.ID], near, byMention[d.ID]} {
-				for _, c := range group {
-					if mail.Answers(d, c, base, isBossName) {
-						continue directive
-					}
-				}
-			}
-			age := max(0, int64(now.Sub(m.At)/time.Second))
-			p := get(m.Recipient)
-			p.OpenDirectives = append(p.OpenDirectives, wire.ProgressDirective{ID: m.ID, To: m.Recipient, Subject: m.Subject, Status: m.Status, AgeS: age, OverThreshold: pending > 0 && age >= int64(pending/time.Second)})
-		}
+	for _, m := range directives {
+		age := max(0, int64(now.Sub(m.At)/time.Second))
+		p := get(m.Recipient)
+		p.OpenDirectives = append(p.OpenDirectives, wire.ProgressDirective{ID: m.ID, To: m.Recipient, Subject: m.Subject, Status: m.Status, AgeS: age, OverThreshold: pending > 0 && age >= int64(pending/time.Second)})
 	}
 
 	for _, p := range svcs {
