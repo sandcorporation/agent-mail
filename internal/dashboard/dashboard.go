@@ -88,8 +88,16 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13.5px/1.55 var(--font-mono
 #notice:empty{display:none}
 .wide{overflow-x:auto}
 #termScreen{overflow:auto;max-width:100%;padding:var(--space-2);background:var(--color-brand-ink);border-radius:var(--radius)}
-#termView.typing #termScreen{overflow:hidden;height:60vh;min-height:240px}
+#termPane.typing #termScreen{overflow:hidden;height:60vh;min-height:240px}
 #termMode[aria-pressed="true"]{outline:2px solid var(--st-idle)}
+.termbar{margin-bottom:var(--space-2)}
+.termbar #termMode{margin-left:auto}
+.detail-acts{display:flex;flex-wrap:wrap;gap:var(--space-2);margin-bottom:var(--space-3)}
+.settings-form.termform{margin-top:0;padding-top:0;border-top:0;max-width:none}
+.sc-app-main.has-detail.detail-wide{grid-template-columns:minmax(0,1fr)}
+.detail-wide>.sc-topbar,.detail-wide>.sc-app-page{display:none}
+.detail-wide>.detail{grid-column:1;border-left:0}
+.detail-wide #termPane.typing #termScreen{height:calc(100vh - 13rem);height:calc(100dvh - 13rem)}
 .toolbar{display:flex;gap:var(--space-2) var(--space-3);align-items:center;flex-wrap:wrap;margin-bottom:var(--space-3)}
 .toolbar [role=status],.toolbar .muted{font-size:.85em}
 .sc-sidenav-org{cursor:default}.sc-sidenav-org:hover{border-color:var(--color-line)}
@@ -145,6 +153,7 @@ table.list tr.urgent td:first-child{box-shadow:inset 3px 0 var(--st-error)}
 .sc-app-main.has-detail{grid-template-columns:minmax(0,1fr)}
 .detail{position:fixed;inset:0;align-self:stretch;height:auto;z-index:20;border-left:0}
 .detail-back{display:inline-block}
+#termWide{display:none}
 }
 @media (max-width:1180px){
 .sc-sidenav-item{width:44px}
@@ -398,9 +407,12 @@ table.stack tbody tr:hover td{background:none}
 <div class="toolbar"><h2>터미널</h2><button id="reloadTerminals">새로 고침</button><span id="terminalsNote" class="muted"></span></div>
 <div id="terminalsMsg" class="msg" role="status" aria-live="polite"></div>
 <div id="termLimit" class="toolbar"><span>구독 한도</span><strong id="termLimitText">-</strong><button type="button" id="termLimitBtn" aria-pressed="false">한도 걸기</button></div>
-<div id="termView" hidden><div class="toolbar"><button type="button" id="termBack">목록</button><h3 id="termTitle"></h3><span id="termStateText" class="muted"></span><span id="termConn" class="muted" role="status" aria-live="polite"></span><button type="button" id="termMode" aria-pressed="false">입력</button></div><div id="termScreen"></div><h3>기록</h3><div class="wide"><table class="stack"><thead><tr><th>시각</th><th>관리자</th><th>종류</th><th>바이트</th></tr></thead><tbody id="termLog"></tbody></table></div></div>
-<div class="wide" id="termListWrap"><table id="terminalsTbl" class="stack"><thead><tr><th>노드</th><th>역할</th><th>접속</th><th>라벨</th><th>분류</th><th>권한</th><th>상태</th><th>일감</th><th>이후</th><th>폴더</th><th>재시작</th><th>마지막 종료</th><th></th></tr></thead><tbody id="terminals"></tbody></table></div>
-<form id="termForm" class="settings-form">
+<div class="listbar"><div class="chips" id="termChips" role="group" aria-label="상태 고르기"></div><button type="button" id="termAddOpen" aria-haspopup="dialog" aria-controls="termAdd">추가</button></div>
+<table id="terminalsTbl" class="stack list"><thead><tr><th>이름</th><th>프로필</th><th>노드</th><th>상태</th><th>권한</th><th class="num">재시작</th><th>마지막 시작</th></tr></thead><tbody id="terminals"></tbody></table>
+<div id="termHold" hidden><div id="termPane" class="termpane"><div class="toolbar termbar"><span id="termStateText" class="muted"></span><span id="termConn" class="muted" role="status" aria-live="polite"></span><button type="button" id="termMode" aria-pressed="false">입력</button><button type="button" id="termWide" aria-pressed="false" title="Esc: 원래 크기">넓히기</button></div><div id="termPaneMsg" class="msg" role="status" aria-live="polite"></div><div id="termScreen"></div></div></div>
+<dialog id="termAdd" class="sc-drawer" aria-labelledby="termAddTitle"><div class="sc-drawer-head"><h3 id="termAddTitle" class="sc-drawer-title">터미널 추가</h3><button type="button" id="termAddClose" class="detail-close" aria-label="닫기">×</button></div><div class="sc-drawer-body">
+<div id="termAddMsg" class="msg" role="status" aria-live="polite"></div>
+<form id="termForm" class="settings-form termform">
 <label>노드 <input id="termNode" required autocomplete="off" autocapitalize="off" spellcheck="false" value="local"></label>
 <label>역할 <input id="termBase" required autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="team/worker"></label>
 <label>프로필 <input id="termProfile" required autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="team-worker"></label>
@@ -413,6 +425,7 @@ table.stack tbody tr:hover td{background:none}
 <label>인자 <input id="termArgs" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="--model opus"></label>
 <div class="row"><button type="submit">추가</button><button type="button" id="termClear">비우기</button></div>
 </form>
+</div></dialog>
 </section>
 </main>
 <aside id="detail" class="detail" aria-labelledby="detailTitle" hidden>
@@ -448,7 +461,7 @@ async function loadMe(){
     const m=await r.json();adminMode=m.mode||'';hostingOn=m.hosting===true;termAssets=Array.isArray(m.terminal_assets)?m.terminal_assets:[];
     $('tab-terminals').hidden=!hostingOn;$('nodesBox').hidden=!hostingOn;
     if(hostingOn&&location.hash==='#settings')loadNodes();
-    if(hostingOn&&(location.hash==='#terminals'||location.hash.startsWith('#terminal=')))route();
+    if(hostingOn&&location.hash.startsWith('#terminal'))route();
     if(hostingOn&&curTab==='sessions')loadSessions();
     if(hostingOn&&detailCur)drawDetail();
     $('whoName').textContent=m.mode==='legacy'?'프록시':m.user;
@@ -562,6 +575,7 @@ function hideDetail(){
   const a=document.activeElement,back=$('detail').contains(a)||a===document.body||!a;
   detailCur=null;detailSeq++;
   $('detail').hidden=true;$('appMain').classList.remove('has-detail');
+  $('detailBody').replaceChildren();termGc();
   markDetailRows();
   const tr=detailRowFor(c.tab,c.id);
   if(back&&tr&&curTab===c.tab)tr.focus();
@@ -597,7 +611,9 @@ async function drawDetail(){
   const top=$('detail').scrollTop;
   $('detailBody').replaceChildren(...box.childNodes);
   $('detail').scrollTop=top;
-  if(inBody||(onTab&&!nav.contains(document.activeElement)))$('detailTitle').focus({preventScroll:true});
+  if(inBody&&$('detailBody').contains(act))act.focus({preventScroll:true});
+  else if(inBody||(onTab&&!nav.contains(document.activeElement)))$('detailTitle').focus({preventScroll:true});
+  termGc();
 }
 $('detailClose').onclick=closeDetail;
 $('detailBack').onclick=closeDetail;
@@ -649,7 +665,7 @@ function drawSessions(){
       tr.children[3].title=when(v.last_turn_at);
       if(v.subagents>0){const s=node('span','서브 '+v.subagents,'subs');s.title=subagentNote(v.subagents);tr.children[1].append(' · ',s)}
       const h=hosted.get(v.role);
-      if(h){const a=node('a','터미널','hosted');a.href='#terminal='+encodeURIComponent(h.id);a.title=h.node+' · '+h.directory;tr.children[0].append(' ',a)}
+      if(h){const a=node('a','터미널','hosted');a.href=detailHash('terminals',h.id,'screen');a.title=h.node+' · '+h.directory;tr.children[0].append(' ',a)}
       detailRow(tr,'sessions',v.role);
       body.append(tr);
     }
@@ -681,8 +697,8 @@ registerDetail('sessions',{
       return;
     }
     if(sub==='terminal'){
-      const a=node('a','터미널','hosted');a.href='#terminal='+encodeURIComponent(it.h.id);a.title=it.h.node+' · '+it.h.directory;
-      box.append(dl([['노드',it.h.node],['폴더',it.h.directory],['열기',a]]));
+      const a=node('a',termRole(it.h)+(it.h.label?' · '+it.h.label:''),'hosted');a.href=detailHash('terminals',it.h.id,'screen');a.title=it.h.node+' · '+it.h.directory;
+      box.append(dl([['노드',it.h.node],['폴더',it.h.directory],['터미널',a]]),termPaneFor(it.h));
       return;
     }
     const [stText,stClass]=sessionStatus(v.status);
@@ -1183,7 +1199,9 @@ async function loadSettings(){
   }catch(e){$('settingsNote').textContent=e.message}
 }
 // ---- 터미널 (hosting) ----
-const termCols=['노드','역할','접속','라벨','분류','권한','상태','일감','이후','폴더','재시작','마지막 종료'];
+// The list opens a record in the detail panel (#terminals/<id>/<sub>): 화면
+// (the live terminal), 기록 (runtime and the access log) and 설정. The add
+// form sits in a drawer.
 const termClass={lead:'총괄',coordinator:'조율',execute:'실행',review:'검토'};
 let termLimited=false;
 async function loadTermLimit(){
@@ -1208,8 +1226,6 @@ async function hostedBySlot(){
   try{for(const v of await api('terminals'))if(v.slot&&v.slot.role)m.set(v.slot.role,v)}catch(e){}
   return m;
 }
-// termFocus is the record a #terminal=<id> link asked for; loadTerminals marks its row.
-let termFocus='';
 const termState={running:'실행 중',starting:'시작 중',stopped:'멈춤',waiting:'대기',crashloop:'반복 실패','backing off':'재시도 대기','resume failed':'재개 실패',relaunching:'다시 띄우는 중',unknown:'모름','node offline':'노드 오프라인',gone:'삭제됨'};
 function termStateText(st,rt){
   let t=termState[st]||st;
@@ -1220,48 +1236,155 @@ function termStateText(st,rt){
   if(rt.resume_failed)t+=' · 새 대화(재개 실패)';
   return t;
 }
-async function termAct(v,method,path,body,done){
-  try{await apiSend(method,'terminals/'+v.id+path,body);setMsg($('terminalsMsg'),done,'ok');loadTerminals()}
-  catch(e){setMsg($('terminalsMsg'),e.message,'err')}
-}
+function termSt(v){return (v.runtime||{}).state||'unknown'}
+function termStClass(st){return st==='running'?'st-idle':st==='node offline'||st==='unknown'?'st-offline':st==='crashloop'||st==='resume failed'?'st-error':''}
+const termTone={'st-idle':'success','st-error':'danger'};
+function termRole(v){return v.slot&&v.slot.role?v.slot.role:v.base}
+function termDesire(v){const st=termSt(v);return v.desired==='stopped'&&st!=='stopped'&&st!=='node offline'?' → 멈춤':''}
+const termCols=['이름','프로필','노드','상태','권한','재시작','마지막 시작'];
+const termChips=[['all','전체',()=>true],['running','실행 중',v=>termSt(v)==='running'],['stopped','멈춤',v=>v.desired==='stopped'||termSt(v)==='stopped'],['problem','문제',v=>/^(crashloop|resume failed|backing off)$/.test(termSt(v))],['offline','오프라인',v=>/^(node offline|unknown)$/.test(termSt(v))]];
+// termSeq drops an answer a later load has overtaken.
+let termData=null,termFilter='all',termSeq=0;
 async function loadTerminals(){
+  const seq=++termSeq;
   $('terminalsNote').textContent='불러오는 중…';
   loadTermLimit();
   try{
     const rows=await api('terminals');
-    const body=$('terminals');body.replaceChildren();
-    for(const v of rows){
-      const rt=v.runtime||{},st=rt.state||'unknown';
-      const want=v.desired==='stopped'&&st!=='stopped'&&st!=='node offline'?' → 멈춤':'';
-      const tr=node('tr','',st==='node offline'?'offline':'');tr.dataset.id=v.id;
-      const pr=v.presence||'';
-      cells(tr,termCols,[v.node,v.slot&&v.slot.role?v.slot.role:v.base,termPresence[pr]||pr||'-',v.label||'-',termClass[v.class]||v.class||'-',v.skip_permissions?'건너뜀':'물음',termStateText(st,rt)+want,v.accepting_work===false?'받지 않음':'받음',when(rt.since),v.directory,String(rt.restarts||0),rt.last_exit===null||rt.last_exit===undefined?'-':String(rt.last_exit)],
-        ['','',pr==='online'?'st-idle':pr?'st-offline':'','','','',st==='running'?'st-idle':st==='node offline'||st==='unknown'?'st-offline':st==='crashloop'||st==='resume failed'?'st-error':'',v.accepting_work===false?'st-blocked':'','','dir','num','num']);
-      if(v.slot&&v.slot.role)tr.children[1].title=v.base;
-      if(v.id===termFocus){tr.classList.add('focus');setTimeout(()=>tr.scrollIntoView({block:'center'}),0)}
-      const dir=tr.children[9];dir.title=v.directory;dir.textContent='\u200e'+v.directory+'\u200e';
-      const act=node('td','');
-      const view=node('button','보기');view.type='button';view.onclick=()=>termOpen(v);act.append(view);
-      if(v.desired==='stopped'){const b=node('button','시작');b.type='button';b.onclick=()=>termAct(v,'PUT','',{desired:'running'},v.base+' 시작');act.append(b)}
-      else{
-        const b=node('button','멈춤');b.type='button';b.onclick=()=>termAct(v,'PUT','',{desired:'stopped'},v.base+' 멈춤');act.append(b);
-        const r=node('button','재시작');r.type='button';r.onclick=()=>termAct(v,'POST','/restart',undefined,v.base+' 재시작');act.append(r);
-      }
-      const fresh=node('button','새 대화');fresh.type='button';
-      fresh.onclick=()=>{if(confirm(v.node+' '+v.base+' '+v.directory+' 세션을 새 대화로 시작할까요? 지금 대화로는 돌아가지 않습니다.'))termAct(v,'POST','/new-conversation',undefined,v.base+' 새 대화')};
-      act.append(fresh);
-      const del=node('button','삭제');del.type='button';
-      del.onclick=()=>{if(confirm(v.node+' '+v.base+' '+v.directory+' 세션을 지울까요?'))termAct(v,'DELETE','',undefined,v.base+' 삭제')};
-      act.append(del);tr.append(act);body.append(tr);
+    if(seq!==termSeq)return;
+    termData=rows;drawTerminals();
+  }catch(e){if(seq===termSeq)$('terminalsNote').textContent=e.message}
+}
+function drawTerminals(){
+  if(!termData)return;
+  const rows=termData,chips=$('termChips');chips.replaceChildren();
+  for(const [k,label,f] of termChips){
+    const b=node('button',label+' ','sc-chip');b.type='button';b.setAttribute('aria-pressed',k===termFilter?'true':'false');
+    b.append(node('span',String(rows.filter(f).length),'sc-chip-count'));
+    b.onclick=()=>{termFilter=k;drawTerminals()};
+    chips.append(b);
+  }
+  const shown=rows.filter(termChips.find(c=>c[0]===termFilter)[2]),body=$('terminals');
+  keepRowFocus(body,()=>{
+    body.replaceChildren();
+    for(const v of shown){
+      const rt=v.runtime||{},st=termSt(v),stc=termStClass(st);
+      const tr=node('tr','',st==='node offline'?'offline':stc==='st-error'?'rowerror':'');
+      const name=node('td',termRole(v));if(v.slot&&v.slot.role)name.title=v.base;
+      if(v.label)name.append(node('small',v.label));
+      const state=node('td',termStateText(st,rt)+termDesire(v),stc);
+      const pr=v.presence||'',sub=[termPresence[pr]||pr,v.accepting_work===false?'일감 받지 않음':''].filter(Boolean).join(' · ');
+      if(sub)state.append(node('small',sub));
+      const last=node('td',rt.started_at?ago(Date.now(),rt.started_at):'-','nowrap');last.title=when(rt.started_at);
+      const cells=[name,node('td',v.profile||'-'),node('td',v.node),state,node('td',v.skip_permissions?'건너뜀':'물음','nowrap'),node('td',String(rt.restarts||0),'num'),last];
+      cells.forEach((td,i)=>{if(i>0)td.dataset.label=termCols[i];tr.append(td)});
+      detailRow(tr,'terminals',v.id);
+      body.append(tr);
     }
-    if(!rows.length)emptyRow(body,13,'터미널 없음');
-    if(termFocus&&!rows.some(v=>v.id===termFocus))setMsg($('terminalsMsg'),'터미널 '+termFocus+' 없음','err');
-    $('terminalsNote').textContent=rows.length+'개';
-  }catch(e){$('terminalsNote').textContent=e.message}
+    if(!shown.length)emptyRow(body,termCols.length,'터미널 없음');
+  });
+  $('terminalsNote').textContent=(shown.length===rows.length?'':shown.length+' / ')+rows.length+'개';
 }
 tabLoaders.terminals=loadTerminals;
-// ---- 터미널 보기: a snapshot then output over the terminal socket; text reaches the page only through the terminal renderer ----
-let termLib=null,termView=null;
+// termNote is the last action's result, shown above the open record's sub-tabs.
+let termNote=null;
+async function termAct(v,method,path,body,done){
+  try{
+    await apiSend(method,'terminals/'+v.id+path,body);
+    termNote={id:v.id,text:done,cls:'ok'};setMsg($('terminalsMsg'),done,'ok');loadTerminals();
+    if(method==='DELETE'&&detailCur&&detailCur.id===v.id){closeDetail();return}
+  }catch(e){termNote={id:v.id,text:e.message,cls:'err'};setMsg($('terminalsMsg'),e.message,'err')}
+  drawDetail();
+}
+// termActs puts the record's actions (멈춤 or 시작 · 재시작 · 새 대화 · 지우기) in box.
+function termActs(v,box){
+  const acts=node('div','','detail-acts');
+  const add=(label,fn)=>{const b=node('button',label);b.type='button';b.onclick=fn;acts.append(b)};
+  if(v.desired==='stopped')add('시작',()=>termAct(v,'PUT','',{desired:'running'},v.base+' 시작'));
+  else{
+    add('멈춤',()=>termAct(v,'PUT','',{desired:'stopped'},v.base+' 멈춤'));
+    add('재시작',()=>termAct(v,'POST','/restart',undefined,v.base+' 재시작'));
+  }
+  add('새 대화',()=>{if(confirm(v.node+' '+v.base+' '+v.directory+' 세션을 새 대화로 시작할까요? 지금 대화로는 돌아가지 않습니다.'))termAct(v,'POST','/new-conversation',undefined,v.base+' 새 대화')});
+  add('지우기',()=>{if(confirm(v.node+' '+v.base+' '+v.directory+' 세션을 지울까요?'))termAct(v,'DELETE','',undefined,v.base+' 삭제')});
+  box.append(acts);
+  if(termNote&&termNote.id===v.id)box.append(node('p',termNote.text,'msg '+termNote.cls));
+}
+function termDir(d){const s=node('span','‎'+d+'‎','dir');s.title=d;return s}
+const termLogKind={attach:'연결',detach:'끊음',input:'입력'};
+// termHistory draws 기록: the runtime's starts, restarts and exits, then who attached and typed.
+async function termHistory(v,box){
+  const rt=v.runtime||{},st=termSt(v);
+  const pairs=[['상태',termStateText(st,rt)+termDesire(v)],['이후',when(rt.since)],['마지막 시작',when(rt.started_at)],['재시작',String(rt.restarts||0)+'회'],['마지막 종료',rt.last_exit===null||rt.last_exit===undefined?'-':String(rt.last_exit)]];
+  if(rt.next_attempt_at)pairs.push(['다음 시도',when(rt.next_attempt_at)]);
+  if(rt.resume_failed)pairs.push(['재개','실패 · 새 대화']);
+  box.append(dl(pairs),node('h3','접속'));
+  const rows=await api('terminals/'+encodeURIComponent(v.id)+'/log');
+  const tbl=node('table','','stack list'),head=node('tr','');
+  for(const h of ['시각','관리자','종류','바이트'])head.append(node('th',h));
+  const thead=document.createElement('thead');thead.append(head);
+  const body=document.createElement('tbody');body.id='termLog';
+  for(const e of rows){
+    const tr=node('tr','');
+    cells(tr,['시각','관리자','종류','바이트'],[when(e.at),e.admin_user,termLogKind[e.kind]||e.kind,e.kind==='input'?String(e.bytes):'-'],['','','','num']);
+    body.append(tr);
+  }
+  if(!rows.length)emptyRow(body,4,'기록 없음');
+  tbl.append(thead,body);box.append(tbl);
+}
+// termSettings draws 설정: what the record runs and the fields a PUT changes.
+function termSettings(v,box){
+  const pr=v.presence||'';
+  box.append(dl([['노드',v.node],['역할',v.base],['슬롯',v.slot&&v.slot.role?v.slot.role:'-'],['접속',termPresence[pr]||pr||'-'],['프로필',v.profile||'-'],['인자',(v.args||[]).join(' ')||'-'],['폴더',termDir(v.directory)],['일감',v.accepting_work===false?'받지 않음':'받음']]));
+  const perm=node('button',v.skip_permissions?'권한 건너뜀':'권한 물음');perm.type='button';perm.id='termPermToggle';
+  perm.setAttribute('aria-pressed',String(!!v.skip_permissions));
+  perm.onclick=()=>termAct(v,'PUT','',{skip_permissions:!v.skip_permissions},v.base+(v.skip_permissions?' 권한 물음':' 권한 건너뜀'));
+  const f=node('form','','settings-form termform');f.id='termEdit';
+  const field=(label,el)=>{const l=node('label',label+' ');l.append(el);f.append(l);return el};
+  const input=(val)=>{const i=document.createElement('input');i.value=val||'';i.autocomplete='off';i.spellcheck=false;return i};
+  const select=(val,opts)=>{const s=document.createElement('select');for(const [k,t] of opts){const o=node('option',t);o.value=k;s.append(o)}s.value=val;return s};
+  const label=field('라벨',input(v.label)),parent=field('부모',input(v.parent));
+  const cls=field('분류',select(v.class||'execute',Object.entries(termClass)));
+  const restart=field('재시작',select(v.restart||'always',[['always','always'],['on-failure','on-failure'],['never','never']]));
+  const args=field('인자',input((v.args||[]).join(' ')));
+  const row=node('div','','row'),save=node('button','저장');save.type='submit';row.append(save,perm);f.append(row);
+  f.onsubmit=e=>{
+    e.preventDefault();
+    const c={},a=args.value.split(/\s+/).filter(Boolean);
+    if(label.value.trim()!==(v.label||''))c.label=label.value.trim();
+    if(parent.value.trim()!==(v.parent||''))c.parent=parent.value.trim();
+    if(cls.value!==(v.class||'execute'))c.class=cls.value;
+    if(restart.value!==(v.restart||'always'))c.restart=restart.value;
+    if(a.join(' ')!==(v.args||[]).join(' '))c.args=a;
+    if(!Object.keys(c).length)return;
+    termAct(v,'PUT','',c,v.base+' 설정 저장');
+  };
+  box.append(f,node('p','바꾼 설정은 다음 시작부터 적용','muted'));
+}
+const termLoad=async id=>(await api('terminals')).find(v=>v.id===id)||null;
+registerDetail('terminals',{
+  list:'터미널',
+  load:termLoad,
+  head:v=>{const st=termSt(v);return {title:termRole(v)+(v.label?' · '+v.label:''),badge:[termState[st]||st,termTone[termStClass(st)]||'neutral']}},
+  subs:()=>[['screen','화면'],['log','기록'],['settings','설정']],
+  draw:async(v,sub,box)=>{
+    termActs(v,box);
+    if(sub==='log'){await termHistory(v,box);return}
+    if(sub==='settings'){termSettings(v,box);return}
+    box.append(termPaneFor(v));
+  }
+});
+$('termAddOpen').onclick=()=>$('termAdd').showModal();
+$('termAddClose').onclick=()=>$('termAdd').close();
+// The drawer takes its own Esc, so an open detail panel stays open.
+$('termAdd').addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();$('termAdd').close()}});
+// ---- 터미널 화면: a snapshot then output over the terminal socket; text reaches the page only through the terminal renderer ----
+// One screen (#termPane) moves between #termHold and the open detail (터미널
+// 화면, or 세션 터미널), so a redraw keeps the connection. termGc closes it
+// once the detail no longer shows it.
+let termLib=null,termView=null,termWide=false;
+// tp finds an element of the screen, also while it is out of the page.
+const termPaneEl=$('termPane'),tp=id=>id==='termPane'?termPaneEl:termPaneEl.querySelector('#'+id);
 function loadTermLib(){
   if(!termLib)termLib=(async()=>{
     for(const u of termAssets){
@@ -1276,21 +1399,13 @@ function loadTermLib(){
   })().catch(e=>{termLib=null;throw e});
   return termLib;
 }
-const termLogKind={attach:'연결',detach:'끊음',input:'입력'};
-async function termLog(t){
-  if(t.closed)return;
-  try{
-    const rows=await api('terminals/'+encodeURIComponent(t.id)+'/log');
-    if(t.closed||termView!==t)return;
-    const body=$('termLog');body.replaceChildren();
-    for(const e of rows){
-      const tr=node('tr','');
-      cells(tr,['시각','관리자','종류','바이트'],[when(e.at),e.admin_user,termLogKind[e.kind]||e.kind,e.kind==='input'?String(e.bytes):'-'],['','','','num']);
-      body.append(tr);
-    }
-    if(!rows.length)emptyRow(body,4,'기록 없음');
-  }catch(e){}
+// termPaneFor(v) returns the screen for a detail body; the terminal opens
+// once the body holds it, and stays open while the same record is shown.
+function termPaneFor(v){
+  if(!termView||termView.id!==v.id)setTimeout(()=>{if((!termView||termView.id!==v.id)&&$('detailBody').contains(tp('termPane')))termOpen(v)},0);
+  return tp('termPane');
 }
+function termGc(){if(!$('detailBody').contains(tp('termPane')))termClose()}
 // termSend sends one client frame on an open input socket.
 function termSend(t,m){if(t.mode==='input'&&t.ws&&t.ws.readyState===1)t.ws.send(JSON.stringify(m))}
 // termInput sends typed or pasted text, split under the host's 64 KiB frame limit.
@@ -1305,48 +1420,73 @@ function termInput(t,d){
   }
   if(chunk)termSend(t,{type:'input',data:chunk});
 }
-// termFit fits an input terminal to the panel; the host gets the size.
+// termFit fits the screen to its box: an input terminal takes the box's
+// size (the host gets it); a view terminal keeps the host's size and scales
+// its font to the box's width.
 function termFit(t,always){
-  if(t.closed||t.mode!=='input'||!t.term)return;
+  if(t.closed||!t.term)return;
+  if(t.mode!=='input'){termScale(t);return}
   const c=t.term.cols,r=t.term.rows;
   if(t.fit)try{t.fit.fit()}catch(e){}
   if(always&&t.term.cols===c&&t.term.rows===r)termSend(t,{type:'resize',cols:t.term.cols,rows:t.term.rows});
 }
+function termScale(t){
+  if(t.closed||!t.term||t.mode==='input')return;
+  let d;try{d=t.fit&&t.fit.proposeDimensions()}catch(e){}
+  if(!d||!(d.cols>0))return;
+  const f=t.term.options.fontSize,want=Math.max(5,Math.min(15,Math.floor(f*d.cols/t.term.cols*4)/4));
+  if(want<f||want>=f+0.5)t.term.options.fontSize=want;
+}
 function termModeShow(t){
   const typing=t.mode==='input';
-  $('termMode').setAttribute('aria-pressed',String(typing));
-  $('termView').classList.toggle('typing',typing);
+  tp('termMode').setAttribute('aria-pressed',String(typing));
+  tp('termPane').classList.toggle('typing',typing);
   if(t.term)t.term.options.disableStdin=!typing;
 }
-$('termMode').onclick=()=>{
+tp('termMode').onclick=()=>{
   const t=termView;if(!t||!t.term)return;
   t.mode=t.mode==='input'?'view':'input';termModeShow(t);
+  if(t.mode==='input')t.term.options.fontSize=15;
   const ws=t.ws;t.ws=null;if(ws)ws.close();
   t.tries=0;clearTimeout(t.timer);termConnect(t);
   if(t.mode==='input')t.term.focus();
 };
+// 넓히기 lays the detail over the list (desktop). Esc: a typing terminal
+// takes it; otherwise it first returns to the normal width, and only then
+// does the panel's own Esc close the detail.
+function termWiden(on){
+  termWide=on;$('appMain').classList.toggle('detail-wide',on);
+  tp('termWide').setAttribute('aria-pressed',String(on));tp('termWide').textContent=on?'원래 크기':'넓히기';
+}
+tp('termWide').onclick=()=>termWiden(!termWide);
+document.addEventListener('keydown',e=>{
+  if(e.key!=='Escape'||!termWide||e.defaultPrevented)return;
+  if(e.target.closest&&e.target.closest('dialog'))return;
+  if(termView&&termView.mode==='input'&&tp('termScreen').contains(e.target))return;
+  e.preventDefault();termWiden(false);
+},true);
+tp('termScreen').addEventListener('keydown',e=>{if(e.key==='Escape'&&termView&&termView.mode==='input')e.preventDefault()});
 const termConnText={connecting:'연결 중',open:'연결됨',retry:'다시 연결 중',closed:'끊김'};
-function termConnSet(s){$('termConn').textContent=termConnText[s]||s}
+function termConnSet(s){tp('termConn').textContent=termConnText[s]||s}
 async function termOpen(v){
-  termClose();
-  const t={id:v.id,ws:null,term:null,fit:null,ro:null,timer:0,fitTimer:0,logTimer:0,tries:0,closed:false,mode:'view'};termView=t;
-  termModeShow(t);$('termLog').replaceChildren();
-  $('termTitle').textContent=v.base+(v.label?' · '+v.label:'');
-  $('termStateText').textContent='';
-  $('termListWrap').hidden=true;$('termForm').hidden=true;$('termLimit').hidden=true;$('termView').hidden=false;
+  termStop();
+  const t={id:v.id,ws:null,term:null,fit:null,ro:null,timer:0,fitTimer:0,tries:0,closed:false,mode:'view'};termView=t;
+  termModeShow(t);tp('termStateText').textContent='';setMsg(tp('termPaneMsg'),'');
   termConnSet('connecting');
-  try{await loadTermLib()}catch(e){termConnSet('closed');setMsg($('terminalsMsg'),e.message,'err');return}
+  try{await loadTermLib()}catch(e){termConnSet('closed');setMsg(tp('termPaneMsg'),e.message,'err');return}
   if(t.closed)return;
   t.term=new Terminal({cols:v.cols||120,rows:v.rows||40,disableStdin:true,scrollback:5000});
   if(typeof FitAddon==='object'&&FitAddon.FitAddon){t.fit=new FitAddon.FitAddon();t.term.loadAddon(t.fit)}
-  t.term.open($('termScreen'));
+  // Esc in view mode is the page's (넓히기, then the panel); in input mode the terminal's.
+  t.term.attachCustomKeyEventHandler(e=>!(e.key==='Escape'&&t.mode!=='input'));
+  t.term.open(tp('termScreen'));
   t.term.onData(d=>termInput(t,d));
-  t.term.onResize(s=>termSend(t,{type:'resize',cols:s.cols,rows:s.rows}));
+  t.term.onResize(s=>{termSend(t,{type:'resize',cols:s.cols,rows:s.rows});if(t.mode!=='input')setTimeout(()=>termScale(t),0)});
   if(typeof ResizeObserver==='function'){
     t.ro=new ResizeObserver(()=>{clearTimeout(t.fitTimer);t.fitTimer=setTimeout(()=>termFit(t),150)});
-    t.ro.observe($('termScreen'));
+    t.ro.observe(tp('termScreen'));
   }
-  termLog(t);t.logTimer=setInterval(()=>termLog(t),15000);
+  termScale(t);
   termConnect(t);
 }
 async function termConnect(t){
@@ -1355,7 +1495,7 @@ async function termConnect(t){
   let tk;
   try{tk=await apiSend('POST','terminals/'+encodeURIComponent(t.id)+'/ticket',{mode:t.mode})}
   catch(e){
-    if(e.status===404||e.status===401){termConnSet('closed');setMsg($('terminalsMsg'),e.message,'err');return}
+    if(e.status===404||e.status===401){termConnSet('closed');setMsg(tp('termPaneMsg'),e.message,'err');return}
     termRetry(t);return;
   }
   if(t.closed)return;
@@ -1366,13 +1506,13 @@ async function termConnect(t){
     if(typeof ev.data==='string'){
       let m;try{m=JSON.parse(ev.data)}catch(e){return}
       if(m.type==='hello'){
-        t.tries=0;termConnSet('open');termLog(t);
+        t.tries=0;termConnSet('open');
         if(t.mode==='input')termFit(t,true);
         else if(m.cols>0&&m.rows>0&&(m.cols!==t.term.cols||m.rows!==t.term.rows))t.term.resize(m.cols,m.rows);
       }
       if(m.type==='size'&&t.mode!=='input'&&m.cols>0&&m.rows>0)t.term.resize(m.cols,m.rows);
-      if(m.type==='refused')setMsg($('terminalsMsg'),m.error||'거부됨','err');
-      if(m.type==='hello'||m.type==='state')$('termStateText').textContent=termState[m.state]||m.state;
+      if(m.type==='refused')setMsg(tp('termPaneMsg'),m.error||'거부됨','err');
+      if(m.type==='hello'||m.type==='state')tp('termStateText').textContent=termState[m.state]||m.state;
       return;
     }
     t.term.write(new Uint8Array(ev.data));
@@ -1384,25 +1524,30 @@ function termRetry(t){
   t.tries++;termConnSet('retry');
   clearTimeout(t.timer);t.timer=setTimeout(()=>termConnect(t),Math.min(30000,500*2**Math.min(t.tries,6)));
 }
-function termClose(){
+// termStop ends the open terminal; termClose also puts the screen back in
+// #termHold and returns to the normal width.
+function termStop(){
   const t=termView;if(!t)return;
-  termView=null;t.closed=true;clearTimeout(t.timer);clearTimeout(t.fitTimer);clearInterval(t.logTimer);
+  termView=null;t.closed=true;clearTimeout(t.timer);clearTimeout(t.fitTimer);
   if(t.ro)t.ro.disconnect();
-  $('termView').classList.remove('typing');
+  tp('termPane').classList.remove('typing');
   if(t.ws)t.ws.close();
   if(t.term)t.term.dispose();
-  $('termScreen').replaceChildren();
-  $('termView').hidden=true;$('termListWrap').hidden=false;$('termForm').hidden=false;$('termLimit').hidden=false;
+  tp('termScreen').replaceChildren();
 }
-$('termBack').onclick=termClose;
+function termClose(){
+  termStop();
+  if(termWide)termWiden(false);
+  if(!$('termHold').contains(tp('termPane')))$('termHold').append(tp('termPane'));
+}
 $('termForm').onsubmit=async e=>{
   e.preventDefault();
   const args=$('termArgs').value.split(/\s+/).filter(Boolean);
   const rec={node:$('termNode').value.trim(),base:$('termBase').value.trim(),profile:$('termProfile').value.trim(),directory:$('termDir').value.trim(),label:$('termLabel').value.trim(),parent:$('termParent').value.trim(),restart:$('termRestart').value,class:$('termClass').value,skip_permissions:$('termPerms').value==='skip',args:args};
-  try{await apiSend('POST','terminals',rec);setMsg($('terminalsMsg'),rec.base+' 추가','ok');$('termForm').reset();loadTerminals()}
-  catch(err){setMsg($('terminalsMsg'),err.message,'err')}
+  try{await apiSend('POST','terminals',rec);setMsg($('terminalsMsg'),rec.base+' 추가','ok');$('termForm').reset();$('termAdd').close();loadTerminals()}
+  catch(err){setMsg($('termAddMsg'),err.message,'err')}
 };
-$('termClear').onclick=()=>{$('termForm').reset();setMsg($('terminalsMsg'),'')};
+$('termClear').onclick=()=>{$('termForm').reset();setMsg($('termAddMsg'),'')};
 $('reloadTerminals').onclick=loadTerminals;
 // targetPath keeps the slashes of a target (svc/coordinator, svc/*) as path separators.
 function targetPath(t){return t.split('/').map(encodeURIComponent).join('/')}
@@ -1595,7 +1740,7 @@ function liveRetry(){
 }
 let curTab='';
 function showTab(name){
-  if(name!=='terminals')termClose();
+  if(name!=='terminals'&&$('termAdd').open)$('termAdd').close();
   curTab=name;
   for(const n of tabNames){
     const on=n===name,t=$('tab-'+n);
@@ -1609,9 +1754,9 @@ function showTab(name){
   liveStale.delete(name);
 }
 // Routes: #progress #sessions #metrics #mail #permissions #questions #settings, #decisions (질문 tab,
-// 결정 view), #q=<id> (질문 + focusQuestion) and #terminal=<id> (터미널 with that row
-// marked; the Sessions tab links hosted sessions there), and #<tab>/<id>/<sub> for a tab
-// with a detail panel (registerDetail). No hash or an unknown one shows 진행.
+// 결정 view), #q=<id> (질문 + focusQuestion), #terminal=<id> (an older link: it becomes
+// #terminals/<id>/screen), and #<tab>/<id>/<sub> for a tab with a detail panel
+// (registerDetail). No hash or an unknown one shows 진행.
 function route(){
   const h=location.hash.slice(1);
   const parts=h.split('/');
@@ -1623,14 +1768,10 @@ function route(){
   hideDetail();
   if(h.startsWith('terminal=')){
     let id=h.slice(9);try{id=decodeURIComponent(id)}catch(e){}
-    termFocus=id;
     if(!hostingOn)return;
-    termClose();
-    if(tabLoaded.has('terminals'))loadTerminals();
-    showTab('terminals');
+    history.replaceState(null,'',detailHash('terminals',id,'screen'));route();
     return;
   }
-  termFocus='';
   if(h==='decisions'){showTab('questions');showQuestionView('decisions');return}
   if(h==='questions'||h.startsWith('q='))showQuestionView('questions');
   if(h.startsWith('q=')){
