@@ -65,6 +65,7 @@ jobs:
           go test -timeout 40m -count=100 -run 'TestKeeper' ./internal/term/conpty/ > "$RUNNER_TEMP/r.txt" 2>&1; echo "exit=$?"
           echo "FAIL lines: $(grep -c -- '--- FAIL' "$RUNNER_TEMP/r.txt")"
           echo "RemoveAll lines: $(grep -c RemoveAll "$RUNNER_TEMP/r.txt")"
+          grep -B4 -A2 -- '--- FAIL\|RemoveAll\|still runs' "$RUNNER_TEMP/r.txt" | cut -c1-220 | head -40
           tail -n 2 "$RUNNER_TEMP/r.txt"
       - name: ConPTY backend and keeper
         shell: bash
