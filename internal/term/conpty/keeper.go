@@ -64,8 +64,10 @@ type Keeper struct {
 	mu       sync.Mutex
 	sessions map[string]*session
 	conns    map[net.Conn]struct{}
-	closing  bool
-	done     chan struct{} // closed by Shutdown
+	closing  bool                      // Shutdown has begun: no new launches
+	stopped  bool                      // listeners and connections closed
+	lns      map[net.Listener]struct{} // listeners Serve is answering on
+	done     chan struct{}             // closed by Shutdown, after stopped
 	once     sync.Once
 }
 
@@ -106,37 +108,40 @@ func NewKeeper(o KeeperOptions) *Keeper {
 	if o.StreamBuffer <= 0 {
 		o.StreamBuffer = 256
 	}
-	return &Keeper{o: o, sessions: map[string]*session{}, conns: map[net.Conn]struct{}{}, done: make(chan struct{})}
+	return &Keeper{o: o, sessions: map[string]*session{}, conns: map[net.Conn]struct{}{}, lns: map[net.Listener]struct{}{}, done: make(chan struct{})}
 }
 
-// Done is closed when a client has asked the keeper to shut down and every
-// child has ended.
+// Done is closed when a client has asked the keeper to shut down, every
+// child has ended and every listener and connection has been closed, so a
+// caller that has seen Done cannot connect any more.
 func (k *Keeper) Done() <-chan struct{} { return k.done }
 
-// Serve answers connections on l until Shutdown. It closes l.
+// Serve answers connections on l until Shutdown, which closes l. It returns
+// nil once Shutdown has closed l.
 func (k *Keeper) Serve(l net.Listener) error {
-	go func() {
-		<-k.done
-		_ = l.Close()
-		k.mu.Lock()
-		for c := range k.conns {
-			_ = c.Close()
-		}
+	k.mu.Lock()
+	if k.stopped {
 		k.mu.Unlock()
-	}()
+		_ = l.Close()
+		return nil
+	}
+	k.lns[l] = struct{}{}
+	k.mu.Unlock()
 	for {
 		c, err := l.Accept()
 		if err != nil {
-			select {
-			case <-k.done:
-				return nil
-			default:
-			}
 			var ne net.Error
-			if errors.As(err, &ne) && ne.Timeout() {
+			k.mu.Lock()
+			switch {
+			case k.stopped:
+				k.mu.Unlock()
+				return nil
+			case errors.As(err, &ne) && ne.Timeout():
+				k.mu.Unlock()
 				continue
 			}
-			return err
+			k.mu.Unlock()
+			return err // l stays registered: Shutdown closes it
 		}
 		go k.serveConn(c)
 	}
@@ -146,12 +151,10 @@ func (k *Keeper) Serve(l net.Listener) error {
 // turns the connection into that stream's output.
 func (k *Keeper) serveConn(c net.Conn) {
 	k.mu.Lock()
-	select {
-	case <-k.done:
+	if k.stopped {
 		k.mu.Unlock()
 		_ = c.Close()
 		return
-	default:
 	}
 	k.conns[c] = struct{}{}
 	k.mu.Unlock()
@@ -444,7 +447,8 @@ func (k *Keeper) Forget(name string) error {
 }
 
 // Shutdown stops every session (grace each, concurrently; <= 0:
-// DefaultGrace), refuses new launches and closes Done. It is idempotent.
+// DefaultGrace), refuses new launches, closes every listener and connection
+// and then closes Done. It is idempotent.
 func (k *Keeper) Shutdown(grace time.Duration) {
 	if grace <= 0 {
 		grace = DefaultGrace
@@ -468,6 +472,17 @@ func (k *Keeper) Shutdown(grace time.Duration) {
 			}()
 		}
 		wg.Wait()
+		k.mu.Lock()
+		k.stopped = true
+		lns, conns := k.lns, k.conns
+		k.lns, k.conns = map[net.Listener]struct{}{}, map[net.Conn]struct{}{}
+		k.mu.Unlock()
+		for l := range lns {
+			_ = l.Close()
+		}
+		for c := range conns {
+			_ = c.Close()
+		}
 		close(k.done)
 	})
 }

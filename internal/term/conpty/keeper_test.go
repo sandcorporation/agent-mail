@@ -527,6 +527,73 @@ func TestShutdownStopsEveryChild(t *testing.T) {
 	}
 }
 
+// slowCloseListener takes a while to close, so a keeper that closes Done
+// before its listener is caught by the dial right after Done.
+type slowCloseListener struct {
+	net.Listener
+	mu     sync.Mutex
+	closed bool
+}
+
+func (l *slowCloseListener) Close() error {
+	time.Sleep(50 * time.Millisecond)
+	err := l.Listener.Close()
+	l.mu.Lock()
+	l.closed = true
+	l.mu.Unlock()
+	return err
+}
+
+func (l *slowCloseListener) isClosed() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.closed
+}
+
+// TestDoneMeansListenerClosed: Done is closed only after the listener is,
+// so a caller that waits on Done cannot connect any more (#227).
+func TestDoneMeansListenerClosed(t *testing.T) {
+	inner, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &slowCloseListener{Listener: inner}
+	k := conpty.NewKeeper(conpty.KeeperOptions{Spawn: newSpawner().spawn, Logf: t.Logf})
+	served := make(chan error, 1)
+	go func() { served <- k.Serve(l) }()
+	var d net.Dialer
+	open, err := d.DialContext(ctx(t), "tcp", inner.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer open.Close()
+	go k.Shutdown(time.Second)
+	select {
+	case <-k.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("keeper did not finish shutting down")
+	}
+	if !l.isClosed() {
+		t.Fatal("Done closed before the listener was closed")
+	}
+	if c, err := d.DialContext(ctx(t), "tcp", inner.Addr().String()); err == nil {
+		c.Close()
+		t.Fatal("keeper still accepts connections after Done")
+	}
+	_ = open.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := open.Read(make([]byte, 1)); err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("open connection not closed by Done: %v", err)
+	}
+	select {
+	case err := <-served:
+		if err != nil {
+			t.Fatalf("Serve: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Serve did not return after shutdown")
+	}
+}
+
 // TestConnect covers the node's start: no keeper (start one), a keeper of
 // this version (adopt its sessions), a keeper of another version (shut it
 // down, stopping its children, and start a new one).
