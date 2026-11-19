@@ -500,8 +500,14 @@ func TestE2E_HostingUp(t *testing.T) {
 			if v.hello.Cols != 24 || v.hello.Rows != 6 {
 				t.Fatalf("hello %+v", v.hello)
 			}
-			_, golden := scene(t, "full-redraw")
-			if got := screenDump(v.emu.Grid(-1)); got != golden {
+			sc, golden := scene(t, "full-redraw")
+			got := screenDump(v.emu.Grid(-1))
+			if runtime.GOOS == "windows" {
+				// ConPTY repaints with its own cursor and blank-cell
+				// styles; compare the way the ConPTY golden test does.
+				got, golden = conptyGoldenView(v.emu.Grid(-1)), conptyGoldenView(playScene(t, sc))
+			}
+			if got != golden {
 				t.Fatalf("snapshot screen\n%s--- golden\n%s", got, golden)
 			}
 		}},
@@ -562,4 +568,46 @@ func TestE2E_HostingUp(t *testing.T) {
 			t.Fatalf("step %s failed; up log:\n%s", s.name, r.log())
 		}
 	}
+}
+
+// playScene is the emulator's grid of sc, which term's own scene test holds
+// equal to the scene's golden file.
+func playScene(t *testing.T, sc term.Scene) term.Grid {
+	t.Helper()
+	e := term.NewEmulator(sc.Cols, sc.Rows, 0)
+	defer e.Close()
+	for _, s := range sc.Steps {
+		if s.Data == nil {
+			e.Resize(s.Cols, s.Rows)
+			continue
+		}
+		if _, err := e.Write(s.Data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return e.Grid(-1)
+}
+
+// conptyGoldenView is g's screen as the ConPTY golden test compares it
+// (internal/term/conpty conptyView): a hidden cursor's position and the
+// styles of blank cells are not compared, since ConPTY's repaint sets both
+// its own way.
+func conptyGoldenView(g term.Grid) string {
+	g.History = nil
+	if g.Cursor.Hidden {
+		g.Cursor.X, g.Cursor.Y = 0, 0
+	}
+	screen := make([][]term.Cell, len(g.Screen))
+	for i, row := range g.Screen {
+		screen[i] = append([]term.Cell(nil), row...)
+		for j, c := range screen[i] {
+			a := c.Attr
+			if strings.TrimSpace(c.Text) != "" || a.Reverse || a.Underline || a.Strike {
+				continue
+			}
+			screen[i][j].Attr = term.Attr{Bg: a.Bg}
+		}
+	}
+	g.Screen = screen
+	return g.Dump()
 }
