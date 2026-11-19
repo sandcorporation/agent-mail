@@ -55,16 +55,11 @@ func runKeeper(args []string) int {
 		return 2
 	}
 	v, _ := os.ReadFile(o.LogFile + ".version")
-	// <log file>.hold makes the keeper process keep keeper.log open that
-	// long after Run returns: a keeper slow to exit once its pipe is gone.
+	// <log file>.hold makes the keeper exit that long after its pipe is
+	// gone, keeper.log still open.
 	if h, err := os.ReadFile(o.LogFile + ".hold"); err == nil {
 		if d, err := time.ParseDuration(strings.TrimSpace(string(h))); err == nil {
-			if f, err := os.OpenFile(o.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
-				defer func() {
-					time.Sleep(d)
-					_ = f.Close()
-				}()
-			}
+			conpty.SetExitDelay(d)
 		}
 	}
 	if err := conpty.Run(o, strings.TrimSpace(string(v))); err != nil {
