@@ -13,7 +13,19 @@ func cliHost(p parsedArgs, stdout io.Writer) (int, error) {
 	if len(p.pos) > 1 {
 		id = p.pos[1]
 	}
-	addOnly := []string{"--node", "--base", "--profile", "--dir", "--label", "--parent", "--restart", "--class"}
+	addOnly := []string{"--node", "--base", "--profile", "--dir", "--label", "--parent", "--restart", "--class", "--ask-permissions"}
+	var skip *bool
+	if p.bool("--ask-permissions") {
+		skip = new(bool)
+	}
+	if v, ok := p.values["--skip-permissions"]; ok && action != "set" {
+		return 0, usagef("host %s: --skip-permissions is for host set (host add skips by default; --ask-permissions turns it off)", action)
+	} else if ok && v != "on" && v != "off" {
+		return 0, usagef("host set: --skip-permissions wants on or off, not %q", v)
+	} else if ok {
+		on := v == "on"
+		skip = &on
+	}
 	switch action {
 	case "add":
 		if id != "" {
@@ -23,6 +35,21 @@ func cliHost(p parsedArgs, stdout io.Writer) (int, error) {
 			if p.values[o] == "" {
 				return 0, usagef("host add requires --node, --base, --profile and --dir (missing %s)", o)
 			}
+		}
+	case "set":
+		if id == "" {
+			return 0, usagef("host set requires ID")
+		}
+		if skip == nil {
+			return 0, usagef("host set requires --skip-permissions on|off")
+		}
+		for _, o := range addOnly {
+			if _, ok := p.values[o]; ok {
+				return 0, usagef("host set: %s is for host add", o)
+			}
+		}
+		if len(p.extra) > 0 {
+			return 0, usagef("host set: arguments after -- are for host add")
 		}
 	case "limit":
 		if id != "" && id != "on" && id != "off" {
@@ -52,11 +79,12 @@ func cliHost(p parsedArgs, stdout io.Writer) (int, error) {
 			return 0, usagef("host %s: arguments after -- are for host add", action)
 		}
 	default:
-		return 0, usagef("host: unknown action %q (add, list, start, stop, restart, new-conversation, remove, limit)", action)
+		return 0, usagef("host: unknown action %q (add, list, set, start, stop, restart, new-conversation, remove, limit)", action)
 	}
 	add := wire.HostedSessionCreate{
 		Node: p.values["--node"], Base: p.values["--base"], Profile: p.values["--profile"], Directory: p.values["--dir"],
 		Label: p.values["--label"], Parent: p.values["--parent"], Restart: p.values["--restart"], Class: p.values["--class"], Args: p.extra,
+		SkipPermissions: skip,
 	}
 	return host(action, id, add, p.bool("--json"), stdout)
 }

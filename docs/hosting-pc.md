@@ -216,7 +216,7 @@ sbwait 120 { (sbget $id).runtime.state -eq 'running' }
 sbterm
 ```
 
-Check: `host add` prints the new session ID; `host list` shows it with node `local`, base `team/worker`, `DESIRED` `running`, restart `always`. `sbterm` (`GET /api/admin/terminals`) shows it with state `running` and a pid. `--class` is `lead`, `coordinator`, `execute` or `review`; `--restart` is `always`, `on-failure` or `never`; words after `'--'` go to the agent (the quotes keep PowerShell from eating `--`).
+Check: `host add` prints the new session ID; `host list` shows it with node `local`, base `team/worker`, `DESIRED` `running`, restart `always`. `sbterm` (`GET /api/admin/terminals`) shows it with state `running` and a pid. `--class` is `lead`, `coordinator`, `execute` or `review`; `--restart` is `always`, `on-failure` or `never`; words after `'--'` go to the agent (the quotes keep PowerShell from eating `--`). `host list` shows `PERMS` `skip`: see [Permission mode](#permission-mode).
 
 If it fails: `base role ... must exist` → W5 did not register `team/worker`. `sblogin` gets `401` → the code was used already in this 30-second step; wait 30 s and run `sblogin` again. State stays `waiting` → `SWITCHBOARD_HOSTING_MAX` (default 4) sessions are running already. State `crashloop` or `exited` → open the session in the dashboard (`http://127.0.0.1:8090`, tab Terminals) to read the agent's screen; a first start in a new folder can stop at the agent's folder-trust question, which someone at the PC answers there once.
 
@@ -496,7 +496,7 @@ sbwait 120 sbis "$SBID" state running
 sbterm
 ```
 
-Check: `host add` prints the new session ID; `host list` shows it with node `local`, base `team/worker`, `DESIRED` `running`, restart `always`. `sbterm` (`GET /api/admin/terminals`) shows it as `running` with a pid. `--class` is `lead`, `coordinator`, `execute` or `review`; `--restart` is `always`, `on-failure` or `never`; words after `--` go to the agent.
+Check: `host add` prints the new session ID; `host list` shows it with node `local`, base `team/worker`, `DESIRED` `running`, restart `always`. `sbterm` (`GET /api/admin/terminals`) shows it as `running` with a pid. `--class` is `lead`, `coordinator`, `execute` or `review`; `--restart` is `always`, `on-failure` or `never`; words after `--` go to the agent. `host list` shows `PERMS` `skip`: see [Permission mode](#permission-mode).
 
 If it fails: `base role ... must exist` → L5 did not register `team/worker`. `sblogin` fails with `401` → the code was used already in this 30-second step; wait 30 s and run `sblogin` again. State stays `waiting` → `SWITCHBOARD_HOSTING_MAX` (default 4) sessions are running already. State `crashloop` or `exited` → open the session in the dashboard (`http://127.0.0.1:8090`, tab Terminals) to read the agent's screen; a first start in a new folder can stop at the agent's folder-trust question, which someone at the PC answers there once.
 
@@ -603,6 +603,16 @@ Reinstall: a removed node (revoked in the dashboard, Settings) cannot come back 
 | `node local: node is revoked` | The node was removed in Settings. Uninstall (W9 / L9) and install again from W3 / L3. |
 | `up: listen tcp 127.0.0.1:8090: bind: …` | Another program holds the port (it may show no listener), or Windows reserves it. `up` exits at once and starts no keeper or tmux server. Pick a free port and change it in `env.ps1` and `up.cmd`, or in `env.sh` and the unit. |
 | `401 login failed` from `sblogin` | Wrong password or a TOTP code already used; wait 30 s and run `sblogin` again. |
+
+## Permission mode
+
+Warning: with `PERMS` `skip` the agent runs every tool without asking anyone.
+
+- Default: `host add` launches the agent with its permission-skip arguments. For `claude` (checked against Claude Code 2.1.328) that is `--dangerously-skip-permissions --settings {"skipDangerousModePermissionPrompt":true}`; the settings key skips the agent's one-time "Bypass Permissions mode" screen without touching the user's own settings. An agent without an entry (`internal/node/launch.go`, `permissionSkip`) gets nothing.
+- Off for one session: `host add … --ask-permissions`, or `sbpc host set <id> --skip-permissions off` for an existing one.
+- Words after `--` that choose a permission mode (`--permission-mode …`, `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`) win: nothing is added. A `--settings` of your own replaces the one above, so add `"skipDangerousModePermissionPrompt": true` to it, or the session stops at that screen until someone answers it in the dashboard.
+- Sessions added before this release show `PERMS` `ask` and keep running as before. Turn one on with `sbpc host set <id> --skip-permissions on`; like every change but start and stop, it applies at the next launch, so follow it with `sbpc host restart <id>` (the conversation resumes).
+- The dashboard's 터미널 tab shows the mode in 권한 (건너뜀 / 물음); `GET /api/admin/terminals` carries `skip_permissions`, and `PUT /api/admin/terminals/{id}` with `{"skip_permissions":true}` changes it.
 
 ## Operations deployment
 

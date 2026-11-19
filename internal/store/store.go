@@ -111,6 +111,9 @@ func Init(db *sql.DB) error {
 	if e = migrateHostingLimit(db); e != nil {
 		return e
 	}
+	if e = migrateHostingPermissions(db); e != nil {
+		return e
+	}
 	return migrateRemind(db)
 }
 
@@ -515,6 +518,19 @@ func migrateHostingLimit(db *sql.DB) error {
 		}
 	}
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS hosting_limit(id INTEGER PRIMARY KEY CHECK(id=1), operator INTEGER NOT NULL DEFAULT 0, set_at INTEGER NOT NULL DEFAULT 0, cleared_at INTEGER NOT NULL DEFAULT 0)`)
+	return err
+}
+
+// migrateHostingPermissions adds hosted_sessions.skip_permissions (#220):
+// 1 launches the agent with its permission-skip arguments. Records made
+// before it get 0, so a running installation keeps its behaviour; new
+// records are written with 1 unless asked otherwise.
+func migrateHostingPermissions(db *sql.DB) error {
+	has, err := HasColumn(db, "hosted_sessions", "skip_permissions")
+	if err != nil || has {
+		return err
+	}
+	_, err = db.Exec(`ALTER TABLE hosted_sessions ADD COLUMN skip_permissions INTEGER NOT NULL DEFAULT 0`)
 	return err
 }
 
