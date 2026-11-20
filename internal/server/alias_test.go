@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -141,7 +142,8 @@ func TestCLIProfileOldAndNewEnv(t *testing.T) {
 
 	// No CONFIG_DIR: the profile lives in the user config dir; only the old directory has it.
 	cfg := t.TempDir()
-	oldDir := filepath.Join(cfg, config.LegacyConfigDir)
+	root := userConfigDirUnder(cfg)
+	oldDir := filepath.Join(root, config.LegacyConfigDir)
 	if err := os.MkdirAll(oldDir, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +159,7 @@ func TestCLIProfileOldAndNewEnv(t *testing.T) {
 		t.Fatalf("old dir profile: %s", out)
 	}
 	// The first run copied it into the new directory; the old file stays.
-	newFile := filepath.Join(cfg, "switchboard", "legacy.json")
+	newFile := filepath.Join(root, "switchboard", "legacy.json")
 	copied, err := os.ReadFile(newFile)
 	if err != nil || string(copied) != string(b) {
 		t.Fatalf("profile not copied to the new directory: %v", err)
@@ -178,7 +180,17 @@ func TestCLIProfileOldAndNewEnv(t *testing.T) {
 	}
 	// A new profile goes to the new directory.
 	h.mustRun([]string{"AGENT_MAIL_CONFIG_DIR=", "XDG_CONFIG_HOME=" + cfg, "HOME=" + cfg, "AppData=" + cfg}, "--profile", "fresh", "config", "set", "--endpoint", h.url, "--role", "a", "--token-file", h.tokens["a"])
-	if _, err := os.Stat(filepath.Join(cfg, "switchboard", "fresh.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, "switchboard", "fresh.json")); err != nil {
 		t.Fatalf("new profile not in the new directory: %v", err)
 	}
+}
+
+// userConfigDirUnder is where os.UserConfigDir points in a CLI child whose
+// HOME, XDG_CONFIG_HOME and AppData are all home: home itself on Linux and
+// Windows, home/Library/Application Support on macOS.
+func userConfigDirUnder(home string) string {
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(home, "Library", "Application Support")
+	}
+	return home
 }
