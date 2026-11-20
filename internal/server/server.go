@@ -46,6 +46,7 @@ type Server struct {
 	labelStall  time.Duration       // SWITCHBOARD_LABEL_STALL; 0 means defaultLabelStall
 	asksCfg     asks.Config         // permission TTL (internal/asks)
 	bossRoles   map[string]bool     // SWITCHBOARD_BOSS_ROLES; may answer any permission request
+	bossOrder   []string            // SWITCHBOARD_BOSS_ROLES in listed order (identity.Service.AskVia)
 	discord     *insight.Discord    // SWITCHBOARD_DISCORD_WEBHOOK; nil sends no question notices
 	alerts      *insight.Thresholds // SWITCHBOARD_ALERT_*; nil means insight.DefaultThresholds
 	oldHeaders  config.AliasCounter // requests that used an old-prefix header

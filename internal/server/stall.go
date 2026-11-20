@@ -68,6 +68,7 @@ func configureStall(s *Server, getenv func(string) string) error {
 		*d.dst = t
 	}
 	s.bossRoles = map[string]bool{}
+	s.bossOrder = nil
 	roles, from := config.EnvAliasFrom(getenv, "BOSS_ROLES")
 	for _, r := range strings.Split(roles, ",") {
 		r = strings.TrimSpace(r)
@@ -76,6 +77,9 @@ func configureStall(s *Server, getenv func(string) string) error {
 		}
 		if !wire.ValidRole(r) || identity.Reserved(r) {
 			return fmt.Errorf("%s: invalid role %q", from, r)
+		}
+		if !s.bossRoles[r] {
+			s.bossOrder = append(s.bossOrder, r)
 		}
 		s.bossRoles[r] = true
 	}

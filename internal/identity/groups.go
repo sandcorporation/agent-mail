@@ -153,6 +153,29 @@ func (s *Service) BossesFor(asker string) []string {
 	return sortedKeys(s.bossRoles)
 }
 
+// AskVia is the role p should mail instead of asking a question it may not
+// ask: its group's boss role, else the first global boss in the order
+// SWITCHBOARD_BOSS_ROLES lists them (then the rest, sorted). Roles of p's own
+// base are skipped; "" when none is left.
+func (s *Service) AskVia(p Principal) string {
+	var cands []string
+	if g, ok := s.GroupOf(p.Base); ok {
+		cands = append(cands, g.BossRole)
+	}
+	for _, r := range s.bossOrder {
+		if s.bossRoles[r] {
+			cands = append(cands, r)
+		}
+	}
+	cands = append(cands, sortedKeys(s.bossRoles)...)
+	for _, r := range cands {
+		if r != p.Base && r != p.Role {
+			return r
+		}
+	}
+	return ""
+}
+
 // IsBossFor reports whether p answers for asker (never checked against the
 // asker's own base here; callers add that).
 func (s *Service) IsBossFor(p Principal, asker string) bool {
