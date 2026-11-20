@@ -17,7 +17,7 @@ import (
 const maxCLIVersion = 64
 
 // cliVersionHeader is the request's X-Switchboard-Version, cleaned:
-// printable, at most maxCLIVersion bytes; wire.CLIUnknown when absent.
+// printable, at most maxCLIVersion bytes; empty when absent.
 func cliVersionHeader(r *http.Request) string {
 	v := strings.TrimSpace(r.Header.Get(config.HeaderPrefix + config.VersionHeaderName))
 	v = strings.Map(func(c rune) rune {
@@ -28,9 +28,6 @@ func cliVersionHeader(r *http.Request) string {
 	}, v)
 	if len(v) > maxCLIVersion {
 		v = v[:maxCLIVersion]
-	}
-	if v == "" {
-		return wire.CLIUnknown
 	}
 	return v
 }
@@ -43,18 +40,19 @@ func (s *Service) cliState(version string) string {
 	return wire.CLIState(version, s.cfg.CLIMin, s.cfg.CLIMinOK)
 }
 
-// cliBehind reports whether version needs an update notice: below the
-// minimum, or sent without the header. A development build does not, and
-// nothing does on a server without a minimum (itself a development build).
+// cliBehind reports whether version needs an update notice: a release below
+// the minimum. Unknown (no header) and a development build are 판 모름, not
+// 옛 판 (#319), and nothing is behind on a server without a minimum (itself a
+// development build).
 func (s *Service) cliBehind(version string) bool {
 	if s.cfg == nil || !s.cfg.CLIMinOK {
 		return false
 	}
-	return version == wire.CLIUnknown || s.cliState(version) == wire.CLIOld
+	return s.cliState(version) == wire.CLIOld
 }
 
-// CLIBehind lists the machines whose online sessions run an old CLI or sent
-// no version, one entry per machine, sorted by machine. Slots that have not
+// CLIBehind lists the machines whose online sessions run an old CLI, one
+// entry per machine, sorted by machine. Slots that have not
 // reported since #308 are left out.
 func (s *Service) CLIBehind() ([]wire.CLIBehind, error) {
 	rows, err := s.db.Query(`SELECT base,number,machine,cli_version FROM slots WHERE lease_until>? AND cli_version<>'' ORDER BY machine,base,number`, ms(s.now()))
@@ -92,11 +90,8 @@ func (s *Service) CLIBehind() ([]wire.CLIBehind, error) {
 	return out, nil
 }
 
-// lowerCLI is the lower of two behind versions; unknown is lowest.
+// lowerCLI is the lower of two behind (release) versions.
 func lowerCLI(a, b string) string {
-	if a == wire.CLIUnknown || b == wire.CLIUnknown {
-		return wire.CLIUnknown
-	}
 	va, _ := wire.ReleaseMinor(a)
 	vb, _ := wire.ReleaseMinor(b)
 	if vb.Less(va) {

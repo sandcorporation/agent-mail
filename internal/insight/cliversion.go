@@ -13,7 +13,7 @@ import (
 // Old CLI mail (#308).
 //
 // Once per UTC day and machine, a machine whose online sessions run a CLI
-// below the server minimum, or one that sends no version, is mailed to every
+// below the server minimum (not one whose version is unknown) is mailed to every
 // boss role from the system sender: "[옛 판] <machine> switchboard vX (서버 vY)",
 // listing the machine's roles and their versions. The alerts row (kind "cli",
 // key the machine) and the mail are written in one transaction, so repeated

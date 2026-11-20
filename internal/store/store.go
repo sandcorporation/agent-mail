@@ -369,8 +369,9 @@ var presenceColumns = []struct{ name, def string }{
 	// (0 when a report leaves it out, and on release).
 	{"subagents", `INTEGER NOT NULL DEFAULT 0`},
 	// cli_version is the X-Switchboard-Version of the last register or
-	// heartbeat (#308): "unknown" when the request had none, '' when the slot
-	// has not reported since.
+	// heartbeat (#308): "unknown" when the slot was claimed without one (a
+	// heartbeat without it keeps the value, #319), '' when the slot has not
+	// reported since.
 	{"cli_version", `TEXT NOT NULL DEFAULT ''`},
 }
 
