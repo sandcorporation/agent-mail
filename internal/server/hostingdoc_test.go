@@ -532,6 +532,33 @@ esac
 // that env.ps1 and runs the W9 update to a build with another version: the
 // helpers block first, when W9 says to run it again. W1, W2 (network), W7,
 // W8 and the session lines of W9 (a real agent) are not run.
+// docRealRefs matches what ties a doc block to the signed-in user's real
+// setup: the scheduled task `switchboard-pc` (as -TaskName, a Get-ScheduledTask
+// argument or the task named in a message), the profile directory and the
+// Startup folder. The unique test task name continues with "-test-", so it
+// does not match.
+var docRealRefs = regexp.MustCompile(`(?:-TaskName|ScheduledTask|task) '?switchboard-pc(?:'|:|\s|$)|\$env:USERPROFILE|GetFolderPath\('Startup'\)`)
+
+// isolateWindowsDoc points the Windows doc blocks at a test task name and a
+// test home ($testHome, set by the caller) instead of the real ones. It fails
+// if a reference to the real setup is left. The data directory name
+// switchboard-pc stays: it lives under the test LOCALAPPDATA. The Startup
+// folder variant of W6 is not run by the test and must stay out of it.
+func isolateWindowsDoc(script, task string) (string, error) {
+	for _, r := range [][2]string{
+		{"-TaskName 'switchboard-pc'", "-TaskName '" + task + "'"},
+		{"Get-ScheduledTask switchboard-pc", "Get-ScheduledTask " + task},
+		{"(task switchboard-pc:", "(task " + task + ":"},
+		{"$env:USERPROFILE", "$testHome"},
+	} {
+		script = strings.ReplaceAll(script, r[0], r[1])
+	}
+	if m := docRealRefs.FindString(script); m != "" {
+		return "", fmt.Errorf("the script still refers to the real setup: %q", m)
+	}
+	return script, nil
+}
+
 func TestE2E_HostingDocWindows(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("the Windows variant runs on Windows")
@@ -613,10 +640,15 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 		t.Fatal(err)
 	}
 	data := filepath.Join(root, "local", "switchboard-pc")
+	// W6 registers a task: under a name no real setup has (#297).
+	task := fmt.Sprintf("switchboard-pc-test-%d-%x", os.Getpid(), time.Now().UnixNano())
+	t.Logf("scheduled task of this run: %s", task)
+	testHome := filepath.Join(root, "home")
 	t.Cleanup(func() {
 		// What the script leaves running: the task's up and the task.
 		stop := "Get-NetTCPConnection -LocalPort " + port + " -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }\n" +
-			"Unregister-ScheduledTask -TaskName 'switchboard-pc' -Confirm:$false -ErrorAction SilentlyContinue\n"
+			"Unregister-ScheduledTask -TaskName '" + task + "' -Confirm:$false -ErrorAction SilentlyContinue\n" +
+			"if (Get-ScheduledTask -TaskName '" + task + "' -ErrorAction SilentlyContinue) { throw 'task " + task + " is left' }\n"
 		if out, err := exec.Command(ps, "-NoProfile", "-NonInteractive", "-Command", stop).CombinedOutput(); err != nil {
 			t.Logf("cleanup: %v\n%s", err, out)
 		}
@@ -627,7 +659,7 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 		}
 	})
 	agentDir, dl := filepath.Join(root, "agent"), filepath.Join(root, "dl")
-	for _, d := range []string{agentDir, dl, filepath.Join(root, "local")} {
+	for _, d := range []string{agentDir, dl, filepath.Join(root, "local"), testHome} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -654,7 +686,12 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 	}
 	body = strings.ReplaceAll(body, "$port = 8090\n", "$port = "+port+"\n")
 	secret := totpEncoding.EncodeToString([]byte("0123456789abcdefghij"))
-	script := "$ErrorActionPreference = 'Stop'\n" +
+	guard := "$testHome = '" + testHome + "'\n" +
+		"if (Get-ScheduledTask -TaskName '" + task + "' -ErrorAction SilentlyContinue) { throw 'task " + task + " exists before W6' }\n"
+	if body, err = isolateWindowsDoc(body, task); err != nil {
+		t.Fatal(err)
+	}
+	script := "$ErrorActionPreference = 'Stop'\n" + guard +
 		"$env:LOCALAPPDATA = '" + filepath.Join(root, "local") + "'\n" +
 		"$env:PATH = '" + agentDir + ";' + $env:PATH\n" +
 		"$dl = '" + dl + "'\n$asset = '" + asset + "'\n" +
@@ -745,7 +782,10 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dl, asset), hostingDocZip(t, newBin), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	update = "$env:LOCALAPPDATA = '" + filepath.Join(root, "local") + "'\n" +
+	if update, err = isolateWindowsDoc(update, task); err != nil {
+		t.Fatal(err)
+	}
+	update = "$testHome = '" + testHome + "'\n$env:LOCALAPPDATA = '" + filepath.Join(root, "local") + "'\n" +
 		"$dl = '" + dl + "'\n$asset = '" + asset + "'\n" +
 		". \"$env:LOCALAPPDATA\\switchboard-pc\\env.ps1\"\n" +
 		"'SBSTOP BEFORE ' + [bool](Get-Command sbstop -ErrorAction SilentlyContinue)\n" +
@@ -888,3 +928,41 @@ $sbbegun = Invoke-RestMethod -Method Post "http://127.0.0.1:$port/setup/begin" -
 $sbdone = Invoke-RestMethod -Method Post "http://127.0.0.1:$port/setup/confirm" -ContentType 'application/json' -Headers $sbh -Body (@{ code = $sbcode; totp = (Get-SbTotp $sbbegun.secret) } | ConvertTo-Json)
 'PERSON ' + $sbdone.user
 `
+
+// TestHostingDocWindowsIsolated: every Windows block the end-to-end test
+// runs names the test task and home after the rewrite, none the real ones
+// (#297). The Startup folder variant is not run and is skipped here.
+func TestHostingDocWindowsIsolated(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("the Windows variant runs on Windows")
+	}
+	const task = "switchboard-pc-test-unit"
+	seen := 0
+	for _, d := range readDocBlocks(t) {
+		if d.lang != "powershell" || (d.section != "Windows" && d.section != "OIDC sign-in") {
+			continue
+		}
+		text := strings.Join(d.lines, "\n")
+		if strings.Contains(text, "GetFolderPath('Startup')") {
+			continue
+		}
+		got, err := isolateWindowsDoc(text, task)
+		if err != nil {
+			t.Errorf("%s: %v", d.step, err)
+			continue
+		}
+		if strings.Contains(text, "-TaskName 'switchboard-pc'") && !strings.Contains(got, "-TaskName '"+task+"'") {
+			t.Errorf("%s: task name not rewritten", d.step)
+		}
+		seen++
+	}
+	if seen == 0 {
+		t.Fatal("no Windows block scanned")
+	}
+	if _, err := isolateWindowsDoc("Start-ScheduledTask -TaskName 'switchboard-pc'; $env:USERPROFILE", "x"); err != nil {
+		t.Errorf("rewritable references rejected: %v", err)
+	}
+	if _, err := isolateWindowsDoc("Get-ScheduledTask 'switchboard-pc'", "x"); err == nil {
+		t.Error("an unrewritten reference passed the scan")
+	}
+}
