@@ -26,4 +26,6 @@ for t in ${doc:+$doc TestE2E_HostingDocPortCheckRefusesABoundPort TestE2E_UpOnAB
     exit 1
   fi
 done
+# The scheduled task the Windows doc test registered (#297).
+grep -E "scheduled task of this run: " <<<"$out" || true
 echo "end to end: $ran steps passed${doc:+, $doc passed}"
