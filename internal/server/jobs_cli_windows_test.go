@@ -30,11 +30,7 @@ import (
 func jobHarness(t *testing.T) *cliHarness {
 	t.Helper()
 	if err := winjob.CheckBreakaway(); err != nil {
-		// CI must run these: a skip there would hide the runner.
-		if os.Getenv("CI") != "" {
-			t.Fatalf("this test process may not break away from its job: %v", err)
-		}
-		t.Skipf("this test process may not break away from its job, so no runner can start: %v", err)
+		t.Fatalf("this test process may not break away from its job: %v", err)
 	}
 	h := newCLIHarness(t)
 	h.configure(nil, "a")
@@ -134,6 +130,9 @@ func jobOutput(t *testing.T, h *cliHarness, id int64) string {
 // own, keeps the job running to its end and reports it; nobody waited, so
 // the owner gets the end mail.
 func TestJobOutlivesItsTerminalWindows(t *testing.T) {
+	if outsideJob(t) {
+		return
+	}
 	h := jobHarness(t)
 	ready := filepath.Join(t.TempDir(), "ready")
 	cmd := h.cliCommand("", fastPoll, append([]string{"job", "run", "--wait", "--label", "survivor", "--"}, jobCommand("wait", ready, "7")...)...)
@@ -200,6 +199,9 @@ func TestJobRunRefusesWhenTheTerminalForbidsBreakawayWindows(t *testing.T) {
 // The runner runs from a copy in the data directory: the installed binary
 // can be replaced while a job runs.
 func TestJobRunnerLeavesTheInstalledBinaryReplaceableWindows(t *testing.T) {
+	if outsideJob(t) {
+		return
+	}
 	h := jobHarness(t)
 	exe := filepath.Join(t.TempDir(), "switchboard.exe")
 	copyFile(t, os.Args[0], exe)
@@ -230,6 +232,9 @@ func TestJobRunnerLeavesTheInstalledBinaryReplaceableWindows(t *testing.T) {
 // job stop ends the command and every process it started, even one no
 // console event reaches.
 func TestJobStopEndsTheCommandTreeWindows(t *testing.T) {
+	if outsideJob(t) {
+		return
+	}
 	h := jobHarness(t)
 	pidFile := filepath.Join(h.dir, "grandchild.pid")
 	out := h.mustRun(fastPoll, append([]string{"job", "run", "--"}, jobCommand("tree", pidFile)...)...)
@@ -277,4 +282,47 @@ func copyFile(t *testing.T, from, to string) {
 	if err = dst.Close(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// outsideJob runs the calling test again outside this process's job object
+// when that job forbids breakaway (a CI runner's, a terminal's), since no
+// runner could start here: a process WMI creates (Win32_Process.Create)
+// belongs to no job of ours. It returns true when it ran the test that way
+// (and failed t if the copy failed); false means run the test here.
+func outsideJob(t *testing.T) bool {
+	t.Helper()
+	if winjob.CheckBreakaway() == nil || os.Getenv("SWITCHBOARD_TEST_OUTSIDE") == "1" {
+		return false
+	}
+	dir := t.TempDir()
+	out, done := filepath.Join(dir, "out.txt"), filepath.Join(dir, "done.txt")
+	script := filepath.Join(dir, "run.cmd")
+	body := "@echo off\r\nset SWITCHBOARD_TEST_OUTSIDE=1\r\n" +
+		`"` + os.Args[0] + `" -test.run "^` + t.Name() + `$" -test.v -test.count=1 -test.timeout 150s > "` + out + `" 2>&1` + "\r\n" +
+		`echo %ERRORLEVEL% > "` + done + `.tmp"` + "\r\n" +
+		`move /y "` + done + `.tmp" "` + done + `" > nul` + "\r\n"
+	if err := os.WriteFile(script, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ps := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
+		`$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine=$env:SB_CL; CurrentDirectory=$env:SB_CWD}; if ($r.ReturnValue -ne 0) { exit 1 }`)
+	ps.Env = append(os.Environ(), `SB_CL=cmd.exe /c "`+script+`"`, "SB_CWD="+dir)
+	if b, err := ps.CombinedOutput(); err != nil {
+		t.Fatalf("start the test outside the job: %v %s", err, b)
+	}
+	for deadline := time.Now().Add(3 * time.Minute); ; time.Sleep(200 * time.Millisecond) {
+		if _, err := os.Stat(done); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			b, _ := os.ReadFile(out)
+			t.Fatalf("the test outside the job did not finish:\n%s", b)
+		}
+	}
+	b, _ := os.ReadFile(out)
+	if !strings.Contains(string(b), "--- PASS: "+t.Name()) {
+		t.Fatalf("outside the job:\n%s", b)
+	}
+	t.Logf("ran outside this process's job:\n%s", b)
+	return true
 }
