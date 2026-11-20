@@ -2,6 +2,7 @@ package presence
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -9,11 +10,61 @@ import (
 
 // RuleMigration is what MigrateAnsweredRule did at start-up.
 type RuleMigration struct {
-	From    int  // stored version before; 0 when none was stored
-	To      int  // version stored now
-	Marked  int  // old directives marked as needing no reply
-	Changed bool // the stored version was written
-	Known   bool // this build knows the stored version's rule (mail.AnsweredRules)
+	From    int     // stored version before; 0 when none was stored
+	To      int     // version stored now
+	Marked  int     // old directives marked as needing no reply
+	Changed bool    // the stored version was written
+	Known   bool    // this build knows the stored version's rule (mail.AnsweredRules)
+	IDs     []int64 // the directives marked, in order
+}
+
+// RuleMigrationRecord is one stored answered_rule_log row: what a start-up
+// step did, kept after the log line is gone (#274).
+type RuleMigrationRecord struct {
+	From   int     `json:"from"` // 0 when no version was stored before
+	To     int     `json:"to"`
+	Marked int     `json:"marked"`
+	IDs    []int64 `json:"ids"`
+	At     string  `json:"at"`
+}
+
+// RuleStatus is the stored rule version and the newest migration, for
+// GET /api/admin/settings.
+type RuleStatus struct {
+	Version int                  `json:"version"`
+	Last    *RuleMigrationRecord `json:"last,omitempty"`
+}
+
+func (s *Service) logRuleMigration(ex interface {
+	Exec(string, ...any) (sql.Result, error)
+}, m RuleMigration, at time.Time) error {
+	ids, _ := json.Marshal(append([]int64{}, m.IDs...))
+	_, err := ex.Exec(`INSERT INTO answered_rule_log(from_version,to_version,marked,message_ids,at) VALUES(?,?,?,?,?)`,
+		m.From, m.To, m.Marked, string(ids), at.UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+// RuleStatus reads the stored version and the newest migration record.
+func (s *Service) RuleStatus() (RuleStatus, error) {
+	var out RuleStatus
+	err := s.db.QueryRow(`SELECT version FROM answered_rule WHERE id=1`).Scan(&out.Version)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return out, err
+	}
+	var r RuleMigrationRecord
+	var ids string
+	err = s.db.QueryRow(`SELECT from_version,to_version,marked,message_ids,at FROM answered_rule_log ORDER BY id DESC LIMIT 1`).Scan(&r.From, &r.To, &r.Marked, &ids, &r.At)
+	if errors.Is(err, sql.ErrNoRows) {
+		return out, nil
+	}
+	if err != nil {
+		return out, err
+	}
+	if err = json.Unmarshal([]byte(ids), &r.IDs); err != nil {
+		return out, err
+	}
+	out.Last = &r
+	return out, nil
 }
 
 // Line is the start-up log line of a migration that wrote the version:
@@ -60,8 +111,11 @@ func (s *Service) MigrateAnsweredRule(base func(string) string) (RuleMigration, 
 		}
 		if !mailed || rule.Version == 1 {
 			out.Changed = true
-			_, err = s.db.Exec(`INSERT INTO answered_rule(id,version,updated_at) VALUES(1,?,?)`, rule.Version, s.now().UTC().Format(time.RFC3339Nano))
-			return out, err
+			now := s.now()
+			if _, err = s.db.Exec(`INSERT INTO answered_rule(id,version,updated_at) VALUES(1,?,?)`, rule.Version, now.UTC().Format(time.RFC3339Nano)); err != nil {
+				return out, err
+			}
+			return out, s.logRuleMigration(s.db, out, now)
 		}
 		// Mail from before the version table ran version 1 (#214).
 		if _, err = s.db.Exec(`INSERT INTO answered_rule(id,version,updated_at) VALUES(1,1,?)`, s.now().UTC().Format(time.RFC3339Nano)); err != nil {
@@ -104,10 +158,16 @@ func (s *Service) MigrateAnsweredRule(base func(string) string) (RuleMigration, 
 		}
 		n, _ := res.RowsAffected()
 		out.Marked += int(n)
+		if n > 0 {
+			out.IDs = append(out.IDs, d.ID)
+		}
 	}
 	if _, err = tx.Exec(`UPDATE answered_rule SET version=?, updated_at=? WHERE id=1`, rule.Version, now.UTC().Format(time.RFC3339Nano)); err != nil {
 		return out, err
 	}
 	out.Changed = true
+	if err = s.logRuleMigration(tx, out, now); err != nil {
+		return out, err
+	}
 	return out, tx.Commit()
 }
