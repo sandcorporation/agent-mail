@@ -4,9 +4,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/sandcorporation/switchboard/internal/cli"
 )
@@ -97,10 +99,17 @@ func TestDecisionsCommandParameters(t *testing.T) {
 func TestDecisionsCommandText(t *testing.T) {
 	h, _ := decisionsHarness(t)
 	out := h.mustRun([]string{"TZ=Asia/Seoul"}, "decisions")
-	want := "q-2 2026-11-19 19:30 team/worker-2 (by sandcorp/boss)\n" +
+	// The CLI prints local time; Go reads TZ only on Unix, so on Windows
+	// the child keeps the machine's zone, which is this process's too.
+	q2, q1 := "2026-11-19 19:30", "2026-11-17 19:00"
+	if runtime.GOOS == "windows" {
+		q2 = time.Date(2026, 11, 19, 10, 30, 0, 0, time.UTC).Local().Format("2006-01-02 15:04")
+		q1 = time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC).Local().Format("2006-01-02 15:04")
+	}
+	want := "q-2 " + q2 + " team/worker-2 (by sandcorp/boss)\n" +
 		"  배포: 예\n" +
 		"\n" +
-		"q-1 2026-11-17 19:00 a (by sandcorp/boss)\n" +
+		"q-1 " + q1 + " a (by sandcorp/boss)\n" +
 		"  진행: 예\n" +
 		"  범위: web, api / 기타: 천천히\n" +
 		"  메모: 기타: 나중에\n"

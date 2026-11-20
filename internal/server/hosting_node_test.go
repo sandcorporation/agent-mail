@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -50,7 +51,8 @@ func TestNodeTokenIsStoredHashedInAPrivateFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	fi, err := os.Stat(path)
-	if err != nil || fi.Mode().Perm() != 0o600 {
+	// Windows has no mode bits: the file's DACL keeps it private there.
+	if err != nil || runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Fatalf("token file %v mode %v", err, fi.Mode())
 	}
 	var stored string

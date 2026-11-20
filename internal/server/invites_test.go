@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -260,7 +261,7 @@ func TestCLIInviteJoin(t *testing.T) {
 		t.Fatalf("join output:\n%s", r.stdout)
 	}
 	st, err := os.Stat(path)
-	if err != nil || st.Mode().Perm() != 0600 {
+	if err != nil || runtime.GOOS != "windows" && st.Mode().Perm() != 0600 {
 		t.Fatalf("profile %s: %v %v", path, st, err)
 	}
 	b, _ := os.ReadFile(path)
