@@ -465,6 +465,10 @@ func dispatch(args []string) (int, error) {
 			return 0, usagef("%s: invalid message ID %q", name, p.pos[0])
 		}
 	}
+	if name == "job" && p.pos[0] == "ping" {
+		// ping reports a missing profile with its own exit code.
+		return jobPing(p)
+	}
 	c, err := loadConfig()
 	if err != nil {
 		return 0, err

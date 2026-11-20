@@ -26,12 +26,22 @@ var (
 const runnerCopies = true
 
 // checkRunner refuses before anything is registered when the terminal's
-// job object would keep the runner (and end it with the terminal).
+// job object, or one around it, would keep the runner (and end it with the
+// terminal): it reads the immediate job, then starts this binary suspended
+// with breakaway and ends it.
 func checkRunner() error {
-	if err := winjob.CheckBreakaway(); err != nil {
-		if errors.Is(err, winjob.ErrNoBreakaway) {
-			return errNoBreakaway
+	err := winjob.CheckBreakaway()
+	if err == nil {
+		exe, e := os.Executable()
+		if e != nil {
+			return fmt.Errorf("executable: %w", e)
 		}
+		err = winjob.ProbeBreakaway(exe)
+	}
+	if errors.Is(err, winjob.ErrNoBreakaway) {
+		return errNoBreakaway
+	}
+	if err != nil {
 		return fmt.Errorf("job object: %w", err)
 	}
 	return nil
