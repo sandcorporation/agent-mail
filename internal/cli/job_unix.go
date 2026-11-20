@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"syscall"
@@ -19,15 +20,34 @@ var (
 // from the installed binary itself.
 const runnerCopies = false
 
-// checkRunner: a runner can always leave the terminal (setsid).
-func checkRunner() error { return nil }
+// checkRunner refuses where the runner would stay in the caller's systemd
+// scope (Linux, no user manager to start it outside); elsewhere a runner can
+// always leave the caller.
+func checkRunner() error { return scopeCheck() }
 
-// startDetached starts cmd in a session of its own with stdin from
-// /dev/null, so closing the terminal or ending the caller does not reach it.
+// startDetached starts cmd so that neither closing the terminal nor ending
+// the caller's process tree reaches it: on Linux with a systemd user manager
+// as a transient unit of its own (outside the terminal's scope); otherwise
+// detached twice through sh — a session of its own, and not a child of the
+// caller — with stdin from /dev/null. The runner writes its own PID file.
 func startDetached(cmd *exec.Cmd) error {
-	cmd.Stdin = nil
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	return cmd.Start()
+	if done, err := startUnit(cmd); done || err != nil {
+		return err
+	}
+	return detachTwice(cmd)
+}
+
+// detachTwice runs sh in a session of its own, which starts cmd in the
+// background and exits at once: the runner's parent is then init (or the
+// nearest subreaper), never the caller.
+func detachTwice(cmd *exec.Cmd) error {
+	sh := exec.Command("/bin/sh", append([]string{"-c", `"$@" </dev/null &`, "sh", cmd.Path}, cmd.Args[1:]...)...)
+	sh.Dir, sh.Env, sh.Stdout, sh.Stderr = cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr
+	sh.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := sh.Run(); err != nil {
+		return fmt.Errorf("detach: %w", err)
+	}
+	return nil
 }
 
 // childGroup is the job's command in a process group of its own, so a stop
