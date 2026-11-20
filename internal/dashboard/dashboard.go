@@ -437,6 +437,8 @@ table.cards td.cardhide{display:none}
 <div id="setView-qsettings">
 <div class="listbar"><button type="button" id="setAddOpen" aria-haspopup="dialog" aria-controls="setAdd">추가</button></div>
 <table id="settingsTbl" class="stack list cards"><thead><tr><th>대상</th><th>질문 가능</th><th>지켜보는 역할</th><th>디스코드</th><th>바뀐 때</th></tr></thead><tbody id="settingsTable"></tbody></table>
+<h3 class="sechead">최근 거절 <span class="muted" title="can_ask 꺼짐으로 거절된 역할 (24시간)">24시간</span></h3>
+<table id="refusalsTbl" class="stack list cards"><thead><tr><th>역할</th><th>맞은 대상</th><th>대신 물을 역할</th><th class="num">횟수</th><th>마지막 거절</th></tr></thead><tbody id="refusalsTable"></tbody></table>
 </div>
 <div id="setView-roles" hidden>
 <table id="rolesTbl" class="stack list cards"><thead><tr><th>역할</th><th>상태</th><th>등록</th><th>끊은 때</th></tr></thead><tbody id="rolesTable"></tbody></table>
@@ -1890,8 +1892,9 @@ const qsCols=['대상','질문 가능','지켜보는 역할','디스코드','바
 async function loadQSettings(){
   $('settingsNote').textContent='불러오는 중…';
   try{
-    const rows=await api('question-settings');
+    const [rows,refused]=await Promise.all([api('question-settings'),api('question-refusals')]);
     if(setView!=='qsettings')return;
+    drawRefusals(refused);
     const body=$('settingsTable');
     keepRowFocus(body,()=>{
       body.replaceChildren();
@@ -1907,6 +1910,18 @@ async function loadQSettings(){
     });
     $('settingsNote').textContent=rows.length+'개';
   }catch(e){if(setView==='qsettings')$('settingsNote').textContent=e.message}
+}
+// drawRefusals lists the roles refused for can_ask in the last 24 h (#286).
+const refCols=['역할','맞은 대상','대신 물을 역할','횟수','마지막 거절'];
+function drawRefusals(rows){
+  const body=$('refusalsTable');body.replaceChildren();
+  for(const v of rows){
+    const tr=node('tr','');
+    const at=cell(shortWhen(v.at),refCols[4],'nowrap');at.title=when(v.at);
+    tr.append(cell(v.role,'','strong mono'),cardText(cell(v.target==='none'?'없음':v.target,refCols[1],'mono'),'대상 '),cardText(cell(v.ask_via||'-',refCols[2],'mono'),'물을 곳 '),cardText(cell(String(v.count),refCols[3],'num'),'횟수 '),at);
+    body.append(tr);
+  }
+  if(!rows.length)emptyRow(body,refCols.length,'거절 없음');
 }
 // qsForm is the edit form of one target. It is kept across live redraws
 // while the stored setting is unchanged, so a half-made edit survives them.

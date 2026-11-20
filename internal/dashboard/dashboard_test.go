@@ -517,6 +517,8 @@ func TestDashboardSettingsDetail(t *testing.T) {
 	for _, want := range []string{
 		`<div class="viewswitch" id="setViews" role="group" aria-label="설정 고르기"><button type="button" data-view="qsettings" aria-pressed="true">질문 설정</button><button type="button" data-view="roles" aria-pressed="false">역할</button><button type="button" data-view="nodes" aria-pressed="false" hidden>노드</button><button type="button" data-view="reminders" aria-pressed="false">다시 알림</button></div>`,
 		`<table id="settingsTbl" class="stack list cards">`,
+		`<table id="refusalsTbl" class="stack list cards"><thead><tr><th>역할</th><th>맞은 대상</th><th>대신 물을 역할</th><th class="num">횟수</th><th>마지막 거절</th></tr></thead><tbody id="refusalsTable"></tbody></table>`,
+		"const [rows,refused]=await Promise.all([api('question-settings'),api('question-refusals')]);",
 		`<table id="rolesTbl" class="stack list cards">`,
 		`<table id="nodesTbl" class="stack list cards">`,
 		`<dialog id="setAdd" class="sc-drawer" aria-labelledby="setAddTitle">`,

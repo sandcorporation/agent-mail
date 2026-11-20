@@ -19,6 +19,18 @@ type QuestionItem struct {
 	MultiSelect bool             `json:"multiSelect"`
 }
 
+// QuestionRefusal is one role refused a question (can_ask off) in the last
+// 24 hours, for the dashboard's question settings (#286): the settings
+// target it matched ("none" when no row did), the role it was told to ask
+// instead, when it was last refused and how often since the row began.
+type QuestionRefusal struct {
+	Role   string `json:"role"`
+	Target string `json:"target"`
+	AskVia string `json:"ask_via"`
+	At     string `json:"at"`
+	Count  int    `json:"count"`
+}
+
 type QuestionAnswer struct {
 	Selected []string `json:"selected"`
 	Other    string   `json:"other,omitempty"`

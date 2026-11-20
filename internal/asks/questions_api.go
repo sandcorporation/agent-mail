@@ -190,11 +190,14 @@ const (
 
 // Refusal is the JSON body of a 403 on the question endpoints. Error is the
 // same text the plain-text answer had; AskVia, for can_ask_off, is the role
-// the asker should mail instead (omitted when there is none).
+// the asker should mail instead (omitted when there is none), and
+// SettingsTarget the question settings target that refused it ("none" when
+// no row matched) (#286).
 type Refusal struct {
-	Error  string `json:"error"`
-	Code   string `json:"code"`
-	AskVia string `json:"ask_via,omitempty"`
+	Error          string `json:"error"`
+	Code           string `json:"code"`
+	AskVia         string `json:"ask_via,omitempty"`
+	SettingsTarget string `json:"settings_target,omitempty"`
 }
 
 // writeRefusal answers 403 with r as JSON.
@@ -336,7 +339,13 @@ func (s *Service) askQuestion(w http.ResponseWriter, r *http.Request, p identity
 		return
 	}
 	if !settings.CanAsk {
-		writeRefusal(w, Refusal{Error: "this role may not ask questions (can_ask is off)", Code: CodeCanAskOff, AskVia: s.ids.AskVia(p)})
+		target := settings.Target
+		if errors.Is(err, sql.ErrNoRows) || target == "" {
+			target = noQuestionTarget
+		}
+		askVia := s.ids.AskVia(p)
+		s.refuseCanAsk(r, p, target, askVia)
+		writeRefusal(w, Refusal{Error: "this role may not ask questions (can_ask is off)", Code: CodeCanAskOff, AskVia: askVia, SettingsTarget: target})
 		return
 	}
 	var req struct {
