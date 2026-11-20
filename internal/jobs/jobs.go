@@ -51,6 +51,7 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 //	GET  "ID"        show (owner only)
 //	POST "ID/report" the runner's state (owner only)
 //	POST "ID/stop"   ask the runner to stop (owner only)
+//	POST "ID/lines"  a watch's batch of output lines (owner only)
 func (s *Service) API(w http.ResponseWriter, r *http.Request, p identity.Principal, rest string) {
 	if rest == "" {
 		switch r.Method {
@@ -86,6 +87,8 @@ func (s *Service) API(w http.ResponseWriter, r *http.Request, p identity.Princip
 		s.report(w, r, j)
 	case action == "stop" && r.Method == http.MethodPost:
 		s.stop(w, j)
+	case action == "lines" && r.Method == http.MethodPost:
+		s.lines(w, r, j)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -265,7 +268,10 @@ func (s *Service) report(w http.ResponseWriter, r *http.Request, j wire.Job) {
 	err := store.InTx(r.Context(), s.db, func(tx *sql.Tx) error {
 		mailed = ""
 		if q.State == wire.JobRunning {
-			_, err := tx.Exec(`UPDATE jobs SET state=?, started_at=? WHERE id=? AND state=?`, wire.JobRunning, stamp(now), j.ID, wire.JobHanded)
+			// The first moves a handed job; later ones carry the output tail
+			// (the dashboard's last line) while it runs.
+			_, err := tx.Exec(`UPDATE jobs SET state=?, started_at=COALESCE(started_at, ?), tail=CASE WHEN ?='' THEN tail ELSE ? END WHERE id=? AND state IN (?,?)`,
+				wire.JobRunning, stamp(now), q.Tail, q.Tail, j.ID, wire.JobHanded, wire.JobRunning)
 			return err
 		}
 		res, err := tx.Exec(`UPDATE jobs SET state=?, exit_code=?, error=?, tail=?, ended_at=?, started_at=COALESCE(started_at, ?) WHERE id=? AND state IN (?,?)`,
@@ -325,6 +331,68 @@ func endMail(j wire.Job, q wire.JobReport) (subject, body, priority string) {
 		body += "\n\n" + q.Tail
 	}
 	return subject, body, priority
+}
+
+// lines records a watch's batch of output lines: one urgent mail to the
+// owner per batch (idempotent on the watch and the batch number), and the
+// lines become the tail. The runner sends a batch only when nobody is
+// attached to the watch on its machine.
+func (s *Service) lines(w http.ResponseWriter, r *http.Request, j wire.Job) {
+	var q wire.JobLines
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&q) != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if err := q.Check(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if j.Kind != wire.JobWatch {
+		http.Error(w, "only a watch sends lines", http.StatusBadRequest)
+		return
+	}
+	if j.State != wire.JobRunning {
+		http.Error(w, "the watch is not running", http.StatusConflict)
+		return
+	}
+	now := s.now().UTC()
+	var mailed string
+	err := store.InTx(r.Context(), s.db, func(tx *sql.Tx) error {
+		mailed = ""
+		if _, err := tx.Exec(`UPDATE jobs SET tail=? WHERE id=? AND state=?`, wire.JobTail(q.Lines), j.ID, wire.JobRunning); err != nil {
+			return err
+		}
+		box, ok := identity.Mailbox(tx, j.Role)
+		if !ok {
+			return nil
+		}
+		subject, body := watchMail(j, q)
+		idem := fmt.Sprintf("watch:%d:%d", j.ID, q.Seq)
+		stored, err := mail.InsertSystemMailOnce(tx, box, subject, body, "", "urgent", idem, now)
+		if stored {
+			mailed = box
+		}
+		return err
+	})
+	if err != nil {
+		http.Error(w, "could not record lines", http.StatusInternalServerError)
+		return
+	}
+	if mailed != "" && s.wake != nil {
+		s.wake(mailed)
+	}
+	s.writeJob(w, j.ID)
+}
+
+// watchMail is a batch's notice: the count in the subject, the kept lines
+// in the body and how many were left out.
+func watchMail(j wire.Job, q wire.JobLines) (subject, body string) {
+	subject = fmt.Sprintf("[감시] %s: %d줄", j.Label, q.Count)
+	body = fmt.Sprintf("감시 %d · %s · %s\n\n%s", j.ID, j.Machine, j.Cwd, q.Lines)
+	if kept := strings.Count(q.Lines, "\n") + 1; q.Count > kept {
+		body += fmt.Sprintf("\n(%d줄 생략)", q.Count-kept)
+	}
+	return subject, body
 }
 
 func (s *Service) stop(w http.ResponseWriter, j wire.Job) {

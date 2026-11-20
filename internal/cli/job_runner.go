@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -88,6 +89,16 @@ func jobRunner(c Config, arg string) (int, error) {
 	cmd := exec.Command(spec.Argv[0], spec.Argv[1:]...)
 	cmd.Dir, cmd.Stdout, cmd.Stderr = spec.Cwd, out, out
 	cmd.SysProcAttr = childAttr()
+	var lines *lineBatcher
+	if spec.Kind == wire.JobWatch {
+		// A watch's output also goes through the line batcher; one writer
+		// for both streams keeps their lines whole.
+		lines = newLineBatcher()
+		w := io.MultiWriter(out, lines)
+		cmd.Stdout, cmd.Stderr = w, w
+		// A child left holding the pipe does not keep the end from the runner.
+		cmd.WaitDelay = stopGrace
+	}
 	if err = cmd.Start(); err != nil {
 		fmt.Fprintf(out, "%s: %v\n", progName(), err)
 		finishJob(dir, wire.JobReport{State: wire.JobFailed, ExitCode: intPtr(127), Error: err.Error()}, report)
@@ -96,8 +107,18 @@ func jobRunner(c Config, arg string) (int, error) {
 	report(wire.JobReport{State: wire.JobRunning}, 3)
 	done := make(chan struct{})
 	go func() { _ = cmd.Wait(); close(done) }()
+	batched := make(chan struct{})
+	if lines != nil {
+		window := spec.Batch
+		if window <= 0 {
+			window = wire.DefaultWatchBatch
+		}
+		go func() { runBatches(lines, window, time.After, watchSender(c, id, dir)); close(batched) }()
+	} else {
+		close(batched)
+	}
 	polled := make(chan wire.Job)
-	go pollJob(c, id, done, polled)
+	go pollJob(c, id, dir, done, polled)
 	expiry := time.NewTimer(time.Until(spec.Expires))
 	defer expiry.Stop()
 	if spec.Expires.IsZero() {
@@ -134,6 +155,11 @@ wait:
 			break wait
 		}
 	}
+	// The last batch goes out before the end.
+	if lines != nil {
+		lines.Close()
+	}
+	<-batched
 	q := wire.JobReport{State: wire.JobExited, ExitCode: intPtr(exitCodeOf(cmd.ProcessState))}
 	if endState != "" {
 		q.State = endState
@@ -144,14 +170,24 @@ wait:
 
 // pollJob sends the server's record of the job to out every jobPoll until
 // done closes. A failed poll is skipped: the runner keeps the last expiry.
-func pollJob(c Config, id int64, done <-chan struct{}, out chan<- wire.Job) {
+// When the output grew it first reports the tail (the dashboard's last line
+// of a running job).
+func pollJob(c Config, id int64, dir string, done <-chan struct{}, out chan<- wire.Job) {
 	t := time.NewTicker(jobPoll())
 	defer t.Stop()
+	var size int64
 	for {
 		select {
 		case <-done:
 			return
 		case <-t.C:
+		}
+		if st, err := os.Stat(filepath.Join(dir, "output")); err == nil && st.Size() != size {
+			if tail := readTail(filepath.Join(dir, "output")); tail != "" {
+				if _, err = slotCall(c, "POST", fmt.Sprintf("/api/jobs/%d/report", id), wire.JobReport{State: wire.JobRunning, Tail: tail}); err == nil {
+					size = st.Size()
+				}
+			}
 		}
 		j, err := getJob(c, id)
 		if err != nil {
