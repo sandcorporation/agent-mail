@@ -246,3 +246,66 @@ func TestLimitClearsWhenTheScreenNoLongerShowsIt(t *testing.T) {
 		t.Fatal("an ended session still limits")
 	}
 }
+
+// A session that hits the limit again after a reset prints a fresh notice
+// below the spent one still on its screen: the fresh one limits again,
+// whether it names another reset time or the same text (a day later), and
+// the spent one alone never does (#210).
+func TestARepeatedNoticeOnTheSameScreenLimitsAgain(t *testing.T) {
+	r := newRig(t)
+	n := r.node(rec("a"))
+	r.reconcile(n)
+	limitedTimes := 0
+	was := false
+	step := func() {
+		r.now = r.now.Add(node.LimitScan)
+		r.reconcile(n)
+		if l := n.Limit().Limited; l != was {
+			if l {
+				limitedTimes++
+			}
+			was = l
+		}
+	}
+	say := func(s string) {
+		if err := r.fake.Output("sb-a", []byte(s+"\r\n")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	say(fakeagent.LimitMessage("3pm"))
+	step()
+	r.now = time.Date(2026, 11, 19, 15, 0, 0, 0, time.UTC)
+	step()
+	say("> carry on")
+	step()
+	if was {
+		t.Fatal("the spent notice still limits")
+	}
+	say(fakeagent.LimitMessage("8pm"))
+	step()
+	if !was || limitedTimes != 2 {
+		t.Fatalf("a fresh notice under a spent one: limited %v, %d times", was, limitedTimes)
+	}
+	r.now = time.Date(2026, 11, 19, 20, 0, 0, 0, time.UTC)
+	step()
+	step()
+	if was {
+		t.Fatal("still limited after 8pm")
+	}
+	// The next day, the same words again.
+	r.now = time.Date(2026, 11, 20, 13, 0, 0, 0, time.UTC)
+	say(fakeagent.LimitMessage("8pm"))
+	step()
+	if !was || limitedTimes != 3 {
+		t.Fatalf("the same notice again: limited %v, %d times", was, limitedTimes)
+	}
+	l := n.Limit()
+	if want := time.Date(2026, 11, 20, 20, 0, 0, 0, time.UTC); l.ResetAt == nil || *l.ResetAt != want.UnixMilli() {
+		t.Fatalf("reset %v, want %v", l.ResetAt, want)
+	}
+	// Scanning on with nothing new keeps it at one showing.
+	step()
+	if limitedTimes != 3 {
+		t.Fatalf("limited %d times without a new notice", limitedTimes)
+	}
+}

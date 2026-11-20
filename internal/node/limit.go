@@ -33,15 +33,18 @@ var resetEpoch = regexp.MustCompile(`\|(\d{10})\b`)
 // 21, 5pm", "resets 21:00".
 var resetClock = regexp.MustCompile(`(?i)\bresets?\s+(?:at\s+)?(?:([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(?:at\s+)?)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b(?:\s*\(([A-Za-z_+\-/0-9]+)\))?`)
 
-// LimitHit is a usage-limit message found on a screen: the text from the
-// match on (its fingerprint) and the reset time it gave, zero when none.
+// LimitHit is the newest usage-limit message found on a screen: the text
+// from the match on (its fingerprint), the reset time it gave (zero when
+// none) and how many times the screen shows that text.
 type LimitHit struct {
 	Text  string
 	Reset time.Time
+	Count int
 }
 
-// DetectLimit looks for the usage-limit message in a screen's rows; at is
-// when the screen was read, the reference for a reset time without a date.
+// DetectLimit looks for the usage-limit message in a screen's rows and
+// takes the lowest one, the newest; at is when the screen was read, the
+// reference for a reset time without a date.
 func DetectLimit(rows []string, at time.Time) (LimitHit, bool) {
 	parts := make([]string, 0, len(rows))
 	for _, r := range rows {
@@ -50,24 +53,27 @@ func DetectLimit(rows []string, at time.Time) (LimitHit, bool) {
 		}
 	}
 	text := strings.Join(parts, " ")
+	var loc []int
 	for _, p := range limitPatterns {
-		loc := p.FindStringIndex(text)
-		if loc == nil {
-			continue
+		all := p.FindAllStringIndex(text, -1)
+		if len(all) > 0 && (loc == nil || all[len(all)-1][0] > loc[0]) {
+			loc = all[len(all)-1]
 		}
-		// The fingerprint ends with the reset clause (or the match), so
-		// what the screen shows below the message does not change it.
-		window := strings.ToValidUTF8(text[loc[0]:min(len(text), loc[1]+120)], "")
-		fp := text[loc[0]:loc[1]]
-		for _, re := range []*regexp.Regexp{resetEpoch, resetClock} {
-			if r := re.FindStringIndex(window); r != nil {
-				fp = window[:r[1]]
-				break
-			}
-		}
-		return LimitHit{Text: fp, Reset: ParseReset(fp, at)}, true
 	}
-	return LimitHit{}, false
+	if loc == nil {
+		return LimitHit{}, false
+	}
+	// The fingerprint ends with the reset clause (or the match), so what
+	// the screen shows below the message does not change it.
+	window := strings.ToValidUTF8(text[loc[0]:min(len(text), loc[1]+120)], "")
+	fp := text[loc[0]:loc[1]]
+	for _, re := range []*regexp.Regexp{resetEpoch, resetClock} {
+		if r := re.FindStringIndex(window); r != nil {
+			fp = window[:r[1]]
+			break
+		}
+	}
+	return LimitHit{Text: fp, Reset: ParseReset(fp, at), Count: max(1, strings.Count(text, fp))}, true
 }
 
 // ParseReset reads the reset time out of a usage-limit message seen at at:
@@ -143,11 +149,16 @@ func monthOf(s string) (time.Month, bool) {
 	return 0, false
 }
 
-// limitSeen is one session's showing of the message: its fingerprint, the
-// reset it gave, when the node first saw it, and whether it is spent (its
-// reset passed). A spent showing stays ignored until the screen changes.
+// limitSeen is one session's showing of the message: its fingerprint, how
+// many times the screen shows it, the reset it gave, when the node first
+// saw it, and whether it is spent (its reset passed). A spent showing stays
+// ignored until a fresh one appears: the newest message on the screen has
+// other words, or the same words show more times than before (#210). The
+// reset is read once, when the showing is first seen, so a spent "resets
+// 3pm" never turns into tomorrow's 3pm.
 type limitSeen struct {
 	text  string
+	count int
 	reset time.Time
 	since time.Time
 	spent bool
@@ -180,8 +191,10 @@ func (n *Node) scanLimits(ctx context.Context, byName map[string]term.Info) {
 		switch {
 		case !found:
 			delete(n.limits, r.ID)
-		case cur == nil || cur.text != hit.Text:
-			n.limits[r.ID] = &limitSeen{text: hit.Text, reset: hit.Reset, since: now}
+		case cur == nil || cur.text != hit.Text || hit.Count > cur.count:
+			n.limits[r.ID] = &limitSeen{text: hit.Text, count: hit.Count, reset: hit.Reset, since: now}
+		default:
+			cur.count = hit.Count
 		}
 	}
 	for id := range n.limits {

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -283,5 +284,62 @@ func TestResumeOrderPutsQueuedWorkFirst(t *testing.T) {
 	}
 	if strings.Join(got, " ") != "q1 q2 new1 new2" {
 		t.Fatalf("order %v", got)
+	}
+}
+
+// Concurrent starts and adds at cap-1 on one node: the count and the write
+// are one statement, so exactly one is let through and the rest are
+// refused with the cap (409 over the API) (#210).
+func TestConcurrentStartsAtCapMinusOneLetExactlyOneThrough(t *testing.T) {
+	for round := range 20 {
+		s, _ := limitService(t)
+		for i := range 3 {
+			add(t, s, "/w/run"+strconv.Itoa(i), "", "")
+		}
+		const racers = 6
+		var stopped []string
+		for i := range racers {
+			stopped = append(stopped, add(t, s, "/w/stop"+strconv.Itoa(i), "", DesiredStopped).ID)
+		}
+		errs := make(chan error, 2*racers)
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for i, id := range stopped {
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				<-start
+				_, err := s.SetDesired(id, DesiredRunning)
+				errs <- err
+			}()
+			go func() {
+				defer wg.Done()
+				<-start
+				c := record()
+				c.Directory = "/w/new" + strconv.Itoa(i)
+				_, err := s.Create(c)
+				errs <- err
+			}()
+		}
+		close(start)
+		wg.Wait()
+		close(errs)
+		ok := 0
+		for err := range errs {
+			switch {
+			case err == nil:
+				ok++
+			case errors.As(err, new(CapacityError)):
+			default:
+				t.Fatalf("round %d: %v", round, err)
+			}
+		}
+		var running int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM hosted_sessions WHERE node='pc' AND desired=?`, DesiredRunning).Scan(&running); err != nil {
+			t.Fatal(err)
+		}
+		if ok != 1 || running != 4 {
+			t.Fatalf("round %d: %d let through, %d running; want 1 and 4", round, ok, running)
+		}
 	}
 }

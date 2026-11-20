@@ -68,23 +68,45 @@ func (s *Service) NodeMax(node string) (int, error) {
 	return n, nil
 }
 
-// checkCap refuses one more record set to run on node (other than except)
-// when as many as its cap already are. Records set to run count whatever
+// capGuard is a WHERE condition that holds while fewer records of node are
+// set to run than its cap, and that cap. Records set to run count whatever
 // their observed state, so a record never waits behind the cap because of
-// an add or a start.
-func (s *Service) checkCap(node, except string) error {
-	max, err := s.NodeMax(node)
+// an add or a start. Writes that set a record to run carry it in the same
+// statement as the write, so two concurrent adds or starts cannot both see
+// room for one (#210).
+func (s *Service) capGuard(node string) (cond string, args []any, max int, err error) {
+	max, err = s.NodeMax(node)
+	if err != nil {
+		return "", nil, 0, err
+	}
+	return `(SELECT COUNT(*) FROM hosted_sessions WHERE node=? AND desired=?)<?`, []any{node, DesiredRunning, max}, max, nil
+}
+
+// guardedUpdate runs query, an UPDATE without its WHERE, on the record id
+// of node, held back by the cap only when toRunning and the record is not
+// already set to run. No row changed means the record is gone
+// (ErrNotFound) or the cap refused it (CapacityError).
+func (s *Service) guardedUpdate(id, node string, toRunning bool, query string, args ...any) error {
+	cond, gargs, max, err := s.capGuard(node)
 	if err != nil {
 		return err
 	}
-	var n int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM hosted_sessions WHERE node=? AND desired=? AND id<>?`, node, DesiredRunning, except).Scan(&n); err != nil {
+	query += ` WHERE id=? AND (?=0 OR desired=? OR ` + cond + `)`
+	args = append(args, id, boolInt(toRunning), DesiredRunning)
+	res, err := s.db.Exec(query, append(args, gargs...)...)
+	if err != nil {
 		return err
 	}
-	if n >= max {
-		return CapacityError{Node: node, Max: max}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return nil
 	}
-	return nil
+	var one int
+	if err := s.db.QueryRow(`SELECT 1 FROM hosted_sessions WHERE id=?`, id).Scan(&one); errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	return CapacityError{Node: node, Max: max}
 }
 
 // Limit is the subscription limit now: the operator's switch, else the
