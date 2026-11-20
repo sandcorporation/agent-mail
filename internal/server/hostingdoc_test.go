@@ -776,7 +776,8 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 			modes = append(modes, m)
 		}
 	}
-	if want := []string{"builtin", "oidc (public client, PKCE)", "builtin"}; !slices.Equal(modes, want) {
+	// W8 restarts up once more, in builtin.
+	if want := []string{"builtin", "oidc (public client, PKCE)", "builtin", "builtin"}; !slices.Equal(modes, want) {
 		t.Errorf("up.log admin auth lines %q, want %q\nup.log:\n%s", modes, want, upLog)
 	}
 	// sbstarted: the mode line and /health's version (e2eBinary's "e2e").
@@ -880,7 +881,7 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 			modes = append(modes, m)
 		}
 	}
-	if want := []string{"builtin", "oidc (public client, PKCE)", "builtin", "builtin"}; !slices.Equal(modes, want) {
+	if want := []string{"builtin", "oidc (public client, PKCE)", "builtin", "builtin", "builtin"}; !slices.Equal(modes, want) {
 		t.Errorf("after W9, up.log admin auth lines %q, want %q (one new start)\nup.log:\n%s", modes, want, upLog)
 	}
 	if !hasLine(string(out), "version e2e-new") {
