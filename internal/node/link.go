@@ -261,6 +261,16 @@ func (l *Link) session(ctx context.Context, url string) (attached bool, err erro
 			}
 			told[key] = true
 		}
+		for _, e := range l.Node.Events() {
+			key := "event:" + e.ID + ":" + strconv.FormatInt(e.At, 10) + ":" + e.Kind + ":" + strconv.Itoa(e.Restarts)
+			if told[key] {
+				continue
+			}
+			if err := write(wire.NodeFrame{Type: wire.NodeEventType, Event: &e}); err != nil {
+				return true, err
+			}
+			told[key] = true
+		}
 		select {
 		case <-sctx.Done():
 			select {

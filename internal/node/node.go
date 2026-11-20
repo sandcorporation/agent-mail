@@ -185,6 +185,12 @@ type state struct {
 	// assigns a new one.
 	awaiting string
 	notices  []Notice
+	// events is the newest EventKeep events, oldest first (#252); the link
+	// sends them on every connection and the host ignores repeats.
+	events []wire.HostedEvent
+	// stopped is the start time of the run the node stopped because the
+	// record was set to stopped: its exit is not a crash.
+	stopped time.Time
 	// restartGen and startGen are the record's request counters last acted
 	// on.
 	restartGen, startGen int64
@@ -303,6 +309,49 @@ func (n *Node) stateOf(r Record) *state {
 
 // Notices reports the notices every assigned record holds, in assignment
 // order.
+// EventKeep is how many events a node holds per session for the host.
+const EventKeep = 32
+
+// event records one event of s at now, with the restart count as it is.
+func (n *Node) event(s *state, kind, actor string, exit *int) {
+	e := wire.HostedEvent{ID: s.ID, At: n.cfg.Now().UnixMilli(), Kind: kind, Restarts: max(0, s.Run-1), Actor: actor}
+	if exit != nil {
+		code := *exit
+		e.ExitCode = &code
+	}
+	s.events = append(s.events, e)
+	if len(s.events) > EventKeep {
+		s.events = slices.Delete(s.events, 0, len(s.events)-EventKeep)
+	}
+}
+
+// exitEvent records the end of a run that started at started with code:
+// a crash or a clean exit, unless the node stopped it itself.
+func (n *Node) exitEvent(s *state, started time.Time, code int) {
+	if started.Equal(s.stopped) {
+		return
+	}
+	kind := wire.HostedEventCrash
+	if code == 0 {
+		kind = wire.HostedEventExit
+	}
+	n.event(s, kind, "", &code)
+}
+
+// Events are the events the node holds for its assigned records, each
+// record's oldest first.
+func (n *Node) Events() []wire.HostedEvent {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	var out []wire.HostedEvent
+	for _, r := range n.records {
+		if s, ok := n.states[r.ID]; ok {
+			out = append(out, s.events...)
+		}
+	}
+	return out
+}
+
 func (n *Node) Notices() []Notice {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -422,6 +471,7 @@ func (n *Node) reconcile(ctx context.Context, r Record, in term.Info, exists boo
 	running := r.Desired != DesiredStopped
 	now := n.cfg.Now()
 	replace := s.fresh
+	kind := wire.HostedEventStart // what a replace launch is
 	if r.StartGen != s.startGen {
 		// Start: clear failures; a session that ended (by policy too) is
 		// launched again at once.
@@ -432,6 +482,7 @@ func (n *Node) reconcile(ctx context.Context, r Record, in term.Info, exists boo
 	if r.RestartGen != s.restartGen {
 		s.restartGen, replace = r.RestartGen, true
 		s.clearFailures()
+		kind = wire.HostedEventRestart
 	}
 	if replace {
 		// Restart, Start after an exit or a new conversation: stop what
@@ -450,13 +501,17 @@ func (n *Node) reconcile(ctx context.Context, r Record, in term.Info, exists boo
 			if !in.Alive && !in.StartedAt.Equal(s.seen) {
 				code := in.ExitCode
 				s.LastExit, s.seen = &code, in.StartedAt
+				n.exitEvent(s, in.StartedAt, code)
 			}
 		}
 		if !running {
+			if exists && in.Alive {
+				n.event(s, wire.HostedEventStop, wire.HostedActorAdmin, nil)
+			}
 			s.Observed, s.PID = ObservedStopped, 0
 			return nil
 		}
-		return n.start(ctx, r, s)
+		return n.start(ctx, r, s, kind, wire.HostedActorAdmin)
 	}
 	if exists {
 		// A session in the backend means the record was launched before,
@@ -467,7 +522,10 @@ func (n *Node) reconcile(ctx context.Context, r Record, in term.Info, exists boo
 	case exists && in.Alive && running:
 		s.Observed, s.PID, s.StartedAt = ObservedRunning, in.PID, in.StartedAt
 		if s.Run == 0 {
+			// A session this node process did not launch: its keeper or
+			// tmux server kept it across a node restart.
 			s.Run = 1
+			n.event(s, wire.HostedEventAdopt, wire.HostedActorNode, nil)
 		}
 		return nil
 	case exists && in.Alive:
@@ -476,11 +534,14 @@ func (n *Node) reconcile(ctx context.Context, r Record, in term.Info, exists boo
 		}
 		n.active--
 		s.Observed, s.PID = ObservedStopped, 0
+		s.stopped = in.StartedAt
+		n.event(s, wire.HostedEventStop, wire.HostedActorAdmin, nil)
 		return nil
 	case exists:
 		if !in.StartedAt.Equal(s.seen) {
 			code := in.ExitCode
 			s.LastExit, s.seen = &code, in.StartedAt
+			n.exitEvent(s, in.StartedAt, code)
 			if running && restarts(r.Restart, code) {
 				n.exited(s, code, now.Sub(in.StartedAt), now)
 			}
@@ -496,14 +557,14 @@ func (n *Node) reconcile(ctx context.Context, r Record, in term.Info, exists boo
 		if err := n.backend.Forget(ctx, name); err != nil && !errors.Is(err, term.ErrNoSession) {
 			return fmt.Errorf("node: forget %s: %w", name, err)
 		}
-		return n.start(ctx, r, s)
+		return n.start(ctx, r, s, wire.HostedEventRestart, wire.HostedActorPolicy)
 	case running:
 		// Never launched here, or its holder (keeper, tmux server) is gone:
 		// launch with resume when the conversation exists.
 		if n.held(s, now) {
 			return nil
 		}
-		return n.start(ctx, r, s)
+		return n.start(ctx, r, s, wire.HostedEventStart, wire.HostedActorNode)
 	default:
 		s.Observed, s.PID = ObservedStopped, 0
 		return nil
@@ -584,19 +645,21 @@ func restarts(policy string, code int) bool {
 // start launches a record that should run when the node runs fewer than
 // Config.Max sessions; otherwise the record waits (a later pass starts it
 // when one stops).
-func (n *Node) start(ctx context.Context, r Record, s *state) error {
+func (n *Node) start(ctx context.Context, r Record, s *state, kind, actor string) error {
 	if n.active >= n.cfg.Max {
 		s.Observed, s.PID, s.NextAttemptAt = ObservedWaiting, 0, time.Time{}
 		return nil
 	}
-	if err := n.launch(ctx, r, s); err != nil {
+	if err := n.launch(ctx, r, s, kind, actor); err != nil {
 		return err
 	}
 	n.active++
 	return nil
 }
 
-func (n *Node) launch(ctx context.Context, r Record, s *state) error {
+// launch starts r's session and records it as an event of kind asked by
+// actor.
+func (n *Node) launch(ctx context.Context, r Record, s *state, kind, actor string) error {
 	spec := term.Spec{
 		Name: TerminalName(r.ID),
 		Argv: n.cfg.Argv(r, s.Launched),
@@ -620,6 +683,7 @@ func (n *Node) launch(ctx context.Context, r Record, s *state) error {
 	s.Run++
 	s.next, s.NextAttemptAt = time.Time{}, time.Time{}
 	s.Observed, s.PID, s.StartedAt = ObservedStarting, 0, n.cfg.Now()
+	n.event(s, kind, actor, nil)
 	return nil
 }
 
@@ -653,7 +717,7 @@ func (n *Node) Restart(ctx context.Context, id string) error {
 	}
 	s.fresh = false
 	s.clearFailures()
-	return n.launch(ctx, r, s)
+	return n.launch(ctx, r, s, wire.HostedEventRestart, wire.HostedActorAdmin)
 }
 
 // Input types b into the session of the assigned record id, unchanged (a

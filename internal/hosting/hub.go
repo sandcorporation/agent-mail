@@ -491,6 +491,19 @@ func (h *Hub) receive(c *nodeConn, f wire.NodeFrame) {
 		if own {
 			h.notice(*f.Notice)
 		}
+	case wire.NodeEventType:
+		if f.Event == nil {
+			return
+		}
+		h.mu.Lock()
+		own := h.owner[f.Event.ID] == c.name
+		h.mu.Unlock()
+		if !own {
+			return
+		}
+		if err := h.svc.recordEvent(*f.Event); err != nil {
+			log.Printf("hosting: event %s %s: %v", f.Event.ID, f.Event.Kind, err)
+		}
 	}
 }
 
@@ -524,7 +537,7 @@ func (h *Hub) AdminTerminalsAPI(w http.ResponseWriter, r *http.Request, rest str
 		h.limitAPI(w, r)
 		return true
 	}
-	for _, sub := range []string{"/ticket", "/socket", "/log"} {
+	for _, sub := range []string{"/ticket", "/socket", "/log", "/events"} {
 		id, ok := strings.CutSuffix(rest, sub)
 		if !ok {
 			continue
@@ -536,6 +549,8 @@ func (h *Hub) AdminTerminalsAPI(w http.ResponseWriter, r *http.Request, rest str
 			h.ticketAPI(w, r, id)
 		case sub == "/socket":
 			h.terminalSocket(w, r, id)
+		case sub == "/events":
+			h.eventsAPI(w, r, id)
 		default:
 			h.logAPI(w, r, id)
 		}

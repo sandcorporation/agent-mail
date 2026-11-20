@@ -414,7 +414,8 @@ func TestDashboardTerminalsDetail(t *testing.T) {
 		"add('지우기',()=>{if(confirm(",
 		"add('새 대화',()=>{if(confirm(",
 		"node('p','바꾼 설정은 다음 시작부터 적용','muted')",
-		"api('terminals/'+encodeURIComponent(v.id)+'/log')",
+		"api('terminals/'+id+'/events'),api('terminals/'+id+'/log')",
+		"termTable('termEvents',['시각','종류','종료 코드','재시작','요청'],events,",
 		// One screen, kept across redraws, closed when the detail stops showing it.
 		`<div id="termHold" hidden><div id="termPane" class="termpane">`,
 		"function termGc(){if(!$('detailBody').contains(tp('termPane')))termClose()}",

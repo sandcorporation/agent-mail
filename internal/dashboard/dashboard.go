@@ -1611,25 +1611,30 @@ function termActs(v,box){
 }
 function termDir(d){const s=node('span','‎'+d+'‎','dir');s.title=d;return s}
 const termLogKind={attach:'연결',detach:'끊음',input:'입력'};
-// termHistory draws 기록: the runtime's starts, restarts and exits, then who attached and typed.
+const termEventKind={start:'시작',restart:'재시작',stop:'정지',crash:'비정상 종료',exit:'종료',adopt:'이어받음'};
+const termEventActor={admin:'관리자',policy:'재시작 규칙',node:'노드'};
+// termTable is a stack table with head labels and one row per item (rowOf: values and classes).
+function termTable(id,labels,items,rowOf){
+  const tbl=node('table','','stack list'),head=node('tr','');
+  for(const h of labels)head.append(node('th',h));
+  const thead=document.createElement('thead');thead.append(head);
+  const body=document.createElement('tbody');body.id=id;
+  for(const it of items){const tr=node('tr','');const [vals,cls]=rowOf(it);cells(tr,labels,vals,cls);body.append(tr)}
+  if(!items.length)emptyRow(body,labels.length,'기록 없음');
+  tbl.append(thead,body);return tbl;
+}
+// termHistory draws 기록: the runtime now, the session's starts, restarts, stops and exits (#252), then who attached and typed.
 async function termHistory(v,box){
   const rt=v.runtime||{},st=termSt(v);
   const pairs=[['상태',termStateText(st,rt)+termDesire(v)],['이후',when(rt.since)],['마지막 시작',when(rt.started_at)],['재시작',String(rt.restarts||0)+'회'],['마지막 종료',rt.last_exit===null||rt.last_exit===undefined?'-':String(rt.last_exit)]];
   if(rt.next_attempt_at)pairs.push(['다음 시도',when(rt.next_attempt_at)]);
   if(rt.resume_failed)pairs.push(['재개','실패 · 새 대화']);
-  box.append(dl(pairs),node('h3','접속'));
-  const rows=await api('terminals/'+encodeURIComponent(v.id)+'/log');
-  const tbl=node('table','','stack list'),head=node('tr','');
-  for(const h of ['시각','관리자','종류','바이트'])head.append(node('th',h));
-  const thead=document.createElement('thead');thead.append(head);
-  const body=document.createElement('tbody');body.id='termLog';
-  for(const e of rows){
-    const tr=node('tr','');
-    cells(tr,['시각','관리자','종류','바이트'],[when(e.at),e.admin_user,termLogKind[e.kind]||e.kind,e.kind==='input'?String(e.bytes):'-'],['','','','num']);
-    body.append(tr);
-  }
-  if(!rows.length)emptyRow(body,4,'기록 없음');
-  tbl.append(thead,body);box.append(tbl);
+  const id=encodeURIComponent(v.id);
+  const [events,rows]=await Promise.all([api('terminals/'+id+'/events'),api('terminals/'+id+'/log')]);
+  box.append(dl(pairs),node('h3','실행'));
+  box.append(termTable('termEvents',['시각','종류','종료 코드','재시작','요청'],events,e=>[[when(e.at),termEventKind[e.kind]||e.kind,e.exit_code===null||e.exit_code===undefined?'-':String(e.exit_code),String(e.restarts||0),termEventActor[e.actor]||e.actor||'-'],['','','num','num','']]));
+  box.append(node('h3','접속'));
+  box.append(termTable('termLog',['시각','관리자','종류','바이트'],rows,e=>[[when(e.at),e.admin_user,termLogKind[e.kind]||e.kind,e.kind==='input'?String(e.bytes):'-'],['','','','num']]));
 }
 // termSettings draws 설정: what the record runs and the fields a PUT changes.
 function termSettings(v,box){

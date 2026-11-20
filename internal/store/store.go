@@ -123,6 +123,9 @@ func Init(db *sql.DB) error {
 	if e = migrateQuestionRefusals(db); e != nil {
 		return e
 	}
+	if e = migrateHostedEvents(db); e != nil {
+		return e
+	}
 	return migrateReports(db)
 }
 
@@ -131,6 +134,17 @@ func Init(db *sql.DB) error {
 // in RFC 3339) and how many there were.
 func migrateQuestionRefusals(db *sql.DB) error {
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS question_refusals(role TEXT PRIMARY KEY, target TEXT NOT NULL, ask_via TEXT NOT NULL DEFAULT '', last_at TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0)`)
+	return err
+}
+
+// migrateHostedEvents adds hosted_events (#252): each hosted session's
+// starts, restarts, stops, crashes, exits and adoptions as its node reported
+// them, the newest 200 per session, dropped with the session. A repeat of
+// the same event (the node sends what it holds on every connection) is
+// ignored by the unique key. Times are Unix ms.
+func migrateHostedEvents(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS hosted_events(id INTEGER PRIMARY KEY AUTOINCREMENT, session TEXT NOT NULL, at INTEGER NOT NULL, kind TEXT NOT NULL, exit_code INTEGER, reason TEXT NOT NULL DEFAULT '', restarts INTEGER NOT NULL DEFAULT 0, actor TEXT NOT NULL DEFAULT '', UNIQUE(session, at, kind, restarts));
+CREATE INDEX IF NOT EXISTS hosted_events_session ON hosted_events(session, at);`)
 	return err
 }
 
