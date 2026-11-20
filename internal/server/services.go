@@ -48,7 +48,7 @@ func (s *Server) authenticate(r *http.Request) (identity.Principal, bool) {
 // ids is the identity rules over this server's database, clock, boss roles
 // and group cache. A revoke logs the slot offline in the presence history.
 func (s *Server) ids() *identity.Service {
-	return identity.New(s.db, s.now, s.bossRoles, &s.groups, presence.LogOffline)
+	return identity.New(s.db, s.now, s.bossRoles, s.bossOrder, &s.groups, presence.LogOffline)
 }
 
 // mail is the mailbox over this server's database, clock, settings and hub.

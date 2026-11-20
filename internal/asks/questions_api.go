@@ -182,6 +182,29 @@ func (s *Service) QuestionAPI(w http.ResponseWriter, r *http.Request, p identity
 	}
 }
 
+// Codes of the 403 refusals on the question endpoints (Refusal.Code).
+const (
+	CodeCanAskOff         = "can_ask_off"        // the asker's question settings have can_ask off
+	CodeQuestionForbidden = "question_forbidden" // the caller may not read, answer or withdraw this question
+)
+
+// Refusal is the JSON body of a 403 on the question endpoints. Error is the
+// same text the plain-text answer had; AskVia, for can_ask_off, is the role
+// the asker should mail instead (omitted when there is none).
+type Refusal struct {
+	Error  string `json:"error"`
+	Code   string `json:"code"`
+	AskVia string `json:"ask_via,omitempty"`
+}
+
+// writeRefusal answers 403 with r as JSON.
+func writeRefusal(w http.ResponseWriter, r Refusal) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusForbidden)
+	writeJSON(w, r)
+}
+
 // questionError writes the HTTP error for an error from the question code.
 func questionError(w http.ResponseWriter, err error) {
 	var in QuestionInputError
@@ -191,7 +214,7 @@ func questionError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrQuestionNotFound):
 		http.Error(w, ErrQuestionNotFound.Error(), http.StatusNotFound)
 	case errors.Is(err, ErrQuestionForbidden):
-		http.Error(w, ErrQuestionForbidden.Error(), http.StatusForbidden)
+		writeRefusal(w, Refusal{Error: ErrQuestionForbidden.Error(), Code: CodeQuestionForbidden})
 	case errors.Is(err, ErrQuestionNotPending):
 		http.Error(w, ErrQuestionNotPending.Error(), http.StatusConflict)
 	default:
@@ -313,7 +336,7 @@ func (s *Service) askQuestion(w http.ResponseWriter, r *http.Request, p identity
 		return
 	}
 	if !settings.CanAsk {
-		http.Error(w, "this role may not ask questions (can_ask is off)", http.StatusForbidden)
+		writeRefusal(w, Refusal{Error: "this role may not ask questions (can_ask is off)", Code: CodeCanAskOff, AskVia: s.ids.AskVia(p)})
 		return
 	}
 	var req struct {

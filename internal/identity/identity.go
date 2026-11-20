@@ -21,15 +21,17 @@ type Service struct {
 	db         *sql.DB
 	clock      func() time.Time
 	bossRoles  map[string]bool
+	bossOrder  []string
 	groups     *Groups
 	logOffline func(tx *sql.Tx, base string, number int, at time.Time) error
 }
 
 // New returns the identity rules over db. clock is the current time,
-// bossRoles is SWITCHBOARD_BOSS_ROLES, groups is the server's group cache and
-// logOffline records that a slot went offline (presence log) inside a revoke.
-func New(db *sql.DB, clock func() time.Time, bossRoles map[string]bool, groups *Groups, logOffline func(tx *sql.Tx, base string, number int, at time.Time) error) *Service {
-	return &Service{db: db, clock: clock, bossRoles: bossRoles, groups: groups, logOffline: logOffline}
+// bossRoles is SWITCHBOARD_BOSS_ROLES, bossOrder the same roles in the order
+// the setting lists them, groups is the server's group cache and logOffline
+// records that a slot went offline (presence log) inside a revoke.
+func New(db *sql.DB, clock func() time.Time, bossRoles map[string]bool, bossOrder []string, groups *Groups, logOffline func(tx *sql.Tx, base string, number int, at time.Time) error) *Service {
+	return &Service{db: db, clock: clock, bossRoles: bossRoles, bossOrder: bossOrder, groups: groups, logOffline: logOffline}
 }
 
 func (s *Service) now() time.Time { return s.clock() }
