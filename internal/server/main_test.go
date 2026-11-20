@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sandcorporation/switchboard/internal/cli"
 	"github.com/sandcorporation/switchboard/internal/dashboard"
 	"github.com/sandcorporation/switchboard/internal/identity"
 	"github.com/sandcorporation/switchboard/internal/store"
@@ -284,6 +285,14 @@ func TestCLIHelperProcess(t *testing.T) {
 	arg0 := "switchboard"
 	if v := os.Getenv("SWITCHBOARD_TEST_ARG0"); v != "" {
 		arg0 = v
+	}
+	// The job runner is this test binary again, in helper mode.
+	exe, _ := os.Executable()
+	cli.SelfCommand = func(a ...string) *exec.Cmd {
+		cmd := exec.Command(exe, "-test.run=^TestCLIHelperProcess$")
+		b, _ := json.Marshal(a)
+		cmd.Env = append(os.Environ(), "SWITCHBOARD_TEST_ARGS="+string(b))
+		return cmd
 	}
 	os.Args = append([]string{arg0}, args...)
 	runMain()

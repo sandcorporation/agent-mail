@@ -128,7 +128,10 @@ func Init(db *sql.DB) error {
 	if e = migrateHostedEvents(db); e != nil {
 		return e
 	}
-	return migrateReports(db)
+	if e = migrateReports(db); e != nil {
+		return e
+	}
+	return migrateJobs(db)
 }
 
 // migrateQuestionRefusals adds question_refusals (#286): per role, the last
@@ -626,5 +629,34 @@ func migrateReports(db *sql.DB) error {
 		message_id INTEGER NOT NULL,
 		PRIMARY KEY(report_id, message_id));
 	CREATE INDEX IF NOT EXISTS idx_report_mail_message ON report_mail(message_id);`)
+	return err
+}
+
+// migrateJobs adds jobs (#289): commands handed to a detached runner on the
+// owner role's machine. state is handed, running or an end state (wire.Job*);
+// times are RFC 3339; idem is unique per role; stop_requested is the one
+// thing that travels down to the runner.
+func migrateJobs(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS jobs(
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		role TEXT NOT NULL,
+		machine TEXT NOT NULL,
+		kind TEXT NOT NULL DEFAULT 'command',
+		label TEXT NOT NULL DEFAULT '',
+		command TEXT NOT NULL,
+		cwd TEXT NOT NULL DEFAULT '',
+		state TEXT NOT NULL DEFAULT 'handed',
+		exit_code INTEGER,
+		error TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL,
+		started_at TEXT,
+		ended_at TEXT,
+		expires_at TEXT NOT NULL,
+		stop_requested_at TEXT,
+		tail TEXT NOT NULL DEFAULT '',
+		idem TEXT,
+		UNIQUE(role, idem));
+	CREATE INDEX IF NOT EXISTS idx_jobs_role ON jobs(role, id);
+	CREATE INDEX IF NOT EXISTS idx_jobs_state ON jobs(state);`)
 	return err
 }

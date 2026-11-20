@@ -330,6 +330,10 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.reports().API(w, r, who)
 		return
 	}
+	if path == "jobs" || strings.HasPrefix(path, "jobs/") {
+		s.jobs().API(w, r, who, strings.TrimPrefix(strings.TrimPrefix(path, "jobs"), "/"))
+		return
+	}
 	if path == "slots" || strings.HasPrefix(path, "slots/") {
 		s.presence().SlotAPI(w, r, who, strings.TrimPrefix(strings.TrimPrefix(path, "slots"), "/"))
 		return

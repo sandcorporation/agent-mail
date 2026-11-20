@@ -10,6 +10,7 @@ import (
 	"github.com/sandcorporation/switchboard/internal/asks"
 	"github.com/sandcorporation/switchboard/internal/identity"
 	"github.com/sandcorporation/switchboard/internal/insight"
+	"github.com/sandcorporation/switchboard/internal/jobs"
 	"github.com/sandcorporation/switchboard/internal/mail"
 	"github.com/sandcorporation/switchboard/internal/presence"
 	"github.com/sandcorporation/switchboard/internal/reports"
@@ -85,6 +86,12 @@ func (s *Server) insight() *insight.Service {
 // identity rules, with the base resolver the answered rule compares.
 func (s *Server) reports() *reports.Service {
 	return reports.New(s.db, s.now, s.ids(), insight.NewBaseResolver(s.db).Of)
+}
+
+// jobs is the job ledger over this server's database, clock and identity
+// rules. An end mail wakes the owner's waiters.
+func (s *Server) jobs() *jobs.Service {
+	return jobs.New(s.db, s.now, s.ids(), s.hub.Publish)
 }
 
 // progressAPI serves the progress view with the metrics alert limit and base
