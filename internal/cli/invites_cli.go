@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/sandcorporation/switchboard/internal/config"
+	"github.com/sandcorporation/switchboard/internal/ownerfile"
 	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
@@ -98,6 +99,11 @@ func cliJoin(p parsedArgs, stdout io.Writer) (int, error) {
 	}
 	if err != nil {
 		return 0, errors.New("cannot write profile " + path)
+	}
+	if err = ownerfile.RestrictToUser(path); err != nil {
+		f.Close()
+		os.Remove(path)
+		return 0, errors.New("cannot protect profile " + path)
 	}
 	written := false
 	defer func() {

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/sandcorporation/switchboard/internal/config"
+	"github.com/sandcorporation/switchboard/internal/ownerfile"
 	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
@@ -713,6 +714,11 @@ func copyProfile(src, dst string) error {
 		}
 		return err
 	}
+	if err = ownerfile.RestrictToUser(dst); err != nil {
+		f.Close()
+		os.Remove(dst)
+		return err
+	}
 	if _, err = f.Write(b); err != nil {
 		f.Close()
 		os.Remove(dst)
@@ -839,7 +845,7 @@ func cliConfig(p parsedArgs) (int, error) {
 	path := configPath()
 	_ = os.MkdirAll(filepath.Dir(path), 0700)
 	b, _ := json.MarshalIndent(c, "", "  ")
-	if os.WriteFile(path, b, 0600) != nil {
+	if ownerfile.Write(path, b) != nil {
 		return 0, errors.New("cannot write config")
 	}
 	fmt.Println("Saved", path)

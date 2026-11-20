@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sandcorporation/switchboard/internal/ownerfile"
 )
 
 var dropAt = time.Date(2026, 11, 18, 9, 30, 5, 0, time.UTC)
@@ -94,6 +96,9 @@ func TestStartDropsPlainBackupAfterCopy(t *testing.T) {
 		if st.Mode().Perm() != 0600 {
 			t.Fatalf("copy mode %v", st.Mode().Perm())
 		}
+	}
+	if ok, err := ownerfile.OnlyUser(copyPath); err != nil || !ok {
+		t.Fatalf("copy is not owner-only: %v %v", ok, err)
 	}
 	cp, err := sql.Open("sqlite", copyPath)
 	if err != nil {

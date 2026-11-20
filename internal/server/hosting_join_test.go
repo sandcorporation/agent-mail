@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -47,7 +48,8 @@ func TestNodeInviteJoinAndRevoke(t *testing.T) {
 		t.Fatalf("join = %q %v", name, err)
 	}
 	fi, err := os.Stat(tokenFile)
-	if err != nil || fi.Mode().Perm() != 0o600 {
+	// Windows has no mode bits: the file's DACL keeps it private there.
+	if err != nil || runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Fatalf("token file %v mode %v", err, fi.Mode())
 	}
 	token, err := node.ReadTokenFile(tokenFile)

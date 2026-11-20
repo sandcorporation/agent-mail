@@ -15,6 +15,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/sandcorporation/switchboard/internal/ownerfile"
 )
 
 // DefaultQuestionTarget is the question_settings row every database starts with.
@@ -287,6 +289,11 @@ func copyBeforeDrop(db *sql.DB) (string, error) {
 	// existing one is never overwritten; VACUUM INTO accepts an empty file.
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
+		return "", err
+	}
+	if err = ownerfile.RestrictToUser(path); err != nil {
+		f.Close()
+		_ = os.Remove(path)
 		return "", err
 	}
 	f.Close()

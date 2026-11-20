@@ -5,12 +5,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/sandcorporation/switchboard/internal/cli"
 	"github.com/sandcorporation/switchboard/internal/identity"
+	"github.com/sandcorporation/switchboard/internal/ownerfile"
 	"github.com/sandcorporation/switchboard/internal/store"
 	"github.com/sandcorporation/switchboard/internal/wire"
 )
@@ -260,8 +262,11 @@ func TestCLIInviteJoin(t *testing.T) {
 		t.Fatalf("join output:\n%s", r.stdout)
 	}
 	st, err := os.Stat(path)
-	if err != nil || st.Mode().Perm() != 0600 {
+	if err != nil || runtime.GOOS != "windows" && st.Mode().Perm() != 0600 {
 		t.Fatalf("profile %s: %v %v", path, st, err)
+	}
+	if ok, err := ownerfile.OnlyUser(path); err != nil || !ok {
+		t.Fatalf("profile %s is not owner-only: %v %v", path, ok, err)
 	}
 	b, _ := os.ReadFile(path)
 	var c cli.Config

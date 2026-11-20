@@ -28,6 +28,7 @@ The Go HTTP server authenticates each request by hashing the bearer token (SHA-2
 | `internal/wire` | the HTTP API shapes and the checks client and server share | none |
 | `internal/store` | `Open`, the schema and its additive migrations, `InTx`, token hashing | none |
 | `internal/config` | env names and their old aliases, header and profile-folder prefixes, the product name | none |
+| `internal/ownerfile` | files that hold a credential (node token, profile, plain backup): owner-only access, mode 0600 on Unix and a protected one-entry DACL on Windows (#206) | none |
 
 Rules: `cmd` → `server` → domain packages → `store`/`config`/`wire`. Domain packages never import `server` or `dashboard`, and there are no cycles (`mail` does not import `presence`, `asks` or `insight`). A domain package exposes a `Service` built per request from the `Server` state (`New(db, clock, settings, hooks…)`); state that outlives a request (the hub, settings, caches, rate limiters) stays on `Server`, and cross-domain effects are passed in as functions (for example `presence.New(…, s.hub.Publish)`, `asks.New(…, s.discord.NoticeQuestion, asks.SlotRules{…})` with `presence.AskingSlot`/`presence.AnswerSlot`).
 

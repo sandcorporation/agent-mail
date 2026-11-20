@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -81,7 +82,7 @@ func TestSetupCreatesFirstAdminAfterTOTPAndCloses(t *testing.T) {
 	jar, _ := cookiejar.New(nil)
 	c := &http.Client{Jar: jar}
 	code := setupCode(t, dir)
-	if fi, err := os.Stat(filepath.Join(dir, adminauth.SetupCodeFile)); err != nil || fi.Mode().Perm()&0o077 != 0 {
+	if fi, err := os.Stat(filepath.Join(dir, adminauth.SetupCodeFile)); err != nil || runtime.GOOS != "windows" && fi.Mode().Perm()&0o077 != 0 {
 		t.Fatalf("code file %v %v", fi, err)
 	}
 
