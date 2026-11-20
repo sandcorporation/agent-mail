@@ -107,9 +107,17 @@ func TestStartDropsPlainBackupAfterCopy(t *testing.T) {
 	if a != "plain-secret-a" || b != "plain-secret-b" {
 		t.Fatalf("copy rows a=%q b=%q", a, b)
 	}
-	want := "role tokens: dropped roles_plain_backup (2 rows); copy before drop at " + copyPath + "\n"
-	if !strings.HasSuffix(logs.String(), want) {
-		t.Fatalf("log=%q want suffix %q", logs.String(), want)
+	// SQLite reports the database file with symlinks resolved (macOS temp
+	// dirs live under /var -> /private/var), so the logged path is checked
+	// by the file it names.
+	prefix := "role tokens: dropped roles_plain_backup (2 rows); copy before drop at "
+	line := strings.TrimSuffix(logs.String(), "\n")
+	i := strings.LastIndex(line, prefix)
+	if i < 0 || !strings.HasSuffix(logs.String(), "\n") {
+		t.Fatalf("log=%q want suffix %q<path>", logs.String(), prefix)
+	}
+	if !sameFile(t, line[i+len(prefix):], copyPath) {
+		t.Fatalf("log=%q names another file than %s", logs.String(), copyPath)
 	}
 	if strings.Contains(logs.String(), "plain-secret") {
 		t.Fatalf("log carries a token: %q", logs.String())
@@ -213,4 +221,17 @@ func TestDropRunsBeforeHashMigration(t *testing.T) {
 	if token != "plain-secret-new" || n != 1 {
 		t.Fatalf("backup token=%q rows=%d", token, n)
 	}
+}
+
+func sameFile(t *testing.T, a, b string) bool {
+	t.Helper()
+	sa, err := os.Stat(a)
+	if err != nil {
+		t.Fatalf("logged path: %v", err)
+	}
+	sb, err := os.Stat(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return os.SameFile(sa, sb)
 }
