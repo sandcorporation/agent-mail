@@ -102,6 +102,7 @@ function sbwait([int]$seconds, [scriptblock]$ok) {
 }
 function sbstop {
   Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+  return
   $upcmd = [regex]::Escape("$data\up.cmd")
   for ($i = 0; $i -lt 60; $i++) {
     $task = Get-ScheduledTask -TaskName 'switchboard-pc' -ErrorAction SilentlyContinue
