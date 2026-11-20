@@ -71,18 +71,20 @@ func TestOIDCOverLoopbackHTTPWithSecretFile(t *testing.T) {
 		for _, ck := range jar.Cookies(mustURL(t, base+"/")) {
 			session = session || ck.Name == "sb_session"
 		}
-		var sent, secure bool
+		// The login always sets sb_oidc; the session cookie only when the
+		// client sent sb_oidc back, which a jar may refuse over http.
+		var oidcSet bool
 		for _, line := range setCookies {
-			if strings.HasPrefix(line, "sb_session=") && !strings.HasPrefix(line, "sb_session=;") {
-				sent = true
-				secure = strings.Contains(line, "; Secure")
+			name, _, _ := strings.Cut(line, "=")
+			if (name == "sb_oidc" || name == "sb_session") && !strings.Contains(line, "Max-Age=0") {
+				oidcSet = true
+				if secure := strings.Contains(line, "; Secure"); secure == insecure {
+					t.Fatalf("insecure=%v: %s Secure=%v in %q", insecure, name, secure, line)
+				}
 			}
 		}
-		if !sent {
-			t.Fatalf("insecure=%v: the callback set no session cookie: %q", insecure, setCookies)
-		}
-		if secure == insecure {
-			t.Fatalf("insecure=%v: session cookie Secure=%v in %q", insecure, secure, setCookies)
+		if !oidcSet {
+			t.Fatalf("insecure=%v: no cookie set: %q", insecure, setCookies)
 		}
 		if insecure && (resp.StatusCode != 200 || !session) {
 			t.Fatalf("over loopback http: callback=%d session cookie=%v", resp.StatusCode, session)
