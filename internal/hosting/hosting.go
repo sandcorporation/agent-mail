@@ -512,7 +512,8 @@ func (s *Service) Delete(id string) (wire.HostedSession, error) {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return h, ErrNotFound
 	}
-	return h, nil
+	_, err = s.db.Exec(`DELETE FROM hosted_events WHERE session=?`, id)
+	return h, err
 }
 
 // Nodes lists the node registry, by name.

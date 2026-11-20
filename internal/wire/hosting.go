@@ -194,7 +194,39 @@ const (
 	NodeHelloType  = "hello"  // Hello: who the node is
 	NodeStateType  = "state"  // States: what the node observes, every record
 	NodeNoticeType = "notice" // Notice: a crash loop or a resume failure
+	NodeEventType  = "event"  // Event: a start, restart, stop, crash, exit or adoption (#252)
 )
+
+// Hosted session event kinds (#252).
+const (
+	HostedEventStart   = "start"   // launched: first time, asked for, or relaunched by the node itself
+	HostedEventRestart = "restart" // stopped and launched again: asked for, or by the restart policy after an exit
+	HostedEventStop    = "stop"    // stopped because the record was set to stopped
+	HostedEventCrash   = "crash"   // ended with a non-zero exit code
+	HostedEventExit    = "exit"    // ended with exit code 0
+	HostedEventAdopt   = "adopt"   // a node process found the session already running (its keeper or tmux kept it)
+)
+
+// Who asked for a hosted session event, where known.
+const (
+	HostedActorAdmin  = "admin"  // a start, restart, stop or new conversation on the record
+	HostedActorPolicy = "policy" // the record's restart policy after an exit
+	HostedActorNode   = "node"   // the node on its own: a first launch, a relaunch after its holder went away, an adoption
+)
+
+// HostedEvent is one entry of a hosted session's history: what happened
+// (Kind), when (At, Unix ms), the exit code of a crash or exit, the restart
+// count after it and who asked (Actor, empty when nobody did). In node
+// frames ID is the record; the host keeps the newest per session.
+type HostedEvent struct {
+	ID       string `json:"id,omitempty"`
+	At       int64  `json:"at"`
+	Kind     string `json:"kind"`
+	ExitCode *int   `json:"exit_code"`
+	Reason   string `json:"reason,omitempty"`
+	Restarts int    `json:"restarts"`
+	Actor    string `json:"actor,omitempty"`
+}
 
 // Notice kinds.
 const (
@@ -253,6 +285,7 @@ type NodeFrame struct {
 	Cols     int               `json:"cols,omitempty"`
 	Rows     int               `json:"rows,omitempty"`
 	Notice   *NodeNotice       `json:"notice,omitempty"`
+	Event    *HostedEvent      `json:"event,omitempty"`
 	// Limit rides on state frames (#190).
 	Limit *NodeLimit `json:"limit,omitempty"`
 }

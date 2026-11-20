@@ -339,3 +339,57 @@ func TestRevokedNodeStopsRetrying(t *testing.T) {
 		t.Errorf("node command error %v, want exit %d", err, cli.ExitNodeRevoked)
 	}
 }
+
+// start → crash → automatic restart → stop of a hosted session reach the
+// host as four events, served newest first on its events route (#252).
+func TestHostedSessionHistoryOverTheNodeChannel(t *testing.T) {
+	s, base, cookie := signedInServer(t, true)
+	token := nodeToken(t, s, "pc")
+	got := adminCall(t, base, "POST", "/api/admin/terminals", cookie, true, newRecord)
+	var rec wire.HostedSession
+	if err := json.Unmarshal([]byte(got.body), &rec); err != nil {
+		t.Fatalf("create = %d %s", got.code, got.body)
+	}
+	fake := termtest.New()
+	attachNode(t, base, token, fake)
+	events := func() []wire.HostedEvent {
+		got := adminCall(t, base, "GET", "/api/admin/terminals/"+rec.ID+"/events", cookie, false, "")
+		var ev []wire.HostedEvent
+		if err := json.Unmarshal([]byte(got.body), &ev); err != nil || got.code != http.StatusOK {
+			t.Fatalf("events = %d %s", got.code, got.body)
+		}
+		return ev
+	}
+	eventually(t, "the start", func() bool { return len(events()) == 1 })
+	if err := fake.Exit("sb-"+rec.ID, 7); err != nil {
+		t.Fatal(err)
+	}
+	// The restart policy relaunches after node.BackoffBase.
+	deadline := time.Now().Add(node.BackoffBase + 5*time.Second)
+	for len(events()) < 3 {
+		if time.Now().After(deadline) {
+			t.Fatalf("no automatic restart: %+v", events())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := adminCall(t, base, "PUT", "/api/admin/terminals/"+rec.ID, cookie, true, `{"desired":"stopped"}`); got.code != http.StatusOK {
+		t.Fatalf("stop = %d %s", got.code, got.body)
+	}
+	eventually(t, "the stop", func() bool { return len(events()) == 4 })
+	time.Sleep(100 * time.Millisecond) // the stopped run's exit adds nothing
+	ev := events()
+	var kinds []string
+	for _, e := range ev {
+		kinds = append(kinds, e.Kind+"/"+e.Actor)
+	}
+	want := []string{"stop/admin", "restart/policy", "crash/", "start/node"}
+	if !slices.Equal(kinds, want) {
+		t.Fatalf("events %q, want %q", kinds, want)
+	}
+	if ev[2].ExitCode == nil || *ev[2].ExitCode != 7 || ev[0].ExitCode != nil {
+		t.Errorf("exit codes %v %v", ev[2].ExitCode, ev[0].ExitCode)
+	}
+	if ev[1].Restarts != 1 || ev[3].Restarts != 0 {
+		t.Errorf("restarts %d %d", ev[1].Restarts, ev[3].Restarts)
+	}
+}
