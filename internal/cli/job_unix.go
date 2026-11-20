@@ -15,6 +15,13 @@ var (
 	ignoredSignals = []os.Signal{syscall.SIGHUP}
 )
 
+// runnerCopies: Unix does not lock a running executable, so the runner runs
+// from the installed binary itself.
+const runnerCopies = false
+
+// checkRunner: a runner can always leave the terminal (setsid).
+func checkRunner() error { return nil }
+
 // startDetached starts cmd in a session of its own with stdin from
 // /dev/null, so closing the terminal or ending the caller does not reach it.
 func startDetached(cmd *exec.Cmd) error {
@@ -23,18 +30,29 @@ func startDetached(cmd *exec.Cmd) error {
 	return cmd.Start()
 }
 
-// childAttr puts the job's command in a process group of its own, so a stop
+// childGroup is the job's command in a process group of its own, so a stop
 // reaches everything it started.
-func childAttr() *syscall.SysProcAttr { return &syscall.SysProcAttr{Setpgid: true} }
+type childGroup struct{ pid int }
 
-// signalGroup terminates (or kills) the process group led by pid.
-func signalGroup(pid int, kill bool) error {
+func startChild(cmd *exec.Cmd) (childGroup, error) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		return childGroup{}, err
+	}
+	return childGroup{pid: cmd.Process.Pid}, nil
+}
+
+// stop terminates (or kills) the group.
+func (g childGroup) stop(kill bool) error {
 	sig := syscall.SIGTERM
 	if kill {
 		sig = syscall.SIGKILL
 	}
-	return syscall.Kill(-pid, sig)
+	return syscall.Kill(-g.pid, sig)
 }
+
+// close leaves what the command started in the background alone.
+func (g childGroup) close() {}
 
 // stopRunner asks a runner to stop its job.
 func stopRunner(pid int) error { return syscall.Kill(pid, syscall.SIGTERM) }

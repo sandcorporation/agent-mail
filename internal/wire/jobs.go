@@ -217,3 +217,30 @@ func WatchLines(out string) (string, int) {
 	}
 	return strings.ToValidUTF8(strings.Join(kept, "\n"), "�"), len(kept)
 }
+
+// JobMachine is the body of POST /api/jobs/machine: a machine reporting in
+// with the jobs whose runners are alive on it. The role's running jobs on
+// that machine not in Live (and older than JobLostGrace) become lost.
+type JobMachine struct {
+	Machine string  `json:"machine"`
+	Live    []int64 `json:"live"`
+}
+
+// Check refuses a report without a machine.
+func (q *JobMachine) Check() error {
+	if q.Machine = strings.TrimSpace(q.Machine); q.Machine == "" {
+		return errors.New("machine is required")
+	}
+	if len(q.Live) > 10000 {
+		return errors.New("too many live jobs")
+	}
+	return nil
+}
+
+// Lost timings: a job younger than JobLostGrace is never lost by a machine
+// report (its runner may not have written its pid yet); a live job whose
+// runner has not reported for JobSilentAfter is lost.
+const (
+	JobLostGrace   = time.Minute
+	JobSilentAfter = 10 * time.Minute
+)

@@ -124,6 +124,8 @@ type sweepResult struct {
 	// Schedules counts the schedules a sweep changed: a fire, a delivery,
 	// an expiry or an end, or an expiry moved forward (#292).
 	Schedules int
+	// Lost counts the jobs a sweep marked lost (#290).
+	Lost int
 }
 
 // sweep sends every due stall notice and metrics alert once and prunes old
@@ -149,6 +151,9 @@ func (s *Server) sweep(ctx context.Context) (sweepResult, error) {
 		return out, err
 	}
 	if out.Extended, err = s.jobs().ExtendAttached(ctx, insight.NewBaseResolver(s.db).Of, s.presence().Attached); err != nil {
+		return out, err
+	}
+	if out.Lost, err = s.jobs().SweepLost(ctx); err != nil {
 		return out, err
 	}
 	if out.Schedules, err = s.jobs().SweepSchedules(ctx, insight.NewBaseResolver(s.db).Of, s.presence().Attached); err != nil {
@@ -178,6 +183,9 @@ func (s *Server) publishSweep(res sweepResult) {
 	}
 	if res.Extended > 0 {
 		kinds = append(kinds, "jobs")
+	}
+	if res.Lost > 0 {
+		kinds = append(kinds, "jobs", "mail")
 	}
 	if res.Schedules > 0 {
 		kinds = append(kinds, "jobs", "mail")

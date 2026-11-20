@@ -286,10 +286,11 @@ func TestCLIHelperProcess(t *testing.T) {
 	if v := os.Getenv("SWITCHBOARD_TEST_ARG0"); v != "" {
 		arg0 = v
 	}
-	// The job runner is this test binary again, in helper mode.
+	// The job runner is this test binary again, in helper mode, from the
+	// runner copy where the system makes one (Windows).
 	exe, _ := os.Executable()
 	cli.SelfCommand = func(a ...string) *exec.Cmd {
-		cmd := exec.Command(exe, "-test.run=^TestCLIHelperProcess$")
+		cmd := exec.Command(cli.RunnerExecutable(exe), "-test.run=^TestCLIHelperProcess$")
 		b, _ := json.Marshal(a)
 		cmd.Env = append(os.Environ(), "SWITCHBOARD_TEST_ARGS="+string(b))
 		return cmd

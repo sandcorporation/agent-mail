@@ -24,13 +24,29 @@ import (
 const runnerCommand = "__job-runner"
 
 // SelfCommand builds a command that runs this binary with args (the job
-// runner). Tests that run the client from a test binary replace it.
+// runner), from the runner copy where there is one (RunnerExecutable).
+// Tests that run the client from a test binary replace it.
 var SelfCommand = func(args ...string) *exec.Cmd {
 	exe, err := os.Executable()
 	if err != nil {
 		exe = os.Args[0]
 	}
-	return exec.Command(exe, args...)
+	return exec.Command(RunnerExecutable(exe), args...)
+}
+
+// ExitNoRunner is job run's (and watch start's) exit code when no runner
+// was started on this machine: the caller (the plugin hook) then runs the
+// command itself. A line on stderr says why.
+const ExitNoRunner = 125
+
+// errNoBreakaway: the runner would stay in the caller's job object and end
+// with the terminal (Windows).
+var errNoBreakaway = errors.New("the terminal's job does not let the runner leave it")
+
+// noRunner tells the caller that the command was not handed over.
+func noRunner(err error) (int, error) {
+	fmt.Fprintf(os.Stderr, "%s: job not handed over, run the command yourself: %v\n", progName(), err)
+	return ExitNoRunner, nil
 }
 
 // jobRetention is how long a finished job's local output is kept.
@@ -54,8 +70,8 @@ var jobCmd = command{name: "job", args: "ACTION [ID]", nargs: 2, optArgs: true, 
 
 func init() { commands = append(commands, jobCmd) }
 
-// jobsRoot is where this profile's job output lives: <config dir>/jobs/<profile>.
-func jobsRoot() string {
+// dataDir is the client's data directory (the config directory).
+func dataDir() string {
 	d := config.EnvAlias("CONFIG_DIR")
 	if d == "" {
 		base, err := os.UserConfigDir()
@@ -64,8 +80,11 @@ func jobsRoot() string {
 		}
 		d = filepath.Join(base, config.ConfigDirName)
 	}
-	return filepath.Join(d, "jobs", profileName())
+	return d
 }
+
+// jobsRoot is where this profile's job output lives: <data dir>/jobs/<profile>.
+func jobsRoot() string { return filepath.Join(dataDir(), "jobs", profileName()) }
 
 func jobDir(id int64) string { return filepath.Join(jobsRoot(), strconv.FormatInt(id, 10)) }
 
@@ -170,8 +189,12 @@ func startJob(c Config, p parsedArgs, kind string, batch time.Duration, wait boo
 	if st, err := os.Stat(cwd); err != nil || !st.IsDir() {
 		return 0, usagef("%s: --cwd %s is not a directory", name, cwd)
 	}
+	if err = checkRunner(); err != nil {
+		return noRunner(err)
+	}
 	machine, _ := os.Hostname()
 	sweepJobs(jobsRoot(), time.Now())
+	reportMachine(c, machine)
 	q := wire.JobCreate{Kind: kind, Label: p.values["--label"], Command: shellJoin(p.extra), Cwd: cwd, Machine: machine,
 		ExpiresIn: int64(expires / time.Second), IdempotencyKey: p.values["--idem"], NoExtend: p.bool("--no-extend")}
 	b, created, err := createJob(c, q)
@@ -187,7 +210,7 @@ func startJob(c Config, p parsedArgs, kind string, batch time.Duration, wait boo
 			// Watched: the caller sees the error here, so no end mail.
 			report := wire.JobReport{State: wire.JobFailed, ExitCode: intPtr(127), Error: "runner did not start: " + err.Error(), Watched: true}
 			_, _ = slotCall(c, "POST", fmt.Sprintf("/api/jobs/%d/report", j.ID), report)
-			return 0, fmt.Errorf("job %d: runner did not start: %v", j.ID, err)
+			return noRunner(fmt.Errorf("job %d: runner did not start: %w", j.ID, err))
 		}
 	}
 	if wait {
