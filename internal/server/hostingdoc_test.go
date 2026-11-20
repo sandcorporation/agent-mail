@@ -733,6 +733,7 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := "$ErrorActionPreference = 'Stop'\n" + guard +
+		"trap { 'DBG trap ' + $_; try { 'DBG rt ' + ((sbget $id).runtime | ConvertTo-Json -Compress) } catch {}; Get-Content \"$data\\up.log\" -Tail 25 | ForEach-Object { 'DBG up ' + $_ }; Get-ChildItem \"$data\\keeper-*.log\" | ForEach-Object { Get-Content $_.FullName -Tail 25 | ForEach-Object { 'DBG keeper ' + $_ } }; break }\n" +
 		"$env:LOCALAPPDATA = '" + filepath.Join(root, "local") + "'\n" +
 		"$env:PATH = '" + agentDir + ";' + $env:PATH\n" +
 		"$dl = '" + dl + "'\n$asset = '" + asset + "'\n" +
