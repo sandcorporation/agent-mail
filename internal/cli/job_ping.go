@@ -16,7 +16,7 @@ const (
 	ExitPingData   = 11 // the data directory is not writable
 	ExitPingServer = 12 // the server did not answer in time, or answered with an error
 	ExitPingToken  = 13 // the server refused the role token
-	ExitPingRunner = 14 // no runner can start here (Windows: breakaway refused)
+	ExitPingRunner = 14 // no runner can start here (Windows: breakaway refused; Linux: a scope with no way out)
 )
 
 // pingTimeout bounds the server round trip, so job ping answers within 1 s.

@@ -43,6 +43,11 @@ const ExitNoRunner = 125
 // with the terminal (Windows).
 var errNoBreakaway = errors.New("the terminal's job does not let the runner leave it")
 
+// errNoEscape: the runner would stay in the caller's systemd scope, which a
+// terminal close stops, and no user manager is reachable to start it outside
+// (Linux).
+var errNoEscape = errors.New("the terminal's systemd scope would end the runner and no systemd user manager is reachable to start it outside")
+
 // noRunner tells the caller that the command was not handed over.
 func noRunner(err error) (int, error) {
 	fmt.Fprintf(os.Stderr, "%s: job not handed over, run the command yourself: %v\n", progName(), err)
@@ -245,7 +250,7 @@ func createJob(c Config, q wire.JobCreate) ([]byte, bool, error) {
 }
 
 // startRunner writes the job directory and starts the runner detached from
-// this process (its own session on Unix, stdin from /dev/null).
+// this process (startDetached), stdin from /dev/null.
 func startRunner(id int64, spec jobSpec) error {
 	dir := jobDir(id)
 	if err := os.MkdirAll(filepath.Join(dir, "waiters"), 0o700); err != nil {
@@ -273,9 +278,13 @@ func startRunner(id int64, spec jobSpec) error {
 	if err = startDetached(cmd); err != nil {
 		return err
 	}
-	// Reap it if it ends while this process still runs (job run --wait), so
-	// a finished runner is not seen as alive.
-	go func() { _ = cmd.Wait() }()
+	// Windows: the runner is this process's child; reap it if it ends while
+	// this process still runs (job run --wait), so a finished runner is not
+	// seen as alive. On Unix cmd itself was never started (it runs as a unit
+	// or detached twice), and Wait returns at once.
+	if cmd.Process != nil {
+		go func() { _ = cmd.Wait() }()
+	}
 	return nil
 }
 
