@@ -266,20 +266,23 @@ func (s *Service) Create(c wire.HostedSessionCreate) (wire.HostedSession, error)
 	if dup > 0 {
 		return wire.HostedSession{}, ErrDuplicate
 	}
-	if h.Desired == DesiredRunning {
-		if err := s.checkCap(h.Node, ""); err != nil {
-			return wire.HostedSession{}, err
-		}
+	cond, gargs, max, err := s.capGuard(h.Node)
+	if err != nil {
+		return wire.HostedSession{}, err
 	}
-	_, err = s.db.Exec(`INSERT INTO hosted_sessions(id,node,base,label,parent,profile,directory,agent_session_id,launched,args,env,restart,desired,class,skip_permissions,cols,rows,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?)`,
-		h.ID, h.Node, h.Base, h.Label, h.Parent, h.Profile, h.Directory, h.AgentSessionID, string(args), string(env), h.Restart, h.Desired, h.Class, boolInt(h.SkipPermissions), h.Cols, h.Rows, now, now)
-	if err == nil {
-		h.AcceptingWork = s.acceptingWork(h.Class)
-	}
+	res, err := s.db.Exec(`INSERT INTO hosted_sessions(id,node,base,label,parent,profile,directory,agent_session_id,launched,args,env,restart,desired,class,skip_permissions,cols,rows,created_at,updated_at) SELECT ?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,? WHERE ?<>? OR `+cond,
+		append([]any{h.ID, h.Node, h.Base, h.Label, h.Parent, h.Profile, h.Directory, h.AgentSessionID, string(args), string(env), h.Restart, h.Desired, h.Class, boolInt(h.SkipPermissions), h.Cols, h.Rows, now, now, h.Desired, DesiredRunning}, gargs...)...)
 	if err != nil && strings.Contains(err.Error(), "UNIQUE") {
 		return wire.HostedSession{}, ErrDuplicate
 	}
-	return h, err
+	if err != nil {
+		return wire.HostedSession{}, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return wire.HostedSession{}, CapacityError{Node: h.Node, Max: max}
+	}
+	h.AcceptingWork = s.acceptingWork(h.Class)
+	return h, nil
 }
 
 func boolInt(b bool) int {
@@ -390,7 +393,6 @@ func (s *Service) Update(id string, c wire.HostedSessionChange) (wire.HostedSess
 	if c.Restart != nil {
 		h.Restart = *c.Restart
 	}
-	wasStopped := h.Desired == DesiredStopped
 	if c.Desired != nil {
 		h.Desired = *c.Desired
 	}
@@ -405,11 +407,6 @@ func (s *Service) Update(id string, c wire.HostedSessionChange) (wire.HostedSess
 			return h, err
 		}
 	}
-	if wasStopped && h.Desired == DesiredRunning {
-		if err := s.checkCap(h.Node, h.ID); err != nil {
-			return h, err
-		}
-	}
 	h.AcceptingWork = s.acceptingWork(h.Class)
 	h.UpdatedAt = s.clock().UnixMilli()
 	if c.Desired != nil && *c.Desired == DesiredRunning {
@@ -419,15 +416,8 @@ func (s *Service) Update(id string, c wire.HostedSessionChange) (wire.HostedSess
 	}
 	args, _ := json.Marshal(h.Args)
 	env, _ := json.Marshal(h.Env)
-	res, err := s.db.Exec(`UPDATE hosted_sessions SET label=?,parent=?,args=?,env=?,restart=?,desired=?,class=?,skip_permissions=?,start_gen=start_gen+?,updated_at=? WHERE id=?`,
-		h.Label, h.Parent, string(args), string(env), h.Restart, h.Desired, h.Class, boolInt(h.SkipPermissions), startBump(c), h.UpdatedAt, id)
-	if err != nil {
-		return h, err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return h, ErrNotFound
-	}
-	return h, nil
+	return h, s.guardedUpdate(id, h.Node, h.Desired == DesiredRunning, `UPDATE hosted_sessions SET label=?,parent=?,args=?,env=?,restart=?,desired=?,class=?,skip_permissions=?,start_gen=start_gen+?,updated_at=?`,
+		h.Label, h.Parent, string(args), string(env), h.Restart, h.Desired, h.Class, boolInt(h.SkipPermissions), startBump(c), h.UpdatedAt)
 }
 
 func startBump(c wire.HostedSessionChange) int {
@@ -464,19 +454,14 @@ func (s *Service) NewConversation(id string) (wire.HostedSession, error) {
 	if err != nil {
 		return h, err
 	}
-	if h.Desired != DesiredRunning {
-		if err := s.checkCap(h.Node, h.ID); err != nil {
-			return h, err
-		}
-	}
 	h.UpdatedAt = s.clock().UnixMilli()
 	bump := 0
 	if h.Desired != DesiredRunning {
 		h.Desired, h.StartGen, bump = DesiredRunning, h.StartGen+1, 1
 	}
 	h.AgentSessionID, h.Launched = sid, false
-	return h, s.exec1(`UPDATE hosted_sessions SET agent_session_id=?,launched=0,desired=?,start_gen=start_gen+?,updated_at=? WHERE id=?`,
-		sid, h.Desired, bump, h.UpdatedAt, id)
+	return h, s.guardedUpdate(id, h.Node, true, `UPDATE hosted_sessions SET agent_session_id=?,launched=0,desired=?,start_gen=start_gen+?,updated_at=?`,
+		sid, h.Desired, bump, h.UpdatedAt)
 }
 
 // replaceConversation gives the record a new agent session id after its
