@@ -13,8 +13,8 @@ import (
 // (vX.Y.Z) — a development build ("dev"), a git describe string — is "판 모름"
 // like a request without the header, and never counts as old.
 
-// CLIUnknown is the version recorded for a request without the header (a CLI
-// older than #308).
+// CLIUnknown is the version recorded when a slot is claimed without the
+// header; a later heartbeat without it keeps the recorded version (#319).
 const CLIUnknown = "unknown"
 
 // CLI states of a recorded version against the server's minimum.
@@ -97,9 +97,9 @@ func CLIMinimum(setting, serverVersion string) (min MinorVersion, ok bool, bad s
 	return min, ok, bad
 }
 
-// CLIBehind is one machine whose session CLI is below the minimum or sent no
-// version (#308): the 진행 대기 row and the daily mail. Version is the lowest
-// version among Roles (CLIUnknown when any sent none).
+// CLIBehind is one machine whose session CLI is below the minimum (#308): the
+// 진행 대기 row and the daily mail. Version is the lowest version among Roles.
+// Unknown versions are not listed (#319).
 type CLIBehind struct {
 	Machine string   `json:"machine"`
 	Version string   `json:"version"`

@@ -91,10 +91,16 @@ func TestHeartbeatRecordsCLIVersion(t *testing.T) {
 	if v := adminPresence(t, s)["team/worker-1"]; v.CLIVersion != "v0.16.0" || v.CLI != wire.CLIOld {
 		t.Fatalf("after heartbeat: %+v", v)
 	}
-	// An older CLI sends no header: unknown, not old.
+	// A heartbeat without the header (the plugin could not ask the CLI)
+	// keeps the recorded version (#319).
 	slotDoVersion(t, s, "heartbeat", "", ident("machine-a", "/w"))
-	if v := adminPresence(t, s)["team/worker-1"]; v.CLIVersion != wire.CLIUnknown || v.CLI != wire.CLINoInfo {
-		t.Fatalf("without header: %+v", v)
+	if v := adminPresence(t, s)["team/worker-1"]; v.CLIVersion != "v0.16.0" || v.CLI != wire.CLIOld {
+		t.Fatalf("heartbeat without header: %+v", v)
+	}
+	// A fresh claim without it starts as unknown, not old.
+	slotDoVersion(t, s, "register", "", ident("machine-a", "/x"))
+	if v := adminPresence(t, s)["team/worker-2"]; v.CLIVersion != wire.CLIUnknown || v.CLI != wire.CLINoInfo {
+		t.Fatalf("register without header: %+v", v)
 	}
 	// A development build is 판 모름 too.
 	slotDoVersion(t, s, "heartbeat", "dev", ident("machine-a", "/w"))
@@ -114,7 +120,6 @@ func TestCLIBehindInProgressWaitList(t *testing.T) {
 	got := adminProgress(t, s).CLIBehind
 	want := []wire.CLIBehind{
 		{Machine: "machine-b", Version: "v0.16.0", Roles: []string{"team/worker-2", "team/worker-3"}, RoleVersions: []string{"v0.16.0", "v0.25.9"}},
-		{Machine: "machine-c", Version: wire.CLIUnknown, Roles: []string{"team/worker-4"}, RoleVersions: []string{wire.CLIUnknown}},
 	}
 	gj, _ := json.Marshal(got)
 	wj, _ := json.Marshal(want)
@@ -132,8 +137,9 @@ func TestCLIBehindMailOncePerDayPerMachine(t *testing.T) {
 	slotDoVersion(t, s, "register", "", ident("machine-b", "/b"))
 	slotDoVersion(t, s, "register", "v0.26.0", ident("machine-c", "/c"))
 
-	if got := sweepOnce(t, s).CLIBehind; got != 2 {
-		t.Fatalf("first sweep mailed %d machines, want 2", got)
+	// machine-b sent no version: 판 모름, not 옛 판 (#319).
+	if got := sweepOnce(t, s).CLIBehind; got != 1 {
+		t.Fatalf("first sweep mailed %d machines, want 1", got)
 	}
 	for i := 0; i < 3; i++ {
 		clock.add(time.Hour)
@@ -145,7 +151,6 @@ func TestCLIBehindMailOncePerDayPerMachine(t *testing.T) {
 	sort.Strings(mails)
 	want := []string{
 		"[옛 판] machine-a switchboard v0.16.0 (서버 dev)\nmachine-a\n- team/worker-1 v0.16.0",
-		"[옛 판] machine-b switchboard unknown (서버 dev)\nmachine-b\n- team/worker-2 unknown",
 	}
 	if strings.Join(mails, "\n--\n") != strings.Join(want, "\n--\n") {
 		t.Fatalf("mail:\n%s", strings.Join(mails, "\n--\n"))

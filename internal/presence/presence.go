@@ -157,13 +157,19 @@ func applyPresence(tx *sql.Tx, base string, number int, req wire.SlotRequest, no
 	}
 	// subagents is not kept like the other fields: a report without it means
 	// none are running (the plugin sends it only when N > 0).
-	cli := req.CLIVersion
-	if cli == "" {
-		cli = wire.CLIUnknown
-	}
-	set, args := `reported_at=?,offline_noticed_at=0,subagents=?,cli_version=?`, []any{ms(now), req.SubagentCount(), cli}
+	set, args := `reported_at=?,offline_noticed_at=0,subagents=?`, []any{ms(now), req.SubagentCount()}
 	if fresh {
 		set += `,state='',context_tokens=-1,last_turn_at=0`
+	}
+	// A heartbeat without the version header keeps the recorded one: the
+	// plugin leaves it out when it could not ask the CLI (#319).
+	switch {
+	case req.CLIVersion != "":
+		set += `,cli_version=?`
+		args = append(args, req.CLIVersion)
+	case fresh:
+		set += `,cli_version=?`
+		args = append(args, wire.CLIUnknown)
 	}
 	if req.State != "" {
 		set += `,state=?`
