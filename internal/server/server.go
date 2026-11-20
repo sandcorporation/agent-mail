@@ -421,6 +421,10 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	if path == "question-refusals" {
+		s.asks().QuestionRefusalsAPI(w, r)
+		return
+	}
 	if path == "question-settings" || strings.HasPrefix(path, "question-settings/") {
 		target, hasTarget := strings.CutPrefix(path, "question-settings/")
 		s.asks().QuestionSettingsAPI(w, r, target, hasTarget)

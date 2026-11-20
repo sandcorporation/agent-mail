@@ -120,7 +120,18 @@ func Init(db *sql.DB) error {
 	if e = migrateAnsweredRule(db); e != nil {
 		return e
 	}
+	if e = migrateQuestionRefusals(db); e != nil {
+		return e
+	}
 	return migrateReports(db)
+}
+
+// migrateQuestionRefusals adds question_refusals (#286): per role, the last
+// can_ask refusal (the matched settings target, the ask_via role, the time
+// in RFC 3339) and how many there were.
+func migrateQuestionRefusals(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS question_refusals(role TEXT PRIMARY KEY, target TEXT NOT NULL, ask_via TEXT NOT NULL DEFAULT '', last_at TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0)`)
+	return err
 }
 
 func HasColumn(db *sql.DB, table, column string) (bool, error) {
