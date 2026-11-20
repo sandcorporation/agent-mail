@@ -117,6 +117,8 @@ type sweepResult struct {
 	Label   int
 	Alerts  int
 	Remind  int
+	// NoSession counts the [미수신] notices (#300).
+	NoSession int
 }
 
 // sweep sends every due stall notice and metrics alert once and prunes old
@@ -138,6 +140,9 @@ func (s *Server) sweep(ctx context.Context) (sweepResult, error) {
 	if out.Remind, err = s.presence().SweepReminders(ctx, insight.NewBaseResolver(s.db).Of); err != nil {
 		return out, err
 	}
+	if out.NoSession, err = s.presence().SweepNoSession(ctx, insight.NewBaseResolver(s.db).Of); err != nil {
+		return out, err
+	}
 	if _, err = presence.PruneLog(s.db, s.now()); err != nil {
 		return out, err
 	}
@@ -157,7 +162,7 @@ func (s *Server) publishSweep(res sweepResult) {
 	if res.Alerts > 0 {
 		kinds = append(kinds, "mail", "metrics")
 	}
-	if res.Remind > 0 {
+	if res.Remind > 0 || res.NoSession > 0 {
 		kinds = append(kinds, "mail")
 	}
 	s.live.Publish(kinds...)
