@@ -716,6 +716,12 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(agentDir, "claude.exe"), agent, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// The agent's own variables, read by TestMain: W6's scheduled task
+	// starts up without this test's environment.
+	agentEnv := append(fakeagent.Env(filepath.Join(root, "transcripts")), "SWITCHBOARD_FAKE_AGENT_HEARTBEAT=200ms")
+	if err := os.WriteFile(filepath.Join(agentDir, "claude.exe.env"), []byte(strings.Join(agentEnv, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	bin := e2eBinary(t, filepath.Join(root, "build"))
 	asset := "switchboard_v0.0.0-doc_windows_" + runtime.GOARCH + ".zip"
 	if err := os.WriteFile(filepath.Join(dl, asset), hostingDocZip(t, bin), 0o600); err != nil {
@@ -733,7 +739,6 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := "$ErrorActionPreference = 'Stop'\n" + guard +
-		"trap { 'DBG trap ' + $_; try { 'DBG rt ' + ((sbget $id).runtime | ConvertTo-Json -Compress) } catch {}; Get-Content \"$data\\up.log\" -Tail 25 | ForEach-Object { 'DBG up ' + $_ }; Get-ChildItem \"$data\\keeper-*.log\" | ForEach-Object { Get-Content $_.FullName -Tail 25 | ForEach-Object { 'DBG keeper ' + $_ } }; break }\n" +
 		"$env:LOCALAPPDATA = '" + filepath.Join(root, "local") + "'\n" +
 		"$env:PATH = '" + agentDir + ";' + $env:PATH\n" +
 		"$dl = '" + dl + "'\n$asset = '" + asset + "'\n" +
