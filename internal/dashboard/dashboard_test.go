@@ -551,3 +551,21 @@ func TestDashboardSettingsDetail(t *testing.T) {
 		}
 	}
 }
+
+// #253: a view terminal never scales its font below 11px on a phone; the box
+// scrolls sideways instead (#termScreen is overflow:auto), and the host is
+// never resized from view mode.
+func TestDashboardViewTerminalFloorOnPhone(t *testing.T) {
+	w := httptest.NewRecorder()
+	Page(w, httptest.NewRequest("GET", "/", nil))
+	body := w.Body.String()
+	for _, want := range []string{
+		`matchMedia('(max-width:600px)').matches?11:5`,
+		`Math.max(termMinFont(),Math.min(15,`,
+		`#termScreen{overflow:auto;max-width:100%;`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("page lacks %q", want)
+		}
+	}
+}

@@ -1727,11 +1727,15 @@ function termFit(t,always){
   if(t.fit)try{t.fit.fit()}catch(e){}
   if(always&&t.term.cols===c&&t.term.rows===r)termSend(t,{type:'resize',cols:t.term.cols,rows:t.term.rows});
 }
+// termMinFont is the smallest font a view terminal scales down to (#253): 5px
+// where the box is wide, 11px on a phone, where the box then scrolls
+// sideways inside itself instead of shrinking 120 columns into unreadable.
+function termMinFont(){return window.matchMedia&&window.matchMedia('(max-width:600px)').matches?11:5}
 function termScale(t){
   if(t.closed||!t.term||t.mode==='input')return;
   let d;try{d=t.fit&&t.fit.proposeDimensions()}catch(e){}
   if(!d||!(d.cols>0))return;
-  const f=t.term.options.fontSize,want=Math.max(5,Math.min(15,Math.floor(f*d.cols/t.term.cols*4)/4));
+  const f=t.term.options.fontSize,want=Math.max(termMinFont(),Math.min(15,Math.floor(f*d.cols/t.term.cols*4)/4));
   if(want<f||want>=f+0.5)t.term.options.fontSize=want;
 }
 function termModeShow(t){
