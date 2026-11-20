@@ -256,6 +256,36 @@ func TestScheduleExpiryAndAutoExtension(t *testing.T) {
 	}
 }
 
+// A no_extend schedule expires at its time although a session is attached,
+// with the expiry mail; one without the flag is extended.
+func TestScheduleNoExtendExpiresWhileAttached(t *testing.T) {
+	c := newScheduleClock(t)
+	fixed, _, _ := createSchedule(t, c.s, "secret-a", map[string]any{"kind": "cron", "cron": "0 * * * *", "tz": "UTC", "prompt": "fixed", "label": "fx", "expires_in": 7200, "no_extend": true}, "")
+	moving, _, _ := createSchedule(t, c.s, "secret-a", map[string]any{"kind": "cron", "cron": "0 * * * *", "tz": "UTC", "prompt": "moving", "label": "mv", "expires_in": 7200}, "")
+	if fixed.Extends || !moving.Extends {
+		t.Fatalf("extends: fixed %v moving %v", fixed.Extends, moving.Extends)
+	}
+	c.attach("a", 24*time.Hour)
+	c.at(90 * time.Minute)
+	c.at(3 * time.Hour)
+	got := c.get(fixed.ID)
+	if got.State != wire.ScheduleExpired || got.Extends {
+		t.Fatalf("fixed %+v", got)
+	}
+	var expiry int
+	for _, m := range scheduleMail(t, c.s, "a") {
+		if m.Subject == "[주기 만료] fx" {
+			expiry++
+		}
+	}
+	if expiry != 1 {
+		t.Fatalf("expiry mails %d", expiry)
+	}
+	if got := c.get(moving.ID); got.State != wire.ScheduleActive || !got.ExpiresAt.Equal(c.now.Add(2*time.Hour)) {
+		t.Fatalf("moving %+v", got)
+	}
+}
+
 func TestScheduleAPI(t *testing.T) {
 	c := newScheduleClock(t)
 	for _, bad := range []map[string]any{

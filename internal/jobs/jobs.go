@@ -119,8 +119,8 @@ func (s *Service) create(w http.ResponseWriter, r *http.Request, p identity.Prin
 		expires = time.Duration(q.ExpiresIn) * time.Second
 	}
 	now := s.now().UTC()
-	res, err := s.db.Exec(`INSERT INTO jobs(role,machine,kind,label,command,cwd,state,created_at,expires_at,duration_s,idem) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-		p.Role, q.Machine, q.Kind, q.Label, q.Command, q.Cwd, wire.JobHanded, stamp(now), stamp(now.Add(expires)), int64(expires/time.Second), nullable(key))
+	res, err := s.db.Exec(`INSERT INTO jobs(role,machine,kind,label,command,cwd,state,created_at,expires_at,duration_s,no_extend,idem) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+		p.Role, q.Machine, q.Kind, q.Label, q.Command, q.Cwd, wire.JobHanded, stamp(now), stamp(now.Add(expires)), int64(expires/time.Second), q.NoExtend, nullable(key))
 	if err != nil {
 		// A concurrent retry with the same key won the insert.
 		if j, ok := s.byIdem(p.Role, key); key != "" && ok {
@@ -414,7 +414,7 @@ func (s *Service) writeJob(w http.ResponseWriter, id int64) {
 	writeJSON(w, http.StatusOK, j)
 }
 
-const columns = `id,role,machine,kind,label,command,cwd,state,exit_code,error,created_at,started_at,ended_at,expires_at,stop_requested_at,tail`
+const columns = `id,role,machine,kind,label,command,cwd,state,exit_code,error,created_at,started_at,ended_at,expires_at,stop_requested_at,tail,no_extend`
 
 type scanner interface{ Scan(...any) error }
 
@@ -423,8 +423,9 @@ func scan(r scanner) (wire.Job, error) {
 	var code sql.NullInt64
 	var created, expires string
 	var started, ended, stop sql.NullString
+	var noExtend bool
 	err := r.Scan(&j.ID, &j.Role, &j.Machine, &j.Kind, &j.Label, &j.Command, &j.Cwd, &j.State, &code, &j.Error,
-		&created, &started, &ended, &expires, &stop, &j.Tail)
+		&created, &started, &ended, &expires, &stop, &j.Tail, &noExtend)
 	if err != nil {
 		return j, err
 	}
@@ -435,6 +436,7 @@ func scan(r scanner) (wire.Job, error) {
 	j.CreatedAt, j.ExpiresAt = parse(created), parse(expires)
 	j.StartedAt, j.EndedAt = parseNull(started), parseNull(ended)
 	j.StopRequested = stop.Valid
+	j.Extends = wire.AutoExtends(j.Kind) && !noExtend
 	return j, nil
 }
 
@@ -476,7 +478,7 @@ func nullable(v string) any {
 // session of its owner role is attached. base maps a role to its base role;
 // attached reports a live session of a base. It returns how many moved.
 func (s *Service) ExtendAttached(ctx context.Context, base func(string) string, attached func(context.Context, string) (bool, error)) (int, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,role,kind,duration_s FROM jobs WHERE state IN (?,?) AND duration_s>0`, wire.JobHanded, wire.JobRunning)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,role,kind,duration_s FROM jobs WHERE state IN (?,?) AND duration_s>0 AND no_extend=0`, wire.JobHanded, wire.JobRunning)
 	if err != nil {
 		return 0, err
 	}

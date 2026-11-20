@@ -234,6 +234,35 @@ func TestJobAutoExtendsOnlyWhileAttached(t *testing.T) {
 	}
 }
 
+// A watch created with no_extend keeps its expiry while a session is
+// attached; the same watch without the flag moves, and both say so.
+func TestJobNoExtendKeepsExpiry(t *testing.T) {
+	s := testServer(t)
+	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	s.clock = func() time.Time { return now }
+	fixed, _ := createJob(t, s, "secret-a", map[string]any{"kind": "watch", "command": "tail -f log", "cwd": "/w", "machine": "partner-a", "expires_in": 3600, "no_extend": true}, "")
+	moving, _ := createJob(t, s, "secret-a", map[string]any{"kind": "watch", "command": "tail -f log", "cwd": "/w", "machine": "partner-a", "expires_in": 3600}, "")
+	if fixed.Extends || !moving.Extends {
+		t.Fatalf("extends: fixed %v moving %v", fixed.Extends, moving.Extends)
+	}
+	if _, err := s.db.Exec(`INSERT INTO slots(base,number,machine,directory,registered_at,lease_until) VALUES('a',1,'partner-a','/w',?,?)`,
+		now.UnixMilli(), now.Add(24*time.Hour).UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(50 * time.Minute)
+	if _, err := s.sweep(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	f, _ := s.jobs().Get(fixed.ID)
+	m, _ := s.jobs().Get(moving.ID)
+	if !f.ExpiresAt.Equal(fixed.ExpiresAt) || f.Extends {
+		t.Fatalf("fixed watch moved: %v want %v", f.ExpiresAt, fixed.ExpiresAt)
+	}
+	if !m.ExpiresAt.Equal(now.Add(time.Hour)) {
+		t.Fatalf("moving watch: %v", m.ExpiresAt)
+	}
+}
+
 // An expiry is one urgent mail even when a waiter saw it.
 func TestJobExpiryMailsOnce(t *testing.T) {
 	s := testServer(t)

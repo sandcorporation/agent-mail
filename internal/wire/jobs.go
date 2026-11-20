@@ -76,6 +76,9 @@ type Job struct {
 	ExpiresAt     time.Time  `json:"expires_at"`
 	StopRequested bool       `json:"stop_requested,omitempty"`
 	Tail          string     `json:"tail,omitempty"`
+	// Extends is false for a command job and for a row created with
+	// --no-extend: the presence sweep never moves its expiry.
+	Extends bool `json:"extends"`
 }
 
 // JobCreate is the body of POST /api/jobs (switchboard job run).
@@ -87,6 +90,7 @@ type JobCreate struct {
 	Machine        string `json:"machine"`
 	ExpiresIn      int64  `json:"expires_in,omitempty"` // seconds; 0 is DefaultExpiry(kind)
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	NoExtend       bool   `json:"no_extend,omitempty"` // fixed expiry
 }
 
 // Check fills the defaults (kind, label from the command) and refuses an
