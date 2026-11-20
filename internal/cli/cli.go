@@ -930,7 +930,18 @@ func cliSend(c Config, p parsedArgs) (int, error) {
 	if key := p.values["--idempotency-key"]; key != "" {
 		req.Header.Set("Idempotency-Key", key)
 	}
-	return doRequest(c, req, p.bool("--json"))
+	return doRequestWith(c, req, p.bool("--json"), noSessionNote(p.values["--to"]))
+}
+
+// noSessionNote returns a hook for the send response: one line on stderr when
+// the server says no session of the recipient role is attached (#300).
+func noSessionNote(to string) func([]byte) {
+	return func(b []byte) {
+		var m wire.Message
+		if json.Unmarshal(b, &m) == nil && m.NoSession {
+			fmt.Fprintf(os.Stderr, "no session of %s is attached; the mail waits in its inbox\n", to)
+		}
+	}
 }
 
 func listURL(c Config, box, q, status string) string {
@@ -985,6 +996,11 @@ func authorize(c Config, req *http.Request) {
 }
 
 func doRequest(c Config, req *http.Request, jsonMode bool) (int, error) {
+	return doRequestWith(c, req, jsonMode, nil)
+}
+
+// doRequestWith is doRequest that also hands the response body to after.
+func doRequestWith(c Config, req *http.Request, jsonMode bool, after func([]byte)) (int, error) {
 	authorize(c, req)
 	resp, e := http.DefaultClient.Do(req)
 	if e != nil {
@@ -994,6 +1010,9 @@ func doRequest(c Config, req *http.Request, jsonMode bool) (int, error) {
 	b, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
 		return 0, fmt.Errorf("server returned %s: %s", resp.Status, string(b))
+	}
+	if after != nil {
+		after(b)
 	}
 	return printResponse(b, jsonMode), nil
 }

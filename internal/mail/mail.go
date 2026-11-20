@@ -133,7 +133,17 @@ func (s *Service) AdminList(w http.ResponseWriter, r *http.Request) {
 
 // Send serves POST /api/messages for the caller p.
 func (s *Service) Send(w http.ResponseWriter, r *http.Request, p identity.Principal) {
-	s.send(w, r, p, nil, nil)
+	s.send(w, r, p, nil, func(m *wire.Message) { m.NoSession = s.noSession(m) })
+}
+
+// noSession reports whether m waits for a role with no live session (#300).
+// Mail held for a label is not counted: it waits for its label.
+func (s *Service) noSession(m *wire.Message) bool {
+	if m.Status == statusHeld {
+		return false
+	}
+	var live int
+	return s.db.QueryRow(`SELECT COUNT(*) FROM slots WHERE base=? AND lease_until>?`, identity.BaseOf(s.db, m.Recipient), s.now().UnixMilli()).Scan(&live) == nil && live == 0
 }
 
 // send stores the message in the request body. inTx, when set, runs in the
