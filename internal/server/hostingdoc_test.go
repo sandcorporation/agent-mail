@@ -650,7 +650,9 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 	// W9 names the helpers block as its first step; without that sentence
 	// the update runs on the old env.ps1 alone.
 	if refresh := "run the helpers block of W3 again"; strings.Contains(docStepText(t, "W9."), refresh) {
-		update = helpers + "\n" + update
+		// The new window signs in (W9 waits on the session through sbget)
+		// once the helpers are current, in a TOTP step of its own.
+		update = helpers + "\nStart-Sleep -Seconds (31 - ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() % 30))\nsblogin\n" + update
 	} else {
 		t.Logf("W9 does not say %q: the update runs without the helpers block", refresh)
 	}
@@ -857,8 +859,6 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 		"$dl = '" + dl + "'\n$asset = '" + asset + "'\n" +
 		". \"$env:LOCALAPPDATA\\switchboard-pc\\env.ps1\"\n" +
 		"$id = Get-Content \"$env:LOCALAPPDATA\\sb-id.txt\"\n" +
-		// A new window signs in again (sbget needs it), in a TOTP step of its own.
-		"Start-Sleep -Seconds (31 - ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() % 30))\nsblogin\n" +
 		"'SBSTOP BEFORE ' + [bool](Get-Command sbstop -ErrorAction SilentlyContinue)\n" +
 		update + "\n"
 	file = filepath.Join(root, "update.ps1")
