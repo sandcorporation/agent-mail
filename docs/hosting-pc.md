@@ -128,7 +128,7 @@ function Get-SbTotp([string]$secret) {
 }
 function sblogin {
   $admin = Get-Content "$data\admin.json" -Raw | ConvertFrom-Json
-  $body = @{ name = 'pcadmin'; password = (Get-Content "$data\admin.password"); code = (Get-SbTotp $admin.secret) } | ConvertTo-Json
+  $body = @{ name = 'pcadmin'; password = (Get-Content "$data\admin.password" -Raw).Trim(); code = (Get-SbTotp $admin.secret) } | ConvertTo-Json
   Invoke-RestMethod -Method Post "http://127.0.0.1:$port/auth/login" -ContentType 'application/json' -Headers @{ 'X-Switchboard-Dashboard' = '1' } -Body $body -SessionVariable web | Out-Null
   $global:sbweb = $web
 }
@@ -558,7 +558,8 @@ WantedBy=default.target
 EOF
 : > "$SBDATA/up.log"
 systemctl --user daemon-reload
-systemctl --user enable --now switchboard-pc.service
+systemctl --user enable switchboard-pc.service
+systemctl --user restart switchboard-pc.service
 sbwait 60 sbhealth
 grep -E 'terminal hosting is on|tmux backend|switchboard listening on 127.0.0.1:' "$SBDATA/up.log"
 ```

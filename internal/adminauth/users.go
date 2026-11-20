@@ -291,7 +291,10 @@ func readNewPassword(stdin io.Reader, stderr io.Writer) (string, error) {
 		if err != nil && !errors.Is(err, io.EOF) {
 			return "", err
 		}
-		pw = strings.TrimRight(line, "\r\n")
+		// Windows PowerShell 5.1 can put a UTF-8 byte order mark in front
+		// of what it pipes to a program (#242); it is never part of a
+		// password.
+		pw = strings.TrimPrefix(strings.TrimRight(line, "\r\n"), "\ufeff")
 	}
 	if err := checkNewPassword(pw); err != nil {
 		return "", err

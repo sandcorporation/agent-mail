@@ -10,7 +10,8 @@
 //	}
 //
 // Behaviour: it prints "argv <args…>" and one "env KEY" line per variable
-// (with "=value" unless the name looks secret), keeps a transcript per
+// (with "=value" unless the name looks secret), appends its arguments to
+// <id>.argv under SWITCHBOARD_FAKE_AGENT_DIR, keeps a transcript per
 // --session-id under SWITCHBOARD_FAKE_AGENT_DIR so --resume of an unknown id
 // fails like the real CLI, then reads input lines: "exit N" exits with N,
 // "limit [RESET]" prints the usage-limit message (LimitMessage),
@@ -120,6 +121,12 @@ func Run(args, environ []string, in io.Reader, out io.Writer) int {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		fmt.Fprintf(out, "error: %v\r\n", err)
 		return ExitUsage
+	}
+	// Every launch's arguments, one line per run, for tests that check what
+	// the node passed (#242).
+	if f, err := os.OpenFile(filepath.Join(dir, id+".argv"), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600); err == nil {
+		fmt.Fprintf(f, "%s\n", strings.Join(args, " "))
+		f.Close()
 	}
 	path := filepath.Join(dir, id+".transcript")
 	flags := os.O_WRONLY | os.O_APPEND

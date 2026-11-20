@@ -33,7 +33,8 @@ import (
 // Linux) uses only commands and options its --help lists; the Linux variant
 // runs end to end in a temporary HOME with the real tmux backend, the fake
 // agent as claude, and stubs only for what leaves the machine (GitHub
-// downloads, sudo, systemd); and on Windows steps W3 to W5 run in
+// downloads, sudo, systemd), the OIDC sign-in block included; and on
+// Windows W3 to W8, OIDC sign-in, Permission mode and the W9 update run in
 // PowerShell (TestE2E_HostingDocWindows).
 
 const hostingDoc = "../../docs/hosting-pc.md"
@@ -266,7 +267,32 @@ func TestE2E_HostingDocLinux(t *testing.T) {
 	script.WriteString("set -euo pipefail\n")
 	inherited := false
 	l4 := 0
+	// The OIDC sign-in block runs after L8 (as the doc says), against a
+	// fake provider, before L9 (#242).
+	idp := newFakeIdP(t)
+	oidc := ""
 	for _, b := range readDocBlocks(t) {
+		if b.section == "OIDC sign-in" && b.lang == "sh" {
+			oidc = "echo '>>> OIDC sign-in'\n" + strings.Join(b.lines, "\n") + "\n"
+		}
+	}
+	for _, r := range [][2]string{{"SBISSUER='https://id.example/realms/home'\n", "SBISSUER='" + idp.srv.URL + "'\n"}, {"SBCLIENTID='<client-id>'\n", "SBCLIENTID='" + idp.clientID + "'\n"}} {
+		if !strings.Contains(oidc, r[0]) {
+			t.Fatalf("the Linux OIDC sign-in block has no line %q", r[0])
+		}
+		oidc = strings.Replace(oidc, r[0], r[1], 1)
+	}
+	l6 := ""
+	for _, b := range readDocBlocks(t) {
+		if b.section == "Linux" && strings.HasPrefix(b.step, "L6.") {
+			l6 = "echo '>>> L6. again'\n" + strings.Join(b.lines, "\n") + "\n"
+		}
+		if b.section == "Linux" && strings.HasPrefix(b.step, "L9.") && oidc != "" {
+			// OIDC sign-in, then L6 again: the doc's way back to names and
+			// passwords, which L9's checks sign in with.
+			script.WriteString(oidc + l6)
+			oidc = ""
+		}
 		if b.section == "Linux" {
 			if b.lang != "sh" {
 				t.Fatalf("Linux block in %q, want sh", b.lang)
@@ -412,6 +438,12 @@ func TestE2E_HostingDocLinux(t *testing.T) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
 	}
+	if !hasLine(string(out), "admin auth: oidc (public client, PKCE)") {
+		t.Errorf("the OIDC block printed no line %q", "admin auth: oidc (public client, PKCE)")
+	}
+	if want := "redirect_uri=http%3A%2F%2F127.0.0.1%3A" + port + "%2Fauth%2Fcallback"; !strings.Contains(string(out), idp.srv.URL+"/authorize?") || !strings.Contains(string(out), want) {
+		t.Errorf("/auth/login did not redirect to the provider with %s", want)
+	}
 	if _, err := os.Stat(data); !os.IsNotExist(err) {
 		t.Errorf("uninstall left the data directory: %v", err)
 	}
@@ -518,20 +550,6 @@ case "$cmd" in
 esac
 `
 
-// TestE2E_HostingDocWindows runs steps W3 to W6 of the Windows variant in
-// Windows PowerShell: W3 with a release zip of this tree's binary and the
-// fake agent as claude.exe on PATH, W4 and W5 as written (admin, the setup
-// run of up, register, profiles), W6 (up.cmd, the scheduled task, builtin).
-// Then, with up running from up.cmd, the OIDC sign-in block against a fake
-// provider and W6 again (the way back): both rewrite up.cmd, and up.log
-// must show exactly one start per block, in the new mode (#240: a batch
-// file rewritten under a running cmd.exe restarted the old up). Then the
-// doc's Get-SbTotp is compared with the server's TOTP. Last, the W3 block
-// of the v0.16.0 docs rewrites env.ps1 without sbstop (#243), and a second
-// PowerShell (a new window, errors not stopping it, as at a prompt) loads
-// that env.ps1 and runs the W9 update to a build with another version: the
-// helpers block first, when W9 says to run it again. W1, W2 (network), W7,
-// W8 and the session lines of W9 (a real agent) are not run.
 // docRealRefs matches what ties a doc block to the signed-in user's real
 // setup: the scheduled task `switchboard-pc` (as -TaskName, a Get-ScheduledTask
 // argument or the task named in a message), the profile directory and the
@@ -559,6 +577,23 @@ func isolateWindowsDoc(script, task string) (string, error) {
 	return script, nil
 }
 
+// TestE2E_HostingDocWindows runs steps W3 to W6 of the Windows variant in
+// Windows PowerShell: W3 with a release zip of this tree's binary and the
+// fake agent as claude.exe on PATH, W4 and W5 as written (admin, the setup
+// run of up, register, profiles), W6 (up.cmd, the scheduled task, builtin).
+// Then, with up running from up.cmd, the OIDC sign-in block against a fake
+// provider and W6 again (the way back): both rewrite up.cmd, and up.log
+// must show exactly one start per block, in the new mode (#240: a batch
+// file rewritten under a running cmd.exe restarted the old up). Then the
+// doc's Get-SbTotp is compared with the server's TOTP. W7 and W8 run as
+// written with the fake agent (add a session, the same process across a
+// restart of up, resume after a kill; not W8's slot block), then Permission mode off
+// and on with a restart each (#242). Last, the W3 block of the v0.16.0 docs
+// rewrites env.ps1 without sbstop (#243), and a second PowerShell (a new
+// window, errors not stopping it, as at a prompt) loads that env.ps1 and
+// runs the W9 update to a build with another version: the helpers block
+// first, when W9 says to run it again; afterwards no process runs from the
+// old build. W1, W2 (network) and W9's uninstall are not run.
 func TestE2E_HostingDocWindows(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("the Windows variant runs on Windows")
@@ -571,9 +606,14 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 		e2eSkip(t, "powershell.exe unavailable: %v", err)
 	}
 	b := e2eBackendFor(t)
-	var blocks []string
+	var blocks, w78 []string
 	var w6, oidcBlock, helpers, update string
 	for _, d := range readDocBlocks(t) {
+		// W8's slot block needs the switchboard plugin of a real agent on
+		// Windows; the fake agent's slot does not come up there (#242).
+		if d.section == "Windows" && (strings.HasPrefix(d.step, "W7.") || strings.HasPrefix(d.step, "W8.")) && !strings.Contains(strings.Join(d.lines, "\n"), "$s.slot.role") {
+			w78 = append(w78, "Write-Output '>>> "+d.step+"'\n"+strings.Join(d.lines, "\n"))
+		}
 		if d.section == "Windows" && strings.HasPrefix(d.step, "W3.") && slices.Contains(d.lines, sbHelpersLine) {
 			helpers = "Write-Output '>>> W3. helpers'\n" + strings.Join(d.lines, "\n")
 		}
@@ -604,12 +644,9 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 	if w6 == "" || oidcBlock == "" || helpers == "" || update == "" {
 		t.Fatal("no W6, Windows OIDC sign-in, W3 helpers or W9 update block")
 	}
-	// The session waits of W9 need W7's session; the rest runs as written.
-	const sessionWait = "sbwait 180 { (sbget $id).runtime.state -eq 'running' }\n"
-	if !strings.Contains(update, sessionWait) {
-		t.Fatalf("the W9 update block has no line %q", sessionWait)
+	if len(w78) != 3 {
+		t.Fatalf("W7 and W8 without the slot block have %d blocks, want 3", len(w78))
 	}
-	update = strings.Replace(update, sessionWait, "", 1)
 	// W9 names the helpers block as its first step; without that sentence
 	// the update runs on the old env.ps1 alone.
 	if refresh := "run the helpers block of W3 again"; strings.Contains(docStepText(t, "W9."), refresh) {
@@ -629,6 +666,10 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 		oidcBlock = strings.Replace(oidcBlock, r[0], r[1], 1)
 	}
 	blocks = append(blocks, w6, oidcBlock, strings.Replace(w6, ">>> W6.", ">>> W6. again", 1))
+	// W7 and W8 (but its slot block) with the fake agent, then Permission mode: off and on again, each
+	// followed by a restart; the fake agent logs each launch's arguments.
+	blocks = append(blocks, w78...)
+	blocks = append(blocks, permissionModePS)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -711,6 +752,7 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 		cmd.Env = append(cmd.Env, kv)
 	}
 	cmd.Env = append(cmd.Env, fakeagent.Env(filepath.Join(root, "transcripts"))...)
+	cmd.Env = append(cmd.Env, "SWITCHBOARD_FAKE_AGENT_HEARTBEAT=200ms")
 	before := time.Now().Unix() / adminauth.TOTPStep
 	out, err := cmd.CombinedOutput()
 	after := time.Now().Unix() / adminauth.TOTPStep
@@ -772,6 +814,25 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 	if !slices.ContainsFunc(ok, func(s string) bool { return strings.Contains(string(out), s) }) {
 		t.Errorf("Get-SbTotp printed none of %v", ok)
 	}
+	for _, want := range []string{"same process", "resumed"} {
+		if !hasLine(string(out), want) {
+			t.Errorf("W8 printed no line %q", want)
+		}
+	}
+	// Permission mode: the launch after "off" lacks the skip argument, the
+	// one after "on" has it again.
+	session := ""
+	for _, l := range strings.Split(string(out), "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimRight(l, "\r "), "SESSION "); ok {
+			session = v
+		}
+	}
+	argv, _ := os.ReadFile(filepath.Join(root, "transcripts", session+".argv"))
+	runs := strings.Split(strings.TrimSpace(string(argv)), "\n")
+	const skip = "--dangerously-skip-permissions"
+	if session == "" || len(runs) < 2 || strings.Contains(runs[len(runs)-2], skip) || !strings.Contains(runs[len(runs)-1], skip) {
+		t.Errorf("permission mode off then on: launches of %q:\n%s", session, argv)
+	}
 	if t.Failed() {
 		return
 	}
@@ -788,6 +849,7 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 	update = "$testHome = '" + testHome + "'\n$env:LOCALAPPDATA = '" + filepath.Join(root, "local") + "'\n" +
 		"$dl = '" + dl + "'\n$asset = '" + asset + "'\n" +
 		". \"$env:LOCALAPPDATA\\switchboard-pc\\env.ps1\"\n" +
+		"$id = Get-Content \"$env:LOCALAPPDATA\\sb-id.txt\"\n" +
 		"'SBSTOP BEFORE ' + [bool](Get-Command sbstop -ErrorAction SilentlyContinue)\n" +
 		update + "\n"
 	file = filepath.Join(root, "update.ps1")
@@ -832,7 +894,29 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 	if health.Version != "e2e-new" {
 		t.Errorf("/health version %q after W9, want %q", health.Version, "e2e-new")
 	}
+	// Nothing runs from the old build any more: not up, not its keeper.
+	left, err := exec.Command(ps, "-NoProfile", "-NonInteractive", "-Command",
+		"@(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -like '*\\switchboard.old.exe' }).Count").CombinedOutput()
+	if err != nil || strings.TrimSpace(string(left)) != "0" {
+		t.Errorf("processes still run from the old build: %q %v", left, err)
+	}
 }
+
+// permissionModePS is "Permission mode" of docs/hosting-pc.md on W7's
+// session: off, restart, on, restart (the doc says a change applies at the
+// next launch). It prints the session's conversation and keeps $id for the
+// W9 window.
+const permissionModePS = `Write-Output '>>> Permission mode'
+$s0 = sbget $id
+sbpc host set $id --skip-permissions off
+sbpc host restart $id
+sbwait 120 { $s = sbget $id; $s.runtime.state -eq 'running' -and $s.runtime.run -gt $s0.runtime.run }
+$s1 = sbget $id
+sbpc host set $id --skip-permissions on
+sbpc host restart $id
+sbwait 120 { $s = sbget $id; $s.runtime.state -eq 'running' -and $s.runtime.run -gt $s1.runtime.run }
+'SESSION ' + (sbget $id).agent_session_id
+$id | Set-Content (Join-Path $env:LOCALAPPDATA 'sb-id.txt')`
 
 // sbHelpersLine is the line of the W3 helpers block that writes sb.ps1.
 const sbHelpersLine = `'@ | Set-Content "$data\sb.ps1"`
