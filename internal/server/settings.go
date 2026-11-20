@@ -15,6 +15,7 @@ type adminSettings struct {
 	Version   string                `json:"version"`
 	Hosting   bool                  `json:"hosting"`
 	Reminders presence.RemindStatus `json:"reminders"`
+	Rule      presence.RuleStatus   `json:"answered_rule"`
 }
 
 func (s *Server) settingsAPI(w http.ResponseWriter, r *http.Request) {
@@ -23,7 +24,12 @@ func (s *Server) settingsAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "query failed", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, adminSettings{Version: version, Hosting: s.hosting, Reminders: rs})
+	rule, err := s.presence().RuleStatus()
+	if err != nil {
+		http.Error(w, "query failed", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, adminSettings{Version: version, Hosting: s.hosting, Reminders: rs, Rule: rule})
 }
 
 // logRemindStart logs the one start-up line for directive reminders, next

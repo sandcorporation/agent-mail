@@ -2038,6 +2038,12 @@ function drawNode(v,box){
   drawSetNote(box,id);
   box.append(dl([['노드',v.name],['기계',v.machine||'-'],['OS',v.os||'-'],['버전',v.version||'-'],['등록',when(v.created_at)],['마지막 접속',when(v.last_seen_at)],['끊은 때',v.revoked_at?when(v.revoked_at):'-']]));
 }
+// ruleLast: the newest answered-rule step (#274), with the closed IDs.
+function ruleLast(l){
+  if(!l)return '-';
+  const ids=(l.ids||[]).map(i=>'#'+i).join(' ');
+  return (l.from?l.from+' → '+l.to:l.to+' 저장')+' · '+l.marked+'건 닫음 · '+when(l.at)+(ids?' · '+ids:'');
+}
 // 다시 알림 (#223): the reminder settings and the server version, as the
 // start-up line reports them.
 async function loadReminders(){
@@ -2047,7 +2053,7 @@ async function loadReminders(){
     if(setView!=='reminders')return;
     const r=s.reminders,st=document.createElement('span');
     st.append(badge(r.on?'켬':'끔',r.on?'success':'neutral'));
-    $('remindBox').replaceChildren(dl([['다시 알림',st],['첫 알림',r.after],['최대 횟수',String(r.max)],['멈춤 문턱',r.idle==='off'?'끔':r.idle],['멈춤 알림',r.idle==='off'?'-':String(r.idle_max||1)+'번'],['켠 때',r.since?when(r.since):r.on?'첫 점검 전':'-'],['서버 판',s.version],['터미널 호스팅',s.hosting?'켬':'끔']]));
+    $('remindBox').replaceChildren(dl([['다시 알림',st],['첫 알림',r.after],['최대 횟수',String(r.max)],['멈춤 문턱',r.idle==='off'?'끔':r.idle],['멈춤 알림',r.idle==='off'?'-':String(r.idle_max||1)+'번'],['켠 때',r.since?when(r.since):r.on?'첫 점검 전':'-'],['서버 판',s.version],['터미널 호스팅',s.hosting?'켬':'끔'],['답 규칙 판',String(s.answered_rule.version)],['마지막 이주',ruleLast(s.answered_rule.last)]]));
     $('settingsNote').textContent='';
   }catch(e){if(setView==='reminders')$('settingsNote').textContent=e.message}
 }

@@ -561,9 +561,18 @@ func migrateRemind(db *sql.DB) error {
 // migrateAnsweredRule adds answered_rule, whose one row records the version
 // of the answered rule (mail.AnsweredRuleVersion) the stored directives were
 // last settled under. The row is written at start-up by
-// presence.MigrateAnsweredRule, never here.
+// presence.MigrateAnsweredRule, never here. answered_rule_log keeps each
+// step it ran (versions, count, the marked message IDs) after the log line
+// is gone (#274).
 func migrateAnsweredRule(db *sql.DB) error {
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS answered_rule(id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL, updated_at TEXT NOT NULL)`)
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS answered_rule(id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL, updated_at TEXT NOT NULL);
+	CREATE TABLE IF NOT EXISTS answered_rule_log(
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		from_version INTEGER NOT NULL,
+		to_version INTEGER NOT NULL,
+		marked INTEGER NOT NULL,
+		message_ids TEXT NOT NULL,
+		at TEXT NOT NULL)`)
 	return err
 }
 

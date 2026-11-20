@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -144,6 +145,18 @@ func TestAnsweredRule_UpgradeMarksDirectivesTheNewRuleOpens(t *testing.T) {
 	rows.Close()
 	if fmt.Sprint(marked) != fmt.Sprint(byMention) {
 		t.Fatalf("marked %v, want %v", marked, byMention)
+	}
+	// The count and the IDs outlive the log line (#274).
+	st, err := s.presence().RuleStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Version != 2 || st.Last == nil || st.Last.From != 1 || st.Last.To != 2 || st.Last.Marked != 3 || fmt.Sprint(st.Last.IDs) != fmt.Sprint(byMention) || st.Last.At == "" {
+		t.Fatalf("rule status %+v last %+v, want 1 -> 2 marking %v", st, st.Last, byMention)
+	}
+	s.admin.ProxyToken = "proxy-secret"
+	if w := adminRequest(s, "GET", "/api/admin/settings", "", nil); w.Code != 200 || !strings.Contains(w.Body.String(), `"answered_rule":{"version":2,"last":{"from":1,"to":2,"marked":3,"ids":[`+strings.Trim(strings.Join(strings.Fields(fmt.Sprint(byMention)), ","), "[]")+`]`) {
+		t.Fatalf("settings %d %s", w.Code, w.Body.String())
 	}
 
 	// Directives sent after the upgrade follow the new rule: a mention does
