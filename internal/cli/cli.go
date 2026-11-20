@@ -26,6 +26,9 @@ const (
 	ExitError   = 1
 	ExitUsage   = 2
 	ExitTimeout = 3
+	// ExitNodeRevoked: `node` stopped because the host refused its token
+	// (revoked) (#203).
+	ExitNodeRevoked = 4
 )
 
 type Config struct {
@@ -255,6 +258,16 @@ var validStatuses = map[string]bool{"pending": true, "read": true, "acknowledged
 // profileFlag holds the --profile value given on the command line. It wins over SWITCHBOARD_PROFILE.
 var profileFlag string
 
+// ExitCodeError is an error from a command the binary supplies that exits
+// with Code instead of ExitError.
+type ExitCodeError struct {
+	Code int
+	Err  error
+}
+
+func (e ExitCodeError) Error() string { return e.Err.Error() }
+func (e ExitCodeError) Unwrap() error { return e.Err }
+
 // UsageError is a mistake on the command line; it exits with ExitUsage.
 type UsageError struct{ msg string }
 
@@ -328,6 +341,10 @@ func runCLI(args []string) int {
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, progName()+": "+err.Error())
+		var ce ExitCodeError
+		if errors.As(err, &ce) {
+			return ce.Code
+		}
 		return ExitError
 	}
 	return code

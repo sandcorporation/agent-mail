@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"syscall"
 
+	"github.com/sandcorporation/switchboard/internal/cli"
 	"github.com/sandcorporation/switchboard/internal/config"
 	"github.com/sandcorporation/switchboard/internal/node"
 	"github.com/sandcorporation/switchboard/internal/wire"
@@ -146,9 +147,18 @@ func Node(v, hostURL, tokenFile, joinCode string, restartSessions bool) error {
 		log.Printf("node: sessions stopped; relaunching with resume")
 	}
 	if err = link.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		return err
+		return nodeRunError(err)
 	}
 	return nil
+}
+
+// nodeRunError is the `node` command's error for err from Link.Run: a
+// revoked node exits with cli.ExitNodeRevoked.
+func nodeRunError(err error) error {
+	if errors.Is(err, node.ErrRevoked) {
+		return cli.ExitCodeError{Code: cli.ExitNodeRevoked, Err: fmt.Errorf("node: %w", err)}
+	}
+	return err
 }
 
 // checkNodeHost accepts an http(s) URL of a loopback host only: nodes on
