@@ -27,6 +27,7 @@ func testServer(t *testing.T) *Server {
 	if e != nil {
 		t.Fatal(e)
 	}
+	t.Cleanup(func() { db.Close() })
 	db.SetMaxOpenConns(1)
 	if e = store.Init(db); e != nil {
 		t.Fatal(e)
@@ -330,6 +331,7 @@ func TestPersistenceRetryAndStatus(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
+	t.Cleanup(func() { db.Close() })
 	s.db = db
 	w = call(s, "GET", "/api/messages/"+itoa(a.ID), "secret-b", nil, "")
 	if w.Code != 200 {
