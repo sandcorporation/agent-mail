@@ -53,8 +53,8 @@ func noRunner(err error) (int, error) {
 const jobRetention = 7 * 24 * time.Hour
 
 var jobCmd = command{name: "job", args: "ACTION [ID]", nargs: 2, optArgs: true, extra: true,
-	synopsis: "(ACTION: run | list | show ID | tail ID | stop ID | wait ID) [-- CMD ARGS...]",
-	summary:  "Hand a command to a detached runner on this machine that outlives the session, and list, show, tail, stop or wait for it",
+	synopsis: "(ACTION: run | list | show ID | tail ID | stop ID | wait ID | ping) [-- CMD ARGS...]",
+	summary:  "Hand a command to a detached runner on this machine that outlives the session, and list, show, tail, stop or wait for it; ping checks that a hand-over can work here",
 	options: []option{
 		{"--wait", "", "run: stream the output and exit with the command's exit code (killing the waiter leaves the job running)"},
 		{"--expires", "DURATION", "run: how long it may run, e.g. 90m, 24h, 7d (default 24h)"},
@@ -141,7 +141,7 @@ func cliJob(c Config, p parsedArgs) (int, error) {
 	case "wait":
 		return jobWait(c, id)
 	}
-	return 0, usagef("job: unknown action %q (run, list, show, tail, stop, wait)", action)
+	return 0, usagef("job: unknown action %q (run, list, show, tail, stop, wait, ping)", action)
 }
 
 func getJob(c Config, id int64) (wire.Job, error) {

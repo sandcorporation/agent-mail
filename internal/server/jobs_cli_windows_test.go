@@ -196,6 +196,37 @@ func TestJobRunRefusesWhenTheTerminalForbidsBreakawayWindows(t *testing.T) {
 	}
 }
 
+// job ping in a terminal whose job forbids breakaway: the runner check
+// fails with its own code, and nothing is registered.
+func TestJobPingBreakawayRefusedIsARunnerFailureWindows(t *testing.T) {
+	h := newCLIHarness(t)
+	h.configure(nil, "a")
+	cmd := h.cliCommand("", nil, "job", "ping", "--json")
+	var out, errOut strings.Builder
+	cmd.Stdout, cmd.Stderr = &out, &errOut
+	terminal := startInJob(t, cmd, false)
+	defer windows.CloseHandle(terminal)
+	err := cmd.Wait()
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) || ee.ExitCode() != cli.ExitPingRunner {
+		t.Fatalf("exit: %v\nstdout %q\nstderr %q", err, out.String(), errOut.String())
+	}
+	if !strings.Contains(out.String(), `"check":"runner","ok":false`) || !strings.Contains(out.String(), `"check":"token","ok":true`) {
+		t.Fatalf("stdout: %q", out.String())
+	}
+}
+
+// Outside any job that forbids breakaway, every check passes.
+func TestJobPingPassesWindows(t *testing.T) {
+	if outsideJob(t) {
+		return
+	}
+	h := jobHarness(t)
+	if o := h.ping(nil); !o.OK || o.Exit != 0 || len(o.Checks) != 5 {
+		t.Fatalf("ping: %+v", o)
+	}
+}
+
 // The runner runs from a copy in the data directory: the installed binary
 // can be replaced while a job runs.
 func TestJobRunnerLeavesTheInstalledBinaryReplaceableWindows(t *testing.T) {

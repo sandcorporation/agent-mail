@@ -112,11 +112,12 @@ switchboard job run --wait --label build -- make build     # streams the output,
 switchboard job run --expires 7d --idem nightly-1 -- ./sync.sh   # prints the job ID and returns
 switchboard job list [--state running] [--owner team/worker] [--json]
 switchboard job show ID | job tail ID [-f] | job stop ID | job wait ID
+switchboard job ping [--json]                                # checks that a hand-over can work here
 switchboard watch start --label app-log -- tail -F app.log     # prints the watch's job ID and returns
 switchboard watch start --attach --batch 10s -- ./events.sh    # streams the lines while attached
 ```
 
-- `job run [--wait] [--expires DURATION] [--no-extend] [--cwd DIR] [--label TEXT] [--idem KEY] -- CMD ARGS...` registers the job (`POST /api/jobs`) and starts a runner detached from the caller. Linux and macOS: its own session (`setsid`), stdin from `/dev/null`, the command in a process group of its own. Windows: outside the terminal's job object (`CREATE_BREAKAWAY_FROM_JOB`) on a hidden console of its own, the command in a job object and console process group of its own; the runner runs from a copy of the binary, `<config dir>/runner/switchboard-<version>-<hash>.exe`, so `switchboard.exe` can be replaced while jobs run, and each `job run` removes the older copies no runner still runs from. When no runner can start — on Windows the terminal's job object forbids breakaway (checked before anything is registered), or the start fails — `job run` and `watch start` exit with code 125 and print `switchboard: job not handed over, run the command yourself: <reason>` on stderr; the caller (the plugin hook) then runs the command itself. The output goes to `<config dir>/jobs/<profile>/<ID>/output`, readable by the user only; finished jobs' folders are removed after 7 days. The label defaults to the first 60 characters of the command, `--expires` to 24 h (`90m`, `24h`, `7d`). The same `--idem KEY` from the same role returns the first job and starts nothing.
+- `job run [--wait] [--expires DURATION] [--no-extend] [--cwd DIR] [--label TEXT] [--idem KEY] -- CMD ARGS...` registers the job (`POST /api/jobs`) and starts a runner detached from the caller. Linux and macOS: its own session (`setsid`), stdin from `/dev/null`, the command in a process group of its own. Windows: outside the terminal's job object (`CREATE_BREAKAWAY_FROM_JOB`) on a hidden console of its own, the command in a job object and console process group of its own; the runner runs from a copy of the binary, `<config dir>/runner/switchboard-<version>-<hash>.exe`, so `switchboard.exe` can be replaced while jobs run, and each `job run` removes the older copies no runner still runs from. When no runner can start — on Windows the terminal's job object, or one around it, forbids breakaway (checked before anything is registered by starting the binary suspended with `CREATE_BREAKAWAY_FROM_JOB` and ending it), or the start fails — `job run` and `watch start` exit with code 125 and print `switchboard: job not handed over, run the command yourself: <reason>` on stderr; the caller (the plugin hook) then runs the command itself. The output goes to `<config dir>/jobs/<profile>/<ID>/output`, readable by the user only; finished jobs' folders are removed after 7 days. The label defaults to the first 60 characters of the command, `--expires` to 24 h (`90m`, `24h`, `7d`). The same `--idem KEY` from the same role returns the first job and starts nothing.
 - `--wait` prints `switchboard job <ID>` on stderr first, then streams the output and exits with the command's exit code (128+N when signal N ended it, 127 when it could not start). Killing the waiter leaves the job running; `job wait ID` reattaches from the start of the output and exits the same way. Without the local output (another machine) it waits on the server and prints the stored tail.
 - At the end the server records the exit code, the end time and the last 50 lines (8 KB) of output. When no waiter saw the end, the owner role gets one mail, `[작업 끝남] <label> exit N` with the tail: normal for exit 0 or a stop, urgent otherwise.
 - `watch start [--attach] [--expires DURATION] [--no-extend] [--batch DURATION] [--cwd DIR] [--label TEXT] [--idem KEY] -- CMD ARGS...` starts a job of kind `watch` (expiry 7 days by default) whose output lines are events. The runner collects the lines of a batch window (`--batch`, default 30 s, opened by the first line) and sends them as one batch (`POST /api/jobs/ID/lines`); the owner role gets one urgent mail per batch, `[감시] <label>: N줄`, with the first 50 lines (8 KB) and the count of the rest (idem `watch:<ID>:<batch>`). `--attach` prints `switchboard job <ID>` on stderr and streams the lines to stdout; while it is attached the runner sends no batch. Killing it leaves the watch running and the next batches go out as mail; `job wait ID` attaches again. The watch command's exit ends the watch (the last batch first) with the end mail. `--no-extend` (also on `job run` and `schedule add`) fixes the expiry: the presence sweep never moves it, so the watch or schedule ends at `--expires` even while a session of the role is attached, with the expiry mail. A plugin hook turns a Monitor call with a timeout into `watch start --attach --no-extend --expires <timeout>`. `job show`, `schedule show` and `--json` carry `extends` (false for a command job and for a row made with the flag). `watch` without `start` is still the inbox watch. List, stop and tail a watch with `job`.
@@ -126,6 +127,34 @@ switchboard watch start --attach --batch 10s -- ./events.sh    # streams the lin
 - Expiry: commands default to 24 h, watches to 7 days. At `expires_at` the runner terminates the command (killed after 5 s); the state becomes `expired` and the owner role gets one urgent mail, even when a waiter saw the end. While a session of the owner role is attached, each presence sweep moves a watch's expiry to now plus the duration it was created with; a command's expiry never moves. The last expiry the runner saw holds while the server is unreachable.
 - The dashboard's 작업 tab (under 운영) lists every role's jobs with role and state filters (default: not ended), and stops a live job or removes an ended job's record after a confirm. It does not show the command text. States: `handed`, `running`, then `exited`, `failed`, `stopped`, `expired` or `lost`.
 - Only the owner role sees, stops or reports on a job; `job list` shows a boss role every role's jobs. The server keeps the command text; the runner never logs it. Nothing sends a command to a machine: the runner reports up, and only a stop travels down.
+- `job ping [--json]` answers within 1 s and registers nothing. It checks, in this order: the profile is configured, `<config dir>/jobs/<profile>` takes a file, the server answers `GET /api/whoami` within 0.8 s, the server accepts the role token, and a runner can leave the caller (Windows: the breakaway probe above). Each check prints `<check> ok` on stdout or `<check>: <reason>` on stderr; `--json` prints `{"ok", "exit", "checks": [{"check", "ok", "error"}]}`. The exit code is the first failed check's:
+
+| Exit | Check | Cause |
+| --- | --- | --- |
+| 0 | — | every check passed |
+| 10 | `config` | the profile is missing or lacks endpoint, role or token |
+| 11 | `data` | the data directory is not writable |
+| 12 | `server` | no answer within 0.8 s, or an error status |
+| 13 | `token` | the server refused the role token (401, 403) |
+| 14 | `runner` | no runner can start here (Windows: breakaway refused) |
+
+### Plugin hook contract
+
+The Claude Code plugin hook hands background work to switchboard. Before each rewrite it runs `switchboard job ping`; any exit other than 0, a missing binary, or a version below v0.29.0 (the first with `job ping`; an older binary exits 2 on it) leaves the call unchanged, and the hook adds one line to the result saying the work was not handed over.
+
+| Tool call | Hand-over |
+| --- | --- |
+| Bash with `run_in_background: true` | command rewritten to `switchboard job run --wait --label <first 60 characters> -- <shell> -c <command>` |
+| Monitor with a timeout of T ms | command rewritten to `switchboard watch start --attach --no-extend --expires <T>ms --label <description> -- <shell> -c <command>` |
+| Monitor without a timeout | command rewritten to `switchboard watch start --attach --label <description> -- <shell> -c <command>` |
+| CronCreate | `switchboard schedule add --cron <expr> --prompt <prompt>`; the call is denied with a reason naming the schedule ID and saying fires come as mail |
+| CronDelete | `switchboard schedule rm <ID>`, call denied with the result |
+| CronList | `switchboard schedule list`, call denied with the list |
+| ScheduleWakeup (delayed wake-up) | `switchboard schedule add --in <seconds>s --prompt <prompt>`; the call is denied with a reason naming the schedule ID |
+
+- `<shell>` is the shell the tool would have run the command in.
+- `job run --wait` and `watch start --attach` print `switchboard job <ID>` as the first stderr line. A restarted session reattaches with `switchboard job wait <ID>`; a watch nobody is attached to sends its lines as urgent mail.
+- Exit 125 from `job run` or `watch start`: nothing was handed over and the command did not run (the stderr line says why).
 
 ## Schedules
 

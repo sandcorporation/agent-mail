@@ -108,6 +108,28 @@ func CheckBreakaway() error {
 	return nil
 }
 
+// ProbeBreakaway starts exe suspended the way a runner starts
+// (CREATE_BREAKAWAY_FROM_JOB) and ends it at once. It catches what
+// CheckBreakaway cannot see: an outer job that forbids breakaway, which
+// refuses the start with ERROR_ACCESS_DENIED (ErrNoBreakaway here).
+func ProbeBreakaway(exe string) error {
+	cmd := exec.Command(exe)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		CreationFlags: windows.CREATE_NO_WINDOW | windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_BREAKAWAY_FROM_JOB | windows.CREATE_SUSPENDED,
+		HideWindow:    true,
+	}
+	err := cmd.Start()
+	if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		return fmt.Errorf("%w: %v", ErrNoBreakaway, err)
+	}
+	if err != nil {
+		return err
+	}
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
+	return nil
+}
+
 // Alive reports whether process pid is still running.
 func Alive(pid int) bool {
 	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
