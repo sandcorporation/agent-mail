@@ -36,7 +36,10 @@ func (v MinorVersion) Less(o MinorVersion) bool {
 
 var (
 	releaseRE = regexp.MustCompile(`^v(\d+)\.(\d+)\.(\d+)$`)
-	minRE     = regexp.MustCompile(`^v?(\d+)\.(\d+)(\.\d+)?$`)
+	// serverRE is a server's own build: a release tag or git describe output
+	// (vX.Y.Z-N-gSHA).
+	serverRE = regexp.MustCompile(`^v(\d+)\.(\d+)\.(\d+)(-\d+-g[0-9a-f]+)?$`)
+	minRE    = regexp.MustCompile(`^v?(\d+)\.(\d+)(\.\d+)?$`)
 )
 
 // ReleaseMinor is the major.minor of a release tag vX.Y.Z; false for anything
@@ -88,7 +91,9 @@ func CLIMinimum(setting, serverVersion string) (min MinorVersion, ok bool, bad s
 		}
 		bad = s
 	}
-	min, ok = ReleaseMinor(serverVersion)
+	if m := serverRE.FindStringSubmatch(strings.TrimSpace(serverVersion)); m != nil {
+		min, ok = minorOf(m[1], m[2])
+	}
 	return min, ok, bad
 }
 

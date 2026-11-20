@@ -26,3 +26,25 @@ func TestReleaseAsset(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestCLIMinimumFromDescribe(t *testing.T) {
+	for _, c := range []struct {
+		server string
+		want   MinorVersion
+		ok     bool
+	}{
+		{"v0.31.0", MinorVersion{0, 31}, true},
+		{"v0.31.0-2-g1a2b3c4", MinorVersion{0, 31}, true},
+		{"9a6b72f", MinorVersion{}, false},
+		{"dev", MinorVersion{}, false},
+	} {
+		got, ok, _ := CLIMinimum("", c.server)
+		if ok != c.ok || got != c.want {
+			t.Errorf("CLIMinimum(%q) = %v, %v", c.server, got, ok)
+		}
+	}
+	// a describe-form client stays 판 모름
+	if got := CLIState("v0.31.0-2-g1a2b3c4", MinorVersion{0, 31}, true); got != CLINoInfo {
+		t.Errorf("describe client = %s", got)
+	}
+}
