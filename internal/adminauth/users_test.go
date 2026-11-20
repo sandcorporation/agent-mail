@@ -2,6 +2,7 @@ package adminauth
 
 import (
 	"encoding/base32"
+	"io"
 	"strings"
 	"testing"
 )
@@ -25,5 +26,16 @@ func TestPasswordHashIsArgon2id(t *testing.T) {
 	}
 	if !verifyPassword(h, "correct horse battery") || verifyPassword(h, "correct horse batterY") || verifyPassword("garbage", "x") {
 		t.Fatal("verify")
+	}
+}
+
+// A password piped from Windows PowerShell 5.1 may start with a UTF-8 byte
+// order mark and end with CRLF; neither is part of the password (#242).
+func TestPipedPasswordDropsBOMAndLineEnd(t *testing.T) {
+	for _, in := range []string{"correct horse battery\n", "correct horse battery\r\n", "\ufeffcorrect horse battery\r\n", "correct horse battery"} {
+		got, err := readNewPassword(strings.NewReader(in), io.Discard)
+		if err != nil || got != "correct horse battery" {
+			t.Errorf("%q: %q %v", in, got, err)
+		}
 	}
 }
