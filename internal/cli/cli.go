@@ -380,6 +380,17 @@ func dispatch(args []string) (int, error) {
 	if len(args) == 0 {
 		return 0, usagef("missing command")
 	}
+	if args[0] == runnerCommand {
+		// Hidden: the detached job runner `job run` starts (not in help).
+		if len(args) != 2 {
+			return 0, usagef("%s takes a job ID", runnerCommand)
+		}
+		c, err := loadConfig()
+		if err != nil {
+			return 0, err
+		}
+		return jobRunner(c, args[1])
+	}
 	name, rest := args[0], args[1:]
 	if name == "help" {
 		if len(rest) == 0 {
@@ -477,6 +488,8 @@ func dispatch(args []string) (int, error) {
 		return cliProgress(c, p)
 	case "report":
 		return cliReport(c, p, os.Stdout)
+	case "job":
+		return cliJob(c, p)
 	case "permission":
 		return cliPermission(c, p)
 	case "question":
