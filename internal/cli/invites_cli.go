@@ -120,6 +120,7 @@ func cliJoin(p parsedArgs, stdout io.Writer) (int, error) {
 	payload, _ := json.Marshal(wire.JoinRequest{Code: code, Role: p.values["--role"], Credential: token})
 	req, _ := http.NewRequest("POST", base+"/api/join", bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
+	setVersionHeader(req)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return 0, errors.New("join request failed: " + err.Error())

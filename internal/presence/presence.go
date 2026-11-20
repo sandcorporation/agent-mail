@@ -50,6 +50,10 @@ type Config struct {
 	// Rules is every version of the rule by number, for MigrateAnsweredRule;
 	// nil means mail.AnsweredRules. Only tests set it.
 	Rules map[int]mail.AnsweredRule
+	// CLIMin is the minimum client version (#308, wire.CLIMinimum); CLIMinOK
+	// false means none, so no client is old.
+	CLIMin   wire.MinorVersion
+	CLIMinOK bool
 }
 
 // rule is the answered rule in force (Config.Rule, else the current one).
@@ -153,7 +157,11 @@ func applyPresence(tx *sql.Tx, base string, number int, req wire.SlotRequest, no
 	}
 	// subagents is not kept like the other fields: a report without it means
 	// none are running (the plugin sends it only when N > 0).
-	set, args := `reported_at=?,offline_noticed_at=0,subagents=?`, []any{ms(now), req.SubagentCount()}
+	cli := req.CLIVersion
+	if cli == "" {
+		cli = wire.CLIUnknown
+	}
+	set, args := `reported_at=?,offline_noticed_at=0,subagents=?,cli_version=?`, []any{ms(now), req.SubagentCount(), cli}
 	if fresh {
 		set += `,state='',context_tokens=-1,last_turn_at=0`
 	}
@@ -176,13 +184,13 @@ func applyPresence(tx *sql.Tx, base string, number int, req wire.SlotRequest, no
 }
 
 func presenceCols() string {
-	return slotCols() + `,state,context_tokens,last_turn_at,reported_at,subagents,` + stretchStartSQL
+	return slotCols() + `,state,context_tokens,last_turn_at,reported_at,subagents,cli_version,` + stretchStartSQL
 }
 
 func scanPresence(sc interface{ Scan(...any) error }, now time.Time) (wire.PresenceView, error) {
 	var v wire.PresenceView
 	var reg, until, tokens, last, reported, subagents, started int64
-	err := sc.Scan(&v.Base, &v.Number, &v.Machine, &v.Directory, &v.SessionID, &v.Label, &v.Parent, &reg, &until, &v.State, &tokens, &last, &reported, &subagents, &started)
+	err := sc.Scan(&v.Base, &v.Number, &v.Machine, &v.Directory, &v.SessionID, &v.Label, &v.Parent, &reg, &until, &v.State, &tokens, &last, &reported, &subagents, &v.CLIVersion, &started)
 	v.Role = identity.SlotRole(v.Base, v.Number)
 	v.RegisteredAt, v.LeaseExpiresAt = fromMS(reg), fromMS(until)
 	v.Online = until > ms(now)
@@ -252,6 +260,7 @@ func (s *Service) List(filter string) (wire.PresenceList, error) {
 		if err != nil {
 			return out, err
 		}
+		v.CLI = s.cliState(v.CLIVersion)
 		if matchRole(filter, v) {
 			out.Sessions = append(out.Sessions, v)
 		}

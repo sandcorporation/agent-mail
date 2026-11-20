@@ -337,6 +337,10 @@ func (s *Service) Progress(pending time.Duration, base func(string) string) (wir
 		p.Stalled = append(p.Stalled, ps)
 	}
 
+	if out.CLIBehind, err = s.CLIBehind(); err != nil {
+		return out, err
+	}
+
 	for _, p := range svcs {
 		p.Badge = progressBadge(p.Sessions)
 		sort.SliceStable(p.OpenDirectives, func(i, j int) bool { return p.OpenDirectives[i].AgeS > p.OpenDirectives[j].AgeS })

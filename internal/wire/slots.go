@@ -39,6 +39,9 @@ type SlotRequest struct {
 	ContextTokens *int64 `json:"context_tokens,omitempty"` // >= 0
 	LastTurnAt    string `json:"last_turn_at,omitempty"`   // RFC 3339
 	Subagents     *int64 `json:"subagents,omitempty"`      // running background sub-agents, >= 0; absent means 0
+	// CLIVersion is the client's X-Switchboard-Version header (#308), set by
+	// the server, never read from the body; CLIUnknown when absent.
+	CLIVersion string `json:"-"`
 }
 
 // SlotView is one row of the slot table.

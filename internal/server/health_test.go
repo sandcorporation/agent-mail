@@ -11,7 +11,7 @@ func TestHealthIncludesVersion(t *testing.T) {
 	version = "abc1234"
 	defer func() { version = old }()
 	w := httptest.NewRecorder()
-	health(w, httptest.NewRequest("GET", "/health", nil))
+	(&Server{}).health(w, httptest.NewRequest("GET", "/health", nil))
 	var got struct {
 		OK      bool   `json:"ok"`
 		Version string `json:"version"`

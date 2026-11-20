@@ -7,6 +7,9 @@ type ProgressReport struct {
 	PendingAlertS int64             `json:"pending_alert_s"` // SWITCHBOARD_ALERT_PENDING in seconds; 0: off
 	IdleAfterS    int64             `json:"idle_after_s"`    // SWITCHBOARD_REMIND_IDLE in seconds; 0: off
 	Services      []ServiceProgress `json:"services"`
+	// CLIBehind is one row per machine with an old or unversioned CLI (#308),
+	// the 옛 판 rows of 진행 대기.
+	CLIBehind []CLIBehind `json:"cli_behind"`
 }
 
 type ServiceProgress struct {

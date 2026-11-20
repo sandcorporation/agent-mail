@@ -347,7 +347,7 @@ table.cards td.cardhide{display:none}
 <section id="panel-sessions" role="tabpanel" aria-labelledby="tab-sessions" tabindex="0" class="card" hidden>
 <div class="toolbar"><h2>세션</h2><button id="reloadSessions">새로 고침</button><span id="sessionsNote" class="muted"></span></div>
 <div class="listbar"><div class="chips" id="sessionChips" role="group" aria-label="상태 고르기"></div><input id="sessionsSearch" type="search" aria-label="세션 검색" placeholder="역할·기계·폴더·라벨"></div>
-<table id="sessionsTbl" class="stack list"><thead><tr><th>역할</th><th>상태</th><th class="num">컨텍스트</th><th>마지막 턴</th><th>기계</th><th>라벨</th></tr></thead><tbody id="sessions"></tbody></table>
+<table id="sessionsTbl" class="stack list"><thead><tr><th>역할</th><th>상태</th><th class="num">컨텍스트</th><th>마지막 턴</th><th>기계</th><th>판</th><th>라벨</th></tr></thead><tbody id="sessions"></tbody></table>
 </section>
 <section id="panel-metrics" role="tabpanel" aria-labelledby="tab-metrics" tabindex="0" class="card" hidden>
 <div class="toolbar"><h2>지표</h2>
@@ -690,7 +690,10 @@ function dl(pairs){
 }
 // ---- 세션 ----
 const stTone={'st-idle':'success','st-busy':'info','st-compacting':'info','st-error':'danger','st-blocked':'warning'};
-const sessionCols=['역할','상태','컨텍스트','마지막 턴','기계','라벨'];
+const sessionCols=['역할','상태','컨텍스트','마지막 턴','기계','판','라벨'];
+// cliText is a session's CLI version (#308): '-' before it reported one,
+// 판 모름 for no header or a development build.
+function cliText(v){return !v.cli_version?'-':v.cli==='unknown'?'판 모름':v.cli_version}
 const sessionChips=[['all','전체',()=>true],['busy','바쁨',v=>v.online&&/^(busy|compacting)$/.test(v.status)],['problem','오류·막힘',v=>/^(error|blocked):/.test(v.status||'')],['offline','오프라인',v=>!v.online]];
 // sessionsSeq drops an answer that a later load (live update, hosting flag
 // arriving from /api/admin/me) has overtaken.
@@ -725,9 +728,11 @@ function drawSessions(){
     for(const v of shown){
       const [stText,stClass]=sessionStatus(v.status);
       const tr=node('tr','',!v.online?'offline':/^st-(error|blocked)$/.test(stClass)?'row'+stClass.slice(2):'');
-      const cells=[v.role,stText,kTokens(v.context_tokens),ago(p.now,v.last_turn_at),v.machine,v.label||'-'];
+      const cells=[v.role,stText,kTokens(v.context_tokens),ago(p.now,v.last_turn_at),v.machine,cliText(v),v.label||'-'];
       cells.forEach((text,i)=>{const td=node('td',text,i===1?stClass:i===2?'num nowrap':i===3?'nowrap':'');if(i>0)td.dataset.label=sessionCols[i];tr.append(td)});
       tr.children[3].title=when(v.last_turn_at);
+      tr.children[5].classList.add('mono','nowrap');
+      if(v.cli==='old'){tr.children[5].classList.add('cli-old');tr.children[5].append(' ',badge('옛 판','warning'))}
       if(v.subagents>0){const s=node('span','서브 '+v.subagents,'subs');s.title=subagentNote(v.subagents);tr.children[1].append(' · ',s)}
       const h=hosted.get(v.role);
       if(h){const a=node('a','터미널','hosted');a.href=detailHash('terminals',h.id,'screen');a.title=h.node+' · '+h.directory;tr.children[0].append(' ',a)}
@@ -771,7 +776,7 @@ registerDetail('sessions',{
     let parent=v.parent||'-';
     if(v.parent&&it.roles.has(v.parent)){parent=node('a',v.parent);parent.href=detailHash('sessions',v.parent,'status')}
     const last=node('span',ago(it.now,v.last_turn_at));last.title=when(v.last_turn_at);
-    box.append(dl([['상태',st],['접속',v.online?'온라인':'오프라인'],['서브 에이전트',v.subagents>0?subagentNote(v.subagents):'-'],['컨텍스트',kTokens(v.context_tokens)],['마지막 턴',last],['기계',v.machine||'-'],['폴더',v.directory||'-'],['라벨',v.label||'-'],['부모',parent],['마지막 보고',ago(it.now,v.reported_at)]]));
+    box.append(dl([['상태',st],['접속',v.online?'온라인':'오프라인'],['서브 에이전트',v.subagents>0?subagentNote(v.subagents):'-'],['컨텍스트',kTokens(v.context_tokens)],['마지막 턴',last],['기계',v.machine||'-'],['판',cliText(v)+(v.cli==='old'?' · 옛 판':'')],['폴더',v.directory||'-'],['라벨',v.label||'-'],['부모',parent],['마지막 보고',ago(it.now,v.reported_at)]]));
   }
 });
 // ---- 메일 ----
@@ -1013,7 +1018,7 @@ const badgeLabel={error:'오류',blocked:'막힘',busy:'바쁨',compacting:'comp
 const badgeTone={error:'danger',blocked:'warning',busy:'info',compacting:'info',idle:'success',none:'neutral'};
 function rel(now,t){if(!t)return '-';const s=Math.max(0,Math.round((new Date(now)-new Date(t))/1000));return s<60?'방금':dur(s)+' 전'}
 function secsSince(now,t){return Math.max(0,Math.round((new Date(now)-new Date(t))/1000))}
-const waitKinds=[['q','질문','warning'],['p','권한','info'],['s','오류','danger'],['d','지시','neutral'],['m','멈춤','warning']];
+const waitKinds=[['q','질문','warning'],['p','권한','info'],['s','오류','danger'],['d','지시','neutral'],['m','멈춤','warning'],['v','옛 판','warning']];
 const waitCols=['종류','항목','역할','지난 시간'];
 const svcCols=['서비스','상태','세션','열린 지시','마지막 소식'];
 // recipLabel is an open directive's recipient state: offline apart from idle (#269).
@@ -1023,7 +1028,8 @@ const svcChips=[['all','전체',()=>true],['problem','문제 있음',p=>/^(error
 let progressSeq=0,progressData=null,svcFilter='all';
 // waitItems builds the 대기 rows: {kind,id,item,role,age} with age in seconds.
 function waitItems(d){
-  const now=d.r.generated_at,by={q:[],p:[],s:[],d:[],m:[]};
+  const now=d.r.generated_at,by={q:[],p:[],s:[],d:[],m:[],v:[]};
+  for(const x of d.r.cli_behind||[])by.v.push({id:x.machine,item:x.machine+' · '+(x.version==='unknown'?'판 모름':x.version),role:x.roles.join(', '),age:null});
   for(const q of d.questions)by.q.push({id:q.id,item:q.questions.map(x=>x.header).join(' · '),role:q.asker,age:secsSince(now,q.created_at)});
   for(const v of d.perms)by.p.push({id:v.id,item:v.tool+(v.summary?' · '+v.summary:''),role:v.requester,age:secsSince(now,v.created_at)});
   for(const p of d.r.services){
@@ -1032,7 +1038,7 @@ function waitItems(d){
     for(const x of p.stalled||[])by.m.push({id:String(x.id),item:'#'+x.id+' '+(x.subject||'(제목 없음)'),role:x.to,age:x.idle_s});
   }
   const out=[];
-  for(const [k,label,tone] of waitKinds)for(const x of by[k].sort((a,b)=>b.age-a.age))out.push(Object.assign({kind:k,label:label,tone:tone},x));
+  for(const [k,label,tone] of waitKinds)for(const x of by[k].sort((a,b)=>(b.age||0)-(a.age||0)))out.push(Object.assign({kind:k,label:label,tone:tone},x));
   return out;
 }
 async function loadProgress(){
@@ -1059,8 +1065,8 @@ function drawProgress(){
     for(const x of items){
       const tr=node('tr','','w-'+x.kind);
       const k=cell('');k.append(badge(x.label,x.tone));
-      tr.append(k,cell(x.item,'','witem'),cardBreak(),cell(x.role,'','mono'),cell(dur(x.age),'','num nowrap'));
-      detailRow(tr,'progress',x.kind+':'+x.id);
+      tr.append(k,cell(x.item,'','witem'),cardBreak(),cell(x.role,'','mono'),cell(x.age==null?'-':dur(x.age),'','num nowrap'));
+      if(x.kind!=='v')detailRow(tr,'progress',x.kind+':'+x.id);
       wait.append(tr);
     }
     if(!items.length)emptyRow(wait,waitCols.length,'대기 없음');

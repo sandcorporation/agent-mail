@@ -23,6 +23,15 @@ const (
 	LegacyConfigDir    = "agent-mail" // remove in phase 3 (3단계에 제거): old binary and profile directory name
 )
 
+// VersionHeaderName is HeaderPrefix + this: the CLI build version every
+// client request carries (#308). It has no old-prefix alias; a request
+// without it is an older CLI.
+const VersionHeaderName = "Version"
+
+// CLIMinName is SWITCHBOARD_CLI_MIN without the prefix: the minimum client
+// major.minor (#308), read with EnvFrom. Unset or invalid: the server's own.
+const CLIMinName = "CLI_MIN"
+
 // ProductName is the only place the product name lives (dashboard, login
 // pages, TOTP issuer), so a rename is a one-line change.
 const ProductName = "Switchboard"
