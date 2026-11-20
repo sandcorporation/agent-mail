@@ -2,6 +2,7 @@ package node_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -31,8 +32,9 @@ func TestBackoff(t *testing.T) {
 	}
 }
 
-// fakeHost is a host side of the node channel: it checks the token, sends
-// assign on attach and records what the node says.
+// fakeHost is a host side of the node channel: it checks the token (401
+// when wrong), answers 503 while refuse is set, sends assign on attach and
+// records what the node says.
 type fakeHost struct {
 	mu      sync.Mutex
 	token   string
@@ -47,10 +49,15 @@ type fakeHost struct {
 
 func (h *fakeHost) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
-	refuse := h.refuse || r.Header.Get("Authorization") != "Bearer "+h.token
+	refuse := h.refuse
 	h.mu.Unlock()
-	if refuse || r.URL.Path != "/api/node/socket" {
+	if r.Header.Get("Authorization") != "Bearer "+h.token || r.URL.Path != "/api/node/socket" {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if refuse {
+		// A host not taking nodes yet; a 401 would mean the token is revoked.
+		http.Error(w, "starting", http.StatusServiceUnavailable)
 		return
 	}
 	ws, err := websocket.Accept(w, r, nil)
@@ -267,5 +274,49 @@ func TestLinkSendsNoticesOncePerConnection(t *testing.T) {
 	host.mu.Unlock()
 	if got.Kind != wire.NoticeCrashLoop || got.ID != "a" || got.Run != 5 || got.Runs != 5 {
 		t.Fatalf("notice %+v", got)
+	}
+}
+
+// A host that is not there (connection refused, as while it restarts)
+// keeps the node retrying with backoff; only a 401 stops it (#203).
+func TestLinkRetriesWhileTheHostIsDown(t *testing.T) {
+	r := newRig(t)
+	srv := httptest.NewServer(http.NotFoundHandler())
+	url := srv.URL
+	srv.Close()
+	sl := &sleeps{}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- (&node.Link{Node: r.node(), Host: url, Token: "sbn_t", Sleep: sl.sleep, Logf: t.Logf}).Run(ctx)
+	}()
+	waitFor(t, "four retries", func() bool { return len(sl.waits()) >= 4 })
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run = %v", err)
+	}
+}
+
+// A 401 on the first connect (a revoked or replaced token) stops the node
+// without a retry.
+func TestLinkStopsOnUnauthorized(t *testing.T) {
+	r := newRig(t)
+	srv := httptest.NewServer(&fakeHost{token: "sbn_other"})
+	defer srv.Close()
+	sl := &sleeps{}
+	done := make(chan error, 1)
+	go func() {
+		done <- (&node.Link{Node: r.node(), Host: srv.URL, Token: "sbn_t", Sleep: sl.sleep, Logf: t.Logf}).Run(context.Background())
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, node.ErrRevoked) {
+			t.Fatalf("Run = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("kept retrying on 401")
+	}
+	if w := sl.waits(); len(w) != 0 {
+		t.Fatalf("waited %v", w)
 	}
 }

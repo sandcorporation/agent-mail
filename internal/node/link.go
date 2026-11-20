@@ -71,6 +71,12 @@ type Link struct {
 	limit  wire.NodeLimit
 }
 
+// ErrRevoked is Run's error when the host answers the node channel with
+// 401: the node's token is revoked (or was never the host's). Retrying
+// cannot help, so the node stops; its hosted terminals are left as they are
+// (#203).
+var ErrRevoked = errors.New("the host refused this node's token (HTTP 401): the node was revoked")
+
 // SocketURL is the node channel URL for a host base URL.
 func SocketURL(host string) (string, error) {
 	host = strings.TrimRight(host, "/")
@@ -98,6 +104,10 @@ func (l *Link) Run(ctx context.Context) error {
 	if l.Logf == nil {
 		l.Logf = log.Printf
 	}
+	// The reconcile loop ends with Run, so a node that stops (revoked) no
+	// longer enforces the last assign; the sessions themselves stay.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	l.assigned = make(chan struct{})
 	l.kick = make(chan struct{}, 1)
 	l.changed = make(chan struct{}, 1)
@@ -106,6 +116,10 @@ func (l *Link) Run(ctx context.Context) error {
 		attached, err := l.session(ctx, url)
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		if errors.Is(err, ErrRevoked) {
+			l.Logf("node: %v; hosted terminals are left as they are; stopping", err)
+			return err
 		}
 		if attached {
 			attempt = 0
@@ -186,9 +200,12 @@ func (l *Link) current() wire.NodeFrame {
 // saying hello. Terminals the host attaches stream over it until it ends.
 func (l *Link) session(ctx context.Context, url string) (attached bool, err error) {
 	dctx, cancel := context.WithTimeout(ctx, linkDialTimeout)
-	ws, _, err := websocket.Dial(dctx, url, &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + l.Token}}})
+	ws, resp, err := websocket.Dial(dctx, url, &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + l.Token}}})
 	cancel()
 	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusUnauthorized {
+			return false, ErrRevoked
+		}
 		return false, err
 	}
 	defer ws.CloseNow()

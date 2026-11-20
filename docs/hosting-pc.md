@@ -783,6 +783,7 @@ Providers that only speak OAuth 2.0 (GitHub and similar) are not supported: they
 | `tmux 3.2 or newer is required for terminal hosting on Linux: …` | L1. |
 | `node: terminal hosting needs Windows 10 1809 (build 17763) or later; …` | This PC cannot host; see W1. |
 | `node local: node is revoked` | The node was removed in Settings. Uninstall (W9 / L9) and install again from W3 / L3. |
+| `node: the host refused this node's token (HTTP 401): the node was revoked; …` (exit code 4) | The node was removed in Settings while it ran; its terminals keep running. Uninstall (W9 / L9) and install again from W3 / L3. |
 | `up: listen tcp 127.0.0.1:8090: bind: …` | Another program holds the port (it may show no listener), or Windows reserves it. `up` exits at once and starts no keeper or tmux server. Pick a free port and change it in `env.ps1` and `up.cmd` (run `sbstop` before changing `up.cmd`, then `Start-ScheduledTask`; when `sbstop` is not recognized, run the helpers block of W3 first), or in `env.sh` and the unit. |
 | `401 login failed` from `sblogin` | Wrong password or a TOTP code already used; wait 30 s and run `sblogin` again. |
 

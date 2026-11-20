@@ -3,16 +3,20 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
 
+	"github.com/sandcorporation/switchboard/internal/cli"
 	"github.com/sandcorporation/switchboard/internal/node"
 	"github.com/sandcorporation/switchboard/internal/term/termtest"
 	"github.com/sandcorporation/switchboard/internal/wire"
@@ -267,5 +271,71 @@ func TestTerminalsLiveKind(t *testing.T) {
 	}
 	if got := liveKinds("terminals", false); got != nil {
 		t.Errorf("role path terminals = %v", got)
+	}
+}
+
+// A node whose token is revoked while it is attached stops within one retry
+// with node.ErrRevoked, leaves its hosted terminals as they are, and the
+// `node` command maps that to cli.ExitNodeRevoked (#203).
+func TestRevokedNodeStopsRetrying(t *testing.T) {
+	s, base, cookie := signedInServer(t, true)
+	token := nodeToken(t, s, "pc")
+	got := adminCall(t, base, "POST", "/api/admin/terminals", cookie, true, newRecord)
+	var rec wire.HostedSession
+	if err := json.Unmarshal([]byte(got.body), &rec); err != nil {
+		t.Fatalf("create = %d %s", got.code, got.body)
+	}
+	fake := termtest.New()
+	n, err := node.New(node.Config{Agent: "/opt/agent/claude", Machine: "pc-1", Endpoint: base, NodeToken: token}, fake)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var logs []string
+	sleeps := 0
+	l := &node.Link{Node: n, Host: base, Token: token, Interval: 20 * time.Millisecond,
+		Hello: wire.NodeHello{Name: "pc", Machine: "pc-1", OS: "linux", Version: "test", Backend: "fake"},
+		Logf: func(f string, a ...any) {
+			mu.Lock()
+			logs = append(logs, fmt.Sprintf(f, a...))
+			mu.Unlock()
+		},
+		Sleep: func(ctx context.Context, d time.Duration) error {
+			mu.Lock()
+			sleeps++
+			mu.Unlock()
+			return nil
+		}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- l.Run(ctx) }()
+	eventually(t, "the record running", func() bool { return terminals(t, base, cookie)[rec.ID].Runtime.State == "running" })
+
+	if got := adminCall(t, base, "DELETE", "/api/admin/nodes/pc", cookie, true, ""); got.code != http.StatusOK {
+		t.Fatalf("revoke = %d %s", got.code, got.body)
+	}
+	select {
+	case err = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the revoked node kept retrying")
+	}
+	if !errors.Is(err, node.ErrRevoked) {
+		t.Fatalf("Run = %v, want node.ErrRevoked", err)
+	}
+	mu.Lock()
+	if sleeps > 1 {
+		t.Errorf("%d retries before stopping", sleeps)
+	}
+	if !slices.ContainsFunc(logs, func(s string) bool { return strings.Contains(s, "revoked") }) {
+		t.Errorf("no line naming the revocation: %q", logs)
+	}
+	mu.Unlock()
+	if st := fake.Stops(); len(st) != 0 {
+		t.Errorf("stopped %v", st)
+	}
+	var ce cli.ExitCodeError
+	if err := nodeRunError(err); !errors.As(err, &ce) || ce.Code != cli.ExitNodeRevoked {
+		t.Errorf("node command error %v, want exit %d", err, cli.ExitNodeRevoked)
 	}
 }
