@@ -116,6 +116,7 @@ func run(v string, ln net.Listener, setupDir string, attach attachFunc) {
 	if e = presence.Configure(&s.presenceCfg, os.Getenv); e != nil {
 		fatal(e)
 	}
+	configureCLIMin(s, os.Getenv, version, log.Printf)
 	if e = configureStall(s, os.Getenv); e != nil {
 		fatal(e)
 	}
@@ -205,7 +206,7 @@ func run(v string, ln net.Listener, setupDir string, attach attachFunc) {
 // dashboard page, behind the security headers.
 func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", health)
+	mux.HandleFunc("/health", s.health)
 	mux.HandleFunc("/api/", s.api)
 	mux.HandleFunc("/auth/", s.authAPI)
 	mux.HandleFunc("/setup", s.setupAPI)
@@ -540,10 +541,25 @@ func writeJSON(w http.ResponseWriter, v any) { _ = json.NewEncoder(w).Encode(v) 
 
 // health reports liveness and the build version. It is unauthenticated; the
 // version (a short commit sha in CI images, "dev" locally) is not sensitive.
-func health(w http.ResponseWriter, r *http.Request) {
+// health serves GET /health: the build version and the minimum client
+// version (#308), without authentication.
+func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(struct {
-		OK      bool   `json:"ok"`
-		Version string `json:"version"`
-	}{true, version})
+	out := wire.ServerVersionInfo{OK: true, Version: version}
+	if s.presenceCfg.CLIMinOK {
+		out.CLIMin = s.presenceCfg.CLIMin.String()
+	}
+	json.NewEncoder(w).Encode(out)
+}
+
+// configureCLIMin sets the minimum client version (#308) from
+// SWITCHBOARD_CLI_MIN, else serverVersion's major.minor. An invalid setting
+// does not stop the server: it logs one line and uses the default.
+func configureCLIMin(s *Server, getenv func(string) string, serverVersion string, logf func(string, ...any)) {
+	v, from := config.EnvFrom(getenv, config.CLIMinName)
+	min, ok, bad := wire.CLIMinimum(v, serverVersion)
+	if bad != "" {
+		logf("%s=%q is not a version such as v0.26; using the server's own", from, bad)
+	}
+	s.presenceCfg.CLIMin, s.presenceCfg.CLIMinOK = min, ok
 }

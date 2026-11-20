@@ -259,7 +259,8 @@ var commands = []command{
 	{name: "admin", args: "ACTION NAME", nargs: 2, synopsis: "(ACTION: create | passwd | totp-reset | disable) NAME",
 		summary: "Manage built-in dashboard admins in the server database (DB_PATH; run inside the server container); create and passwd read the password from the terminal or the first line of stdin",
 		options: []option{optJSON}},
-	{name: "version", summary: "Show build version"},
+	{name: "version", summary: "Show build version; --check compares it with the server's minimum (exit 3 when behind)",
+		options: []option{{"--check", "", "ask the server; print its version, this one and, when behind, the release asset to install"}, optProfile}},
 }
 
 var validStatuses = map[string]bool{"pending": true, "read": true, "acknowledged": true, "complete": true, "completed": true}
@@ -439,8 +440,15 @@ func dispatch(args []string) (int, error) {
 	}
 	switch name {
 	case "version":
-		fmt.Println(progName() + " " + version)
-		return ExitOK, nil
+		if !p.bool("--check") {
+			fmt.Println(progName() + " " + version)
+			return ExitOK, nil
+		}
+		c, err := loadConfig()
+		if err != nil {
+			return 0, err
+		}
+		return versionCheck(c, version, os.Stdout)
 	case "register":
 		return cliRegister(p)
 	case "admin":
@@ -903,6 +911,7 @@ func cliRegister(p parsedArgs) (int, error) {
 	req, _ := http.NewRequest("POST", strings.TrimRight(p.values["--endpoint"], "/")+"/api/register", bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(enrollment)))
+	setVersionHeader(req)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return 0, errors.New("registration request failed: " + err.Error())
@@ -1021,6 +1030,7 @@ func inputBody(p parsedArgs) (string, error) {
 }
 
 func authorize(c Config, req *http.Request) {
+	setVersionHeader(req)
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	req.Header.Set(config.HeaderPrefix+"Role", c.Role)
 }

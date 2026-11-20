@@ -75,6 +75,7 @@ func (s *Service) SlotAPI(w http.ResponseWriter, r *http.Request, p identity.Pri
 		http.Error(w, "invalid JSON body", 400)
 		return
 	}
+	req.CLIVersion = cliVersionHeader(r)
 	if !slotRequestValid(req) {
 		http.Error(w, "machine and directory required (each field at most 512 bytes)", 400)
 		return

@@ -102,6 +102,12 @@ type PresenceView struct {
 	LeaseExpiresAt time.Time  `json:"lease_expires_at"`
 	OfflineSince   *time.Time `json:"offline_since,omitempty"` // = lease_expires_at when offline
 	Since          *time.Time `json:"since,omitempty"`         // when status began: offline_since when offline, else the start of the current state
+	// CLIVersion is the version the session's CLI last sent (#308): a tag,
+	// "dev", or CLIUnknown (no header); empty when not reported since #308.
+	CLIVersion string `json:"cli_version"`
+	// CLI is CLIVersion against the server minimum: current, old (옛 판) or
+	// unknown (판 모름).
+	CLI string `json:"cli"`
 }
 
 // PresenceList answers GET /api/presence and GET /api/admin/presence.

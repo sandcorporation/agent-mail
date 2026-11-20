@@ -368,6 +368,10 @@ var presenceColumns = []struct{ name, def string }{
 	// subagents is the last reported number of running background sub-agents
 	// (0 when a report leaves it out, and on release).
 	{"subagents", `INTEGER NOT NULL DEFAULT 0`},
+	// cli_version is the X-Switchboard-Version of the last register or
+	// heartbeat (#308): "unknown" when the request had none, '' when the slot
+	// has not reported since.
+	{"cli_version", `TEXT NOT NULL DEFAULT ''`},
 }
 
 func migratePresence(db *sql.DB) error {

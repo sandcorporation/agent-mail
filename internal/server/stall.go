@@ -126,6 +126,8 @@ type sweepResult struct {
 	Schedules int
 	// Lost counts the jobs a sweep marked lost (#290).
 	Lost int
+	// CLIBehind counts the [옛 판] mails sent, one per machine (#308).
+	CLIBehind int
 }
 
 // sweep sends every due stall notice and metrics alert once and prunes old
@@ -142,6 +144,9 @@ func (s *Server) sweep(ctx context.Context) (sweepResult, error) {
 		return out, err
 	}
 	if out.Alerts, err = s.insight().SweepAlerts(ctx); err != nil {
+		return out, err
+	}
+	if out.CLIBehind, err = s.insight().SweepCLIBehind(ctx, s.presence().CLIBehind, version); err != nil {
 		return out, err
 	}
 	if out.Remind, err = s.presence().SweepReminders(ctx, insight.NewBaseResolver(s.db).Of); err != nil {

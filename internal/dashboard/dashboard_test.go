@@ -376,7 +376,7 @@ func TestDashboardDetailPanel(t *testing.T) {
 		"registerDetail('mail',{", "subs:()=>[['body','본문'],['thread','스레드']],",
 		"box.append(dl(pairs),node('pre',m.body));",
 		"if(f.id)openDetail('mail',String(f.id),'body');else selectTab('mail');",
-		`<thead><tr><th>역할</th><th>상태</th><th class="num">컨텍스트</th><th>마지막 턴</th><th>기계</th><th>라벨</th></tr></thead>`,
+		`<thead><tr><th>역할</th><th>상태</th><th class="num">컨텍스트</th><th>마지막 턴</th><th>기계</th><th>판</th><th>라벨</th></tr></thead>`,
 		`<thead><tr><th class="num">#</th><th>제목</th><th>보낸 쪽 → 받는 쪽</th><th>상태</th><th>시각</th></tr></thead>`,
 	} {
 		if !strings.Contains(body, want) {
@@ -466,9 +466,9 @@ func TestDashboardWaitAndDetails(t *testing.T) {
 	}
 	for _, want := range []string{
 		// 대기: kinds in order, oldest first, the counts the menu shows.
-		"const waitKinds=[['q','질문','warning'],['p','권한','info'],['s','오류','danger'],['d','지시','neutral'],['m','멈춤','warning']];",
+		"const waitKinds=[['q','질문','warning'],['p','권한','info'],['s','오류','danger'],['d','지시','neutral'],['m','멈춤','warning'],['v','옛 판','warning']];",
 		"for(const x of p.stalled||[])by.m.push(",
-		"for(const [k,label,tone] of waitKinds)for(const x of by[k].sort((a,b)=>b.age-a.age))",
+		"for(const [k,label,tone] of waitKinds)for(const x of by[k].sort((a,b)=>(b.age||0)-(a.age||0)))",
 		"api('questions?status=pending&limit=500'),api('permissions?status=pending')",
 		"for(const x of p.open_directives)if(x.over_threshold)by.d.push(",
 		"detailRow(tr,'progress',x.kind+':'+x.id);",
@@ -592,6 +592,26 @@ func TestDashboardJobsTab(t *testing.T) {
 	for _, want := range []string{"if(!confirm('#'+j.id+' '+j.label+' 작업을 멈출까요?'))return;", "if(!confirm('#'+j.id+' '+j.label+' 기록을 지울까요? 되돌릴 수 없습니다.'))return;", "if(!confirm('#'+j.id+' '+j.label+' 예약을 지울까요? 되돌릴 수 없습니다.'))return;"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("job stop and remove need a confirm: %q", want)
+		}
+	}
+}
+
+// CLI versions (#308): the 세션 list has a 판 column with an 옛 판 badge,
+// and 진행 대기 has one 옛 판 row per machine from cli_behind.
+func TestDashboardShowsCLIVersion(t *testing.T) {
+	w := httptest.NewRecorder()
+	Page(w, httptest.NewRequest("GET", "/", nil))
+	body := w.Body.String()
+	for _, want := range []string{
+		"const sessionCols=['역할','상태','컨텍스트','마지막 턴','기계','판','라벨'];",
+		"function cliText(v){return !v.cli_version?'-':v.cli==='unknown'?'판 모름':v.cli_version}",
+		"if(v.cli==='old'){tr.children[5].classList.add('cli-old');tr.children[5].append(' ',badge('옛 판','warning'))}",
+		"['v','옛 판','warning']",
+		"for(const x of d.r.cli_behind||[])by.v.push({id:x.machine,",
+		"if(x.kind!=='v')detailRow(tr,'progress',x.kind+':'+x.id);",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("dashboard missing %q", want)
 		}
 	}
 }
