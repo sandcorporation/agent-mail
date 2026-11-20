@@ -133,3 +133,10 @@ func (s *Service) attachedRecently(ctx context.Context, base string, now time.Ti
 	}
 	return last.Valid && now.Sub(fromMS(last.Int64)) < NoSessionGrace, nil
 }
+
+// Attached reports whether a session of base is attached now (a live slot).
+func (s *Service) Attached(ctx context.Context, base string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM slots WHERE base=? AND lease_until>?`, base, ms(s.now().UTC())).Scan(&n)
+	return n > 0, err
+}

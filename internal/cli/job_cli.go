@@ -73,6 +73,10 @@ func jobDir(id int64) string { return filepath.Join(jobsRoot(), strconv.FormatIn
 type jobSpec struct {
 	Argv []string `json:"argv"`
 	Cwd  string   `json:"cwd"`
+	// Expires is the job's expiry when it was created; the runner then
+	// follows the server's (a watch's moves forward while its role is
+	// attached), and keeps the last one it saw when the server is away.
+	Expires time.Time `json:"expires"`
 }
 
 // jobExit is the runner's local end record (exit.json).
@@ -164,7 +168,7 @@ func jobRun(c Config, p parsedArgs) (int, error) {
 		return 0, fmt.Errorf("unexpected response from server: %v", err)
 	}
 	if created {
-		if err = startRunner(j.ID, jobSpec{Argv: p.extra, Cwd: cwd}); err != nil {
+		if err = startRunner(j.ID, jobSpec{Argv: p.extra, Cwd: cwd, Expires: j.ExpiresAt}); err != nil {
 			// Watched: the caller sees the error here, so no end mail.
 			report := wire.JobReport{State: wire.JobFailed, ExitCode: intPtr(127), Error: "runner did not start: " + err.Error(), Watched: true}
 			_, _ = slotCall(c, "POST", fmt.Sprintf("/api/jobs/%d/report", j.ID), report)

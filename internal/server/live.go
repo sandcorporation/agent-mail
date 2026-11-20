@@ -58,6 +58,8 @@ func liveKinds(path string, admin bool) []string {
 			return []string{"terminals"}
 		case "messages":
 			return []string{"mail", "progress", "reports"}
+		case "jobs":
+			return []string{"jobs"}
 		}
 		return nil
 	}
@@ -74,6 +76,9 @@ func liveKinds(path string, admin bool) []string {
 		return []string{"questions", "mail", "progress"}
 	case "slots", "presence":
 		return []string{"sessions", "progress"}
+	case "jobs":
+		// create, report and stop; an end mail also wakes the mailbox.
+		return []string{"jobs", "mail"}
 	}
 	return nil
 }

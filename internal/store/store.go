@@ -658,5 +658,20 @@ func migrateJobs(db *sql.DB) error {
 		UNIQUE(role, idem));
 	CREATE INDEX IF NOT EXISTS idx_jobs_role ON jobs(role, id);
 	CREATE INDEX IF NOT EXISTS idx_jobs_state ON jobs(state);`)
+	if err != nil {
+		return err
+	}
+	return migrateJobDuration(db)
+}
+
+// migrateJobDuration adds jobs.duration_s (#291): the expiry the job was
+// created with, in seconds. Auto-extension moves expires_at to now plus it.
+// Rows from before keep 0 and are never extended.
+func migrateJobDuration(db *sql.DB) error {
+	has, err := HasColumn(db, "jobs", "duration_s")
+	if err != nil || has {
+		return err
+	}
+	_, err = db.Exec(`ALTER TABLE jobs ADD COLUMN duration_s INTEGER NOT NULL DEFAULT 0`)
 	return err
 }

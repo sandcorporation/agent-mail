@@ -14,10 +14,10 @@ func TestDashboardTabsSkeleton(t *testing.T) {
 	if !strings.Contains(body, `role="tablist"`) {
 		t.Fatal("dashboard has no tablist")
 	}
-	// Tab order matters: 운영 (진행, 세션, 메일, 보고), 응답 (질문, 권한 요청),
+	// Tab order matters: 운영 (진행, 세션, 메일, 보고, 작업), 응답 (질문, 권한 요청),
 	// 관리 (지표, 터미널, 설정).
 	last := -1
-	for _, name := range []string{"progress", "sessions", "mail", "reports", "questions", "permissions", "metrics", "terminals", "settings"} {
+	for _, name := range []string{"progress", "sessions", "mail", "reports", "jobs", "questions", "permissions", "metrics", "terminals", "settings"} {
 		tab := `id="tab-` + name + `" data-tab="` + name + `" aria-controls="panel-` + name + `"`
 		i := strings.Index(body, tab)
 		if i < 0 {
@@ -286,7 +286,7 @@ func TestDashboardDesignFrame(t *testing.T) {
 	order := []string{
 		`<div class="sc-app">`, `<aside class="sc-sidenav" aria-label="주 메뉴">`, `<h1>` + headerText + `</h1>`,
 		`<div id="tabs" class="tabs" role="tablist" aria-label="탭">`,
-		`>운영</div>`, `id="tab-progress"`, `id="tab-sessions"`, `id="tab-mail"`,
+		`>운영</div>`, `id="tab-progress"`, `id="tab-sessions"`, `id="tab-mail"`, `id="tab-reports"`, `id="tab-jobs"`,
 		`>응답</div>`, `id="tab-questions"`, `id="tab-permissions"`,
 		`>관리</div>`, `id="tab-metrics"`, `id="tab-terminals"`, `id="tab-settings"`,
 		`<div class="sc-app-main" id="appMain">`, `<header class="sc-topbar">`, `<li id="crumbTab" aria-current="page">진행</li>`,
@@ -569,6 +569,28 @@ func TestDashboardViewTerminalFloorOnPhone(t *testing.T) {
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("page lacks %q", want)
+		}
+	}
+}
+
+// The 작업 tab lists jobs from the admin API with role and state filters, and
+// stops or removes one only after a confirm.
+func TestDashboardJobsTab(t *testing.T) {
+	w := httptest.NewRecorder()
+	Page(w, httptest.NewRequest("GET", "/", nil))
+	body := w.Body.String()
+	for _, want := range []string{
+		`<select id="jobRole" aria-label="역할">`, `<select id="jobState" aria-label="상태">`,
+		`<th>종류</th><th>이름</th><th>역할</th><th>기계</th><th>상태</th><th>시작</th><th>만료</th><th>마지막 줄</th>`,
+		"api('jobs'", "apiSend('POST','jobs/'", "apiSend('DELETE','jobs/'", "jobs:loadJobs",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("jobs tab missing %q", want)
+		}
+	}
+	for _, want := range []string{"if(!confirm('#'+j.id+' '+j.label+' 작업을 멈출까요?'))return;", "if(!confirm('#'+j.id+' '+j.label+' 기록을 지울까요? 되돌릴 수 없습니다.'))return;"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("job stop and remove need a confirm: %q", want)
 		}
 	}
 }

@@ -119,6 +119,8 @@ type sweepResult struct {
 	Remind  int
 	// NoSession counts the [미수신] notices (#300).
 	NoSession int
+	// Extended counts the jobs whose expiry moved forward (#291).
+	Extended int
 }
 
 // sweep sends every due stall notice and metrics alert once and prunes old
@@ -143,6 +145,9 @@ func (s *Server) sweep(ctx context.Context) (sweepResult, error) {
 	if out.NoSession, err = s.presence().SweepNoSession(ctx, insight.NewBaseResolver(s.db).Of); err != nil {
 		return out, err
 	}
+	if out.Extended, err = s.jobs().ExtendAttached(ctx, insight.NewBaseResolver(s.db).Of, s.presence().Attached); err != nil {
+		return out, err
+	}
 	if _, err = presence.PruneLog(s.db, s.now()); err != nil {
 		return out, err
 	}
@@ -164,6 +169,9 @@ func (s *Server) publishSweep(res sweepResult) {
 	}
 	if res.Remind > 0 || res.NoSession > 0 {
 		kinds = append(kinds, "mail")
+	}
+	if res.Extended > 0 {
+		kinds = append(kinds, "jobs")
 	}
 	s.live.Publish(kinds...)
 }

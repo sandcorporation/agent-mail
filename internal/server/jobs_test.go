@@ -1,9 +1,11 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sandcorporation/switchboard/internal/wire"
 )
@@ -166,5 +168,136 @@ func TestJobTailIsCapped(t *testing.T) {
 	long := strings.Repeat("y", 20000)
 	if got := wire.JobTail(long); len(got) != wire.MaxJobTailBytes {
 		t.Fatalf("one long line: %d bytes", len(got))
+	}
+}
+
+func TestJobDefaultExpiryByKind(t *testing.T) {
+	s := testServer(t)
+	w, code := createJob(t, s, "secret-a", map[string]any{"kind": "watch", "command": "tail -f log", "cwd": "/w", "machine": "partner-a"}, "")
+	if code != 201 || w.ExpiresAt.Sub(w.CreatedAt) != wire.DefaultWatchExpiry {
+		t.Fatalf("watch default expiry: %d %v", code, w.ExpiresAt.Sub(w.CreatedAt))
+	}
+	c, _ := createJob(t, s, "secret-a", map[string]any{"command": "make", "cwd": "/w", "machine": "partner-a", "expires_in": 90}, "")
+	if c.ExpiresAt.Sub(c.CreatedAt) != 90*time.Second {
+		t.Fatalf("--expires: %v", c.ExpiresAt.Sub(c.CreatedAt))
+	}
+}
+
+// A watch's expiry moves to now + its original duration at each sweep while
+// a session of the owner role is attached; a command job's never does.
+func TestJobAutoExtendsOnlyWhileAttached(t *testing.T) {
+	s := testServer(t)
+	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	s.clock = func() time.Time { return now }
+	watch, _ := createJob(t, s, "secret-a", map[string]any{"kind": "watch", "command": "tail -f log", "cwd": "/w", "machine": "partner-a", "expires_in": 3600}, "")
+	command, _ := createJob(t, s, "secret-a", map[string]any{"command": "make", "cwd": "/w", "machine": "partner-a", "expires_in": 3600}, "")
+	other, _ := createJob(t, s, "secret-b", map[string]any{"kind": "watch", "command": "tail -f log", "cwd": "/w", "machine": "partner-a", "expires_in": 3600}, "")
+	ended, _ := createJob(t, s, "secret-a", map[string]any{"kind": "watch", "command": "tail -f x", "cwd": "/w", "machine": "partner-a", "expires_in": 3600}, "")
+	call(s, "POST", "/api/jobs/"+itoa(ended.ID)+"/report", "secret-a", map[string]any{"state": "exited", "exit_code": 0, "watched": true}, "")
+	expires := func(id int64) time.Time {
+		t.Helper()
+		j, err := s.jobs().Get(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return j.ExpiresAt
+	}
+	// a has a live slot; b has none.
+	if _, err := s.db.Exec(`INSERT INTO slots(base,number,machine,directory,registered_at,lease_until) VALUES('a',1,'partner-a','/w',?,?)`,
+		now.UnixMilli(), now.Add(time.Hour).UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(40 * time.Minute)
+	if _, err := s.sweep(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := expires(watch.ID); !got.Equal(now.Add(time.Hour)) {
+		t.Fatalf("attached watch: expires %v want %v", got, now.Add(time.Hour))
+	}
+	if got := expires(command.ID); !got.Equal(command.ExpiresAt) {
+		t.Fatalf("command moved: %v", got)
+	}
+	if got := expires(other.ID); !got.Equal(other.ExpiresAt) {
+		t.Fatalf("unattached watch moved: %v", got)
+	}
+	if got := expires(ended.ID); !got.Equal(ended.ExpiresAt) {
+		t.Fatalf("ended watch moved: %v", got)
+	}
+	// The lease lapses: no further extension.
+	moved := expires(watch.ID)
+	now = now.Add(2 * time.Hour)
+	if _, err := s.sweep(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := expires(watch.ID); !got.Equal(moved) {
+		t.Fatalf("watch moved with no session attached: %v want %v", got, moved)
+	}
+}
+
+// An expiry is one urgent mail even when a waiter saw it.
+func TestJobExpiryMailsOnce(t *testing.T) {
+	s := testServer(t)
+	j, _ := createJob(t, s, "secret-a", map[string]any{"command": "sleep 99", "label": "slow", "cwd": "/w", "machine": "partner-a"}, "")
+	for i := 0; i < 2; i++ {
+		call(s, "POST", "/api/jobs/"+itoa(j.ID)+"/report", "secret-a", map[string]any{"state": "expired", "exit_code": 143, "watched": true}, "")
+	}
+	got, _ := s.jobs().Get(j.ID)
+	m := jobMail(t, s, "a")
+	if got.State != wire.JobExpired || len(m) != 1 || m[0].Subject != "[작업 끝남] slow 만료" || m[0].Priority != "urgent" {
+		t.Fatalf("expiry: %+v mail %+v", got, m)
+	}
+}
+
+func TestAdminJobsListStopAndRemove(t *testing.T) {
+	s := testServer(t)
+	s.admin.ProxyToken = "proxy-secret"
+	run, _ := createJob(t, s, "secret-a", map[string]any{"command": "sleep 60", "label": "slow", "cwd": "/w", "machine": "partner-a"}, "")
+	watch, _ := createJob(t, s, "secret-b", map[string]any{"kind": "watch", "command": "tail -f log", "cwd": "/w", "machine": "partner-b"}, "")
+	done, _ := createJob(t, s, "secret-a", map[string]any{"command": "true", "cwd": "/w", "machine": "partner-a"}, "")
+	call(s, "POST", "/api/jobs/"+itoa(done.ID)+"/report", "secret-a", map[string]any{"state": "exited", "exit_code": 0, "tail": "one\nlast line", "watched": true}, "")
+	list := func(query string) []wire.Job {
+		t.Helper()
+		w := adminRequest(s, "GET", "/api/admin/jobs"+query, "", nil)
+		var out []wire.Job
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &out) != nil {
+			t.Fatalf("list %s: %d %s", query, w.Code, w.Body)
+		}
+		return out
+	}
+	if all := list(""); len(all) != 3 || all[0].ID != done.ID || all[0].Tail != "one\nlast line" || all[0].Command != "" {
+		t.Fatalf("all jobs (newest first, no command): %+v", all)
+	}
+	if got := list("?role=b"); len(got) != 1 || got[0].ID != watch.ID || got[0].Kind != wire.JobWatch {
+		t.Fatalf("role filter: %+v", got)
+	}
+	if got := list("?state=exited"); len(got) != 1 || got[0].ID != done.ID {
+		t.Fatalf("state filter: %+v", got)
+	}
+	if got := list("?state=live"); len(got) != 2 {
+		t.Fatalf("live filter: %+v", got)
+	}
+	if w := adminRequest(s, "POST", "/api/admin/jobs/"+itoa(run.ID)+"/stop", "", nil); w.Code != 403 {
+		t.Fatalf("stop without the write guard: %d", w.Code)
+	}
+	if w := adminWrite(s, "POST", "/api/admin/jobs/"+itoa(run.ID)+"/stop", ""); w.Code != 200 {
+		t.Fatalf("stop: %d %s", w.Code, w.Body)
+	}
+	if j, _ := s.jobs().Get(run.ID); !j.StopRequested || j.State != wire.JobHanded {
+		t.Fatalf("stop not recorded: %+v", j)
+	}
+	if w := adminWrite(s, "DELETE", "/api/admin/jobs/"+itoa(run.ID), ""); w.Code != 409 {
+		t.Fatalf("remove a live job: %d", w.Code)
+	}
+	if w := adminWrite(s, "DELETE", "/api/admin/jobs/"+itoa(done.ID), ""); w.Code != 200 {
+		t.Fatalf("remove: %d %s", w.Code, w.Body)
+	}
+	if _, err := s.jobs().Get(done.ID); err == nil {
+		t.Fatal("removed job still there")
+	}
+	if w := adminWrite(s, "POST", "/api/admin/jobs/999/stop", ""); w.Code != 404 {
+		t.Fatalf("unknown job: %d", w.Code)
+	}
+	if w := doAuth(s, authReq{method: "GET", path: "/api/admin/jobs"}); w.Code != 401 {
+		t.Fatalf("no admin: %d", w.Code)
 	}
 }

@@ -446,6 +446,10 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 		s.reports().AdminAPI(w, r, strings.TrimPrefix(rest, "/"))
 		return
 	}
+	if rest, ok := strings.CutPrefix(path, "jobs"); ok && (rest == "" || strings.HasPrefix(rest, "/")) {
+		s.jobs().AdminAPI(w, r, strings.TrimPrefix(rest, "/"))
+		return
+	}
 	if rest, ok := strings.CutPrefix(path, "roles"); ok && (rest == "" || strings.HasPrefix(rest, "/")) {
 		s.ids().AdminRolesAPI(w, r, strings.TrimPrefix(rest, "/"))
 		return
