@@ -169,3 +169,47 @@ func JobTail(out string) string {
 	}
 	return strings.ToValidUTF8(strings.Join(lines, "\n"), "�")
 }
+
+// DefaultWatchBatch is how long a watch collects output lines before one mail.
+const DefaultWatchBatch = 30 * time.Second
+
+// JobLines is one batch of a watch's output lines (POST /api/jobs/ID/lines):
+// Seq numbers the batches of one watch (the mail's idempotency key), Count
+// is every line in the window, Lines the first of them within the cap.
+type JobLines struct {
+	Seq   int64  `json:"seq"`
+	Count int    `json:"count"`
+	Lines string `json:"lines"`
+}
+
+func (q *JobLines) Check() error {
+	if q.Seq <= 0 || q.Count <= 0 {
+		return errors.New("seq and count must be positive")
+	}
+	var kept int
+	q.Lines, kept = WatchLines(q.Lines)
+	if q.Count < kept {
+		q.Count = kept
+	}
+	return nil
+}
+
+// WatchLines keeps the first lines of out within MaxJobTailLines and
+// MaxJobTailBytes (a watch mail shows the events in order) and says how many
+// it kept.
+func WatchLines(out string) (string, int) {
+	out = strings.TrimRight(out, "\n")
+	if out == "" {
+		return "", 0
+	}
+	var kept []string
+	size := 0
+	for _, l := range strings.Split(out, "\n") {
+		if len(kept) == MaxJobTailLines || size+len(l)+1 > MaxJobTailBytes {
+			break
+		}
+		kept = append(kept, l)
+		size += len(l) + 1
+	}
+	return strings.ToValidUTF8(strings.Join(kept, "\n"), "�"), len(kept)
+}

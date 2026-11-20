@@ -131,9 +131,16 @@ var commands = []command{
 			{"--json", "", "print the server's JSON response ({\"events\":[...],\"cursor\":N})"},
 			optProfile,
 		}},
-	{name: "watch", summary: "Watch inbox without consuming messages",
+	{name: "watch", args: "[start]", nargs: 1, optArgs: true, extra: true, synopsis: "[-- CMD ARGS...]",
+		summary: "Watch inbox without consuming messages; watch start runs a command on this machine whose output lines are events (lines within a batch window make one urgent mail to this role; list, stop and wait it with job)",
 		options: []option{
 			{"--after", "ID", "only report messages with an ID greater than this cursor"},
+			{"--attach", "", "start: stream the lines to stdout instead of mail while attached (killing it leaves the watch running and mail takes over)"},
+			{"--expires", "DURATION", "start: how long it may run, e.g. 90m, 24h, 7d (default 7d; moves forward while a session of this role is attached)"},
+			{"--batch", "DURATION", "start: batch window, lines within it make one mail (default 30s)"},
+			{"--cwd", "DIR", "start: working directory (default the current one)"},
+			{"--label", "TEXT", "start: label (default the first 60 characters of the command)"},
+			{"--idem", "KEY", "start: retry-safe key; starting again with the same key returns the first watch"},
 			optJSON, optProfile,
 		}},
 	{name: "read", args: "ID", nargs: 1, summary: "Read a message (marks it read)", options: []option{optJSON, optProfile}},
@@ -471,6 +478,9 @@ func dispatch(args []string) (int, error) {
 	case "wait":
 		return cliWait(c, p)
 	case "watch":
+		if len(p.pos) > 0 || len(p.extra) > 0 {
+			return watchStart(c, p)
+		}
 		return cliWatch(c, p)
 	case "events":
 		return cliEvents(c, p)

@@ -77,6 +77,10 @@ type jobSpec struct {
 	// follows the server's (a watch's moves forward while its role is
 	// attached), and keeps the last one it saw when the server is away.
 	Expires time.Time `json:"expires"`
+	// Kind is the job's kind; a watch's output lines are sent in batches
+	// of Batch.
+	Kind  string        `json:"kind,omitempty"`
+	Batch time.Duration `json:"batch,omitempty"`
 }
 
 // jobExit is the runner's local end record (exit.json).
@@ -133,14 +137,24 @@ func getJob(c Config, id int64) (wire.Job, error) {
 }
 
 func jobRun(c Config, p parsedArgs) (int, error) {
-	if len(p.extra) == 0 {
-		return 0, usagef("job run needs a command after --")
+	return startJob(c, p, wire.JobCommand, 0, p.bool("--wait"))
+}
+
+// startJob registers a job of kind (job run, watch start), starts its runner
+// and, with wait, streams its output and exits with its code.
+func startJob(c Config, p parsedArgs, kind string, batch time.Duration, wait bool) (int, error) {
+	name := "job run"
+	if kind == wire.JobWatch {
+		name = "watch start"
 	}
-	expires := wire.DefaultJobExpiry
+	if len(p.extra) == 0 {
+		return 0, usagef("%s needs a command after --", name)
+	}
+	expires := wire.DefaultExpiry(kind)
 	if v := p.values["--expires"]; v != "" {
 		d, err := parseDays(v)
 		if err != nil || d <= 0 {
-			return 0, usagef("job run: --expires takes a duration such as 90m, 24h or 7d")
+			return 0, usagef("%s: --expires takes a duration such as 90m, 24h or 7d", name)
 		}
 		expires = d
 	}
@@ -153,11 +167,11 @@ func jobRun(c Config, p parsedArgs) (int, error) {
 		return 0, err
 	}
 	if st, err := os.Stat(cwd); err != nil || !st.IsDir() {
-		return 0, usagef("job run: --cwd %s is not a directory", cwd)
+		return 0, usagef("%s: --cwd %s is not a directory", name, cwd)
 	}
 	machine, _ := os.Hostname()
 	sweepJobs(jobsRoot(), time.Now())
-	q := wire.JobCreate{Label: p.values["--label"], Command: shellJoin(p.extra), Cwd: cwd, Machine: machine,
+	q := wire.JobCreate{Kind: kind, Label: p.values["--label"], Command: shellJoin(p.extra), Cwd: cwd, Machine: machine,
 		ExpiresIn: int64(expires / time.Second), IdempotencyKey: p.values["--idem"]}
 	b, created, err := createJob(c, q)
 	if err != nil {
@@ -168,14 +182,14 @@ func jobRun(c Config, p parsedArgs) (int, error) {
 		return 0, fmt.Errorf("unexpected response from server: %v", err)
 	}
 	if created {
-		if err = startRunner(j.ID, jobSpec{Argv: p.extra, Cwd: cwd, Expires: j.ExpiresAt}); err != nil {
+		if err = startRunner(j.ID, jobSpec{Argv: p.extra, Cwd: cwd, Expires: j.ExpiresAt, Kind: kind, Batch: batch}); err != nil {
 			// Watched: the caller sees the error here, so no end mail.
 			report := wire.JobReport{State: wire.JobFailed, ExitCode: intPtr(127), Error: "runner did not start: " + err.Error(), Watched: true}
 			_, _ = slotCall(c, "POST", fmt.Sprintf("/api/jobs/%d/report", j.ID), report)
 			return 0, fmt.Errorf("job %d: runner did not start: %v", j.ID, err)
 		}
 	}
-	if p.bool("--wait") {
+	if wait {
 		fmt.Fprintf(os.Stderr, "%s job %d\n", progName(), j.ID)
 		return jobWait(c, j.ID)
 	}
