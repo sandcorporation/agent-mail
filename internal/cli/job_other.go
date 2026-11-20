@@ -1,4 +1,4 @@
-//go:build !unix
+//go:build !unix && !windows
 
 package cli
 
@@ -6,32 +6,26 @@ import (
 	"errors"
 	"os"
 	"os/exec"
-	"syscall"
 )
 
-// The detached runner is Linux and macOS only for now; Windows follows (#290).
-var errNoRunner = errors.New("job run is not supported on this system yet")
+// The detached runner is Linux, macOS and Windows only.
+var errNoRunnerHere = errors.New("job run is not supported on this system")
 
 var (
 	stopSignals    = []os.Signal{os.Interrupt}
 	ignoredSignals []os.Signal
 )
 
-func startDetached(*exec.Cmd) error      { return errNoRunner }
-func childAttr() *syscall.SysProcAttr    { return nil }
-func signalGroup(pid int, _ bool) error  { return killPID(pid) }
-func stopRunner(pid int) error           { return killPID(pid) }
-func exitCodeOf(ps *os.ProcessState) int { return ps.ExitCode() }
+const runnerCopies = false
 
-func killPID(pid int) error {
-	p, err := os.FindProcess(pid)
-	if err != nil {
-		return err
-	}
-	return p.Kill()
-}
+func checkRunner() error                       { return errNoRunnerHere }
+func startDetached(*exec.Cmd) error            { return errNoRunnerHere }
+func startChild(*exec.Cmd) (childGroup, error) { return childGroup{}, errNoRunnerHere }
+func stopRunner(int) error                     { return errNoRunnerHere }
+func pidAlive(int) bool                        { return false }
+func exitCodeOf(ps *os.ProcessState) int       { return ps.ExitCode() }
 
-func pidAlive(pid int) bool {
-	_, err := os.FindProcess(pid)
-	return err == nil
-}
+type childGroup struct{}
+
+func (childGroup) stop(bool) error { return errNoRunnerHere }
+func (childGroup) close()          {}

@@ -667,7 +667,10 @@ func migrateJobs(db *sql.DB) error {
 	if err = migrateJobDuration(db); err != nil {
 		return err
 	}
-	return addNoExtend(db, "jobs")
+	if err = addNoExtend(db, "jobs"); err != nil {
+		return err
+	}
+	return migrateJobSeen(db)
 }
 
 // addNoExtend adds no_extend (#307) to a jobs or schedules table: 1 when the
@@ -691,6 +694,18 @@ func migrateJobDuration(db *sql.DB) error {
 		return err
 	}
 	_, err = db.Exec(`ALTER TABLE jobs ADD COLUMN duration_s INTEGER NOT NULL DEFAULT 0`)
+	return err
+}
+
+// migrateJobSeen adds jobs.seen_at (#290): the runner's last report. A live
+// job whose runner stays silent past wire.JobSilentAfter becomes lost; rows
+// from before count from created_at.
+func migrateJobSeen(db *sql.DB) error {
+	has, err := HasColumn(db, "jobs", "seen_at")
+	if err != nil || has {
+		return err
+	}
+	_, err = db.Exec(`ALTER TABLE jobs ADD COLUMN seen_at TEXT`)
 	return err
 }
 

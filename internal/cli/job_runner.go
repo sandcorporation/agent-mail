@@ -88,7 +88,6 @@ func jobRunner(c Config, arg string) (int, error) {
 	}
 	cmd := exec.Command(spec.Argv[0], spec.Argv[1:]...)
 	cmd.Dir, cmd.Stdout, cmd.Stderr = spec.Cwd, out, out
-	cmd.SysProcAttr = childAttr()
 	var lines *lineBatcher
 	if spec.Kind == wire.JobWatch {
 		// A watch's output also goes through the line batcher; one writer
@@ -99,11 +98,14 @@ func jobRunner(c Config, arg string) (int, error) {
 		// A child left holding the pipe does not keep the end from the runner.
 		cmd.WaitDelay = stopGrace
 	}
-	if err = cmd.Start(); err != nil {
+	group, err := startChild(cmd)
+	if err != nil {
 		fmt.Fprintf(out, "%s: %v\n", progName(), err)
 		finishJob(dir, wire.JobReport{State: wire.JobFailed, ExitCode: intPtr(127), Error: err.Error()}, report)
 		return ExitOK, nil
 	}
+	// Whatever the command left behind ends with it (Windows: its job).
+	defer group.close()
 	report(wire.JobReport{State: wire.JobRunning}, 3)
 	done := make(chan struct{})
 	go func() { _ = cmd.Wait(); close(done) }()
@@ -130,7 +132,7 @@ func jobRunner(c Config, arg string) (int, error) {
 	stop := func(state string) {
 		if endState == "" {
 			endState = state
-			_ = signalGroup(cmd.Process.Pid, false)
+			_ = group.stop(false)
 			kill = time.After(stopGrace)
 		}
 	}
@@ -150,7 +152,7 @@ wait:
 		case <-expiry.C:
 			stop(wire.JobExpired)
 		case <-kill:
-			_ = signalGroup(cmd.Process.Pid, true)
+			_ = group.stop(true)
 		case <-done:
 			break wait
 		}
@@ -168,10 +170,11 @@ wait:
 	return ExitOK, nil
 }
 
-// pollJob sends the server's record of the job to out every jobPoll until
-// done closes. A failed poll is skipped: the runner keeps the last expiry.
-// When the output grew it first reports the tail (the dashboard's last line
-// of a running job).
+// pollJob reports the job running every jobPoll until done closes (the
+// server's sign that the runner is alive; without it the job becomes lost),
+// with the output tail when the output grew (the dashboard's last line), and
+// sends the server's record it gets back to out. A failed poll is skipped:
+// the runner keeps the last expiry.
 func pollJob(c Config, id int64, dir string, done <-chan struct{}, out chan<- wire.Job) {
 	t := time.NewTicker(jobPoll())
 	defer t.Stop()
@@ -182,15 +185,21 @@ func pollJob(c Config, id int64, dir string, done <-chan struct{}, out chan<- wi
 			return
 		case <-t.C:
 		}
+		q, grown := wire.JobReport{State: wire.JobRunning}, int64(-1)
 		if st, err := os.Stat(filepath.Join(dir, "output")); err == nil && st.Size() != size {
-			if tail := readTail(filepath.Join(dir, "output")); tail != "" {
-				if _, err = slotCall(c, "POST", fmt.Sprintf("/api/jobs/%d/report", id), wire.JobReport{State: wire.JobRunning, Tail: tail}); err == nil {
-					size = st.Size()
-				}
+			if q.Tail = readTail(filepath.Join(dir, "output")); q.Tail != "" {
+				grown = st.Size()
 			}
 		}
-		j, err := getJob(c, id)
+		b, err := slotCall(c, "POST", fmt.Sprintf("/api/jobs/%d/report", id), q)
 		if err != nil {
+			continue
+		}
+		if grown >= 0 {
+			size = grown
+		}
+		var j wire.Job
+		if json.Unmarshal(b, &j) != nil {
 			continue
 		}
 		select {

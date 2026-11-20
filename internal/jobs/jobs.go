@@ -52,6 +52,7 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 //	POST "ID/report" the runner's state (owner only)
 //	POST "ID/stop"   ask the runner to stop (owner only)
 //	POST "ID/lines"  a watch's batch of output lines (owner only)
+//	POST "machine"   a machine's live jobs; the role's others there become lost
 func (s *Service) API(w http.ResponseWriter, r *http.Request, p identity.Principal, rest string) {
 	if rest == "" {
 		switch r.Method {
@@ -62,6 +63,14 @@ func (s *Service) API(w http.ResponseWriter, r *http.Request, p identity.Princip
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
+		return
+	}
+	if rest == "machine" {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		s.machine(w, r, p)
 		return
 	}
 	idPart, action, _ := strings.Cut(rest, "/")
@@ -267,15 +276,19 @@ func (s *Service) report(w http.ResponseWriter, r *http.Request, j wire.Job) {
 	var mailed string
 	err := store.InTx(r.Context(), s.db, func(tx *sql.Tx) error {
 		mailed = ""
+		// Every report is a sign of life (seen_at). A runner reporting on a
+		// job marked lost (the server or its network was away longer than
+		// the silence limit) takes it back.
 		if q.State == wire.JobRunning {
 			// The first moves a handed job; later ones carry the output tail
 			// (the dashboard's last line) while it runs.
-			_, err := tx.Exec(`UPDATE jobs SET state=?, started_at=COALESCE(started_at, ?), tail=CASE WHEN ?='' THEN tail ELSE ? END WHERE id=? AND state IN (?,?)`,
-				wire.JobRunning, stamp(now), q.Tail, q.Tail, j.ID, wire.JobHanded, wire.JobRunning)
+			_, err := tx.Exec(`UPDATE jobs SET state=?, started_at=COALESCE(started_at, ?), tail=CASE WHEN ?='' THEN tail ELSE ? END, seen_at=?,
+				ended_at=CASE WHEN state=? THEN NULL ELSE ended_at END, error=CASE WHEN state=? THEN '' ELSE error END WHERE id=? AND state IN (?,?,?)`,
+				wire.JobRunning, stamp(now), q.Tail, q.Tail, stamp(now), wire.JobLost, wire.JobLost, j.ID, wire.JobHanded, wire.JobRunning, wire.JobLost)
 			return err
 		}
-		res, err := tx.Exec(`UPDATE jobs SET state=?, exit_code=?, error=?, tail=?, ended_at=?, started_at=COALESCE(started_at, ?) WHERE id=? AND state IN (?,?)`,
-			q.State, q.ExitCode, q.Error, q.Tail, stamp(now), stamp(now), j.ID, wire.JobHanded, wire.JobRunning)
+		res, err := tx.Exec(`UPDATE jobs SET state=?, exit_code=?, error=?, tail=?, ended_at=?, started_at=COALESCE(started_at, ?), seen_at=? WHERE id=? AND state IN (?,?,?)`,
+			q.State, q.ExitCode, q.Error, q.Tail, stamp(now), stamp(now), stamp(now), j.ID, wire.JobHanded, wire.JobRunning, wire.JobLost)
 		if err != nil {
 			return err
 		}
@@ -321,6 +334,8 @@ func endMail(j wire.Job, q wire.JobReport) (subject, body, priority string) {
 		what, priority = "중지됨", "normal"
 	case wire.JobExpired:
 		what = "만료"
+	case wire.JobLost:
+		what = "잃음"
 	}
 	subject = fmt.Sprintf("[작업 끝남] %s %s", j.Label, what)
 	body = fmt.Sprintf("작업 %d · %s · %s\n%s", j.ID, j.Machine, j.Cwd, what)
@@ -359,7 +374,7 @@ func (s *Service) lines(w http.ResponseWriter, r *http.Request, j wire.Job) {
 	var mailed string
 	err := store.InTx(r.Context(), s.db, func(tx *sql.Tx) error {
 		mailed = ""
-		if _, err := tx.Exec(`UPDATE jobs SET tail=? WHERE id=? AND state=?`, wire.JobTail(q.Lines), j.ID, wire.JobRunning); err != nil {
+		if _, err := tx.Exec(`UPDATE jobs SET tail=?, seen_at=? WHERE id=? AND state=?`, wire.JobTail(q.Lines), stamp(now), j.ID, wire.JobRunning); err != nil {
 			return err
 		}
 		box, ok := identity.Mailbox(tx, j.Role)
