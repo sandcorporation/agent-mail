@@ -204,6 +204,16 @@ func TestLaunchListExitForget(t *testing.T) {
 	}
 }
 
+// Forgetting the last session makes the tmux server exit; a client that
+// connects while it is going down gets "server exited unexpectedly"
+// instead of "no server running" (#314). Both mean no session.
+func TestClassifyServerGoingDown(t *testing.T) {
+	err := classify("sb-1", "list-panes", "server exited unexpectedly", errors.New("exit status 1"))
+	if !errors.Is(err, term.ErrNoSession) {
+		t.Errorf("classify = %v, want ErrNoSession", err)
+	}
+}
+
 func TestNamesMatchExactly(t *testing.T) {
 	b := newBackend(t, 0)
 	launch(t, b, term.Spec{Name: "sb-12", Argv: []string{"sleep", "30"}, Cols: 10, Rows: 2})

@@ -161,12 +161,17 @@ func (b *Backend) run(ctx context.Context, name string, args ...string) (string,
 	return out.String(), nil
 }
 
+// classify maps tmux's stderr to term errors. The server exits once its
+// last session is killed; a client that connects while it is going down
+// gets "server exited unexpectedly" rather than "no server running", and
+// both mean the session is gone.
 func classify(name, verb, stderr string, err error) error {
 	switch {
 	case strings.Contains(stderr, "duplicate session"):
 		return fmt.Errorf("%s: %w", name, term.ErrSessionExists)
 	case strings.Contains(stderr, "can't find"),
 		strings.Contains(stderr, "no server running"),
+		strings.Contains(stderr, "server exited unexpectedly"),
 		strings.Contains(stderr, "error connecting to"),
 		strings.Contains(stderr, "no current"):
 		return fmt.Errorf("%s: %w", name, term.ErrNoSession)
