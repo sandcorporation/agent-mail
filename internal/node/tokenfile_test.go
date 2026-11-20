@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sandcorporation/switchboard/internal/ownerfile"
 	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
@@ -28,6 +29,9 @@ func TestWriteTokenFileIsUserOnlyAndNeverOverwrites(t *testing.T) {
 		if err != nil || di.Mode().Perm() != 0o700 {
 			t.Fatalf("directory mode %v %v", di.Mode(), err)
 		}
+	}
+	if ok, err := ownerfile.OnlyUser(path); err != nil || !ok {
+		t.Fatalf("token file is not owner-only: %v %v", ok, err)
 	}
 	if err := WriteTokenFile(path, "sbn_two"); err == nil {
 		t.Fatal("an existing token file was replaced")

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/sandcorporation/switchboard/internal/config"
+	"github.com/sandcorporation/switchboard/internal/ownerfile"
 )
 
 func TestHelpDoesNotReadConfigOrConnect(t *testing.T) {
@@ -83,6 +84,10 @@ func TestProfileDirCopiesOldProfileOnce(t *testing.T) {
 				t.Fatalf("%s mode %v, want %v (%v)", path, fi.Mode().Perm(), want, err)
 			}
 		}
+	}
+
+	if ok, err := ownerfile.OnlyUser(filepath.Join(newDir, "w.json")); err != nil || !ok {
+		t.Fatalf("the copy is not owner-only: %v %v", ok, err)
 	}
 
 	// Second run: the new file wins, the old one is not copied again.

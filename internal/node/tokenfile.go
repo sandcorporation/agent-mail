@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sandcorporation/switchboard/internal/ownerfile"
 	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
@@ -67,7 +68,7 @@ func WriteTokenFile(path, token string) error {
 	if err != nil {
 		return err
 	}
-	if err = restrictToUser(path); err != nil {
+	if err = ownerfile.RestrictToUser(path); err != nil {
 		f.Close()
 		os.Remove(path)
 		return fmt.Errorf("node token file %s: %w", path, err)
