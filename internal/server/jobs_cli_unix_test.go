@@ -180,3 +180,89 @@ func TestJobStop(t *testing.T) {
 		t.Fatalf("stop again: %q", got)
 	}
 }
+
+// fastPoll makes the runner ask the server every 100 ms.
+var fastPoll = []string{"SWITCHBOARD_JOB_POLL=100ms"}
+
+func (h *cliHarness) running(id int64) {
+	h.t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if j, _ := h.s.jobs().Get(id); j.State == wire.JobRunning {
+			return
+		}
+		if time.Now().After(deadline) {
+			h.t.Fatal("job never ran")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func (h *cliHarness) runnerGone(id int64) {
+	h.t.Helper()
+	b, _ := os.ReadFile(filepath.Join(h.jobDir(id), "pid"))
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	deadline := time.Now().Add(10 * time.Second)
+	for pid > 0 && syscall.Kill(pid, 0) == nil {
+		if time.Now().After(deadline) {
+			h.t.Fatalf("runner %d still alive", pid)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// A stop from the dashboard reaches the runner through the server record
+// alone: nothing on this machine signals it.
+func TestJobStopFromTheDashboardReachesTheRunner(t *testing.T) {
+	h := jobHarness(t)
+	h.s.admin.ProxyToken = "proxy-secret"
+	out := h.mustRun(fastPoll, "job", "run", "--", "sh", "-c", "echo up; sleep 30")
+	id, _ := strconv.ParseInt(out, 10, 64)
+	h.running(id)
+	if w := adminWrite(h.s, "POST", "/api/admin/jobs/"+out+"/stop", ""); w.Code != 200 {
+		t.Fatalf("dashboard stop: %d %s", w.Code, w.Body)
+	}
+	j := h.ended(id)
+	if j.State != wire.JobStopped || *j.ExitCode != 128+int(syscall.SIGTERM) || j.Tail != "up" {
+		t.Fatalf("stopped job: %+v", j)
+	}
+	h.runnerGone(id)
+	if m := jobMail(t, h.s, "a"); len(m) != 1 || !strings.HasSuffix(m[0].Subject, "중지됨") {
+		t.Fatalf("stop mail: %+v", m)
+	}
+}
+
+// At its expiry the runner terminates the command: state expired, one mail.
+func TestJobExpiresAtItsDeadline(t *testing.T) {
+	h := jobHarness(t)
+	out := h.mustRun(fastPoll, "job", "run", "--expires", "1s", "--label", "slow", "--", "sh", "-c", "echo up; sleep 30")
+	id, _ := strconv.ParseInt(out, 10, 64)
+	j := h.ended(id)
+	if j.State != wire.JobExpired || *j.ExitCode != 128+int(syscall.SIGTERM) {
+		t.Fatalf("expired job: %+v", j)
+	}
+	h.runnerGone(id)
+	if m := jobMail(t, h.s, "a"); len(m) != 1 || m[0].Subject != "[작업 끝남] slow 만료" || m[0].Priority != "urgent" {
+		t.Fatalf("expiry mail: %+v", m)
+	}
+}
+
+// The runner follows an expiry the server moved forward (auto-extension).
+func TestJobRunnerFollowsAMovedExpiry(t *testing.T) {
+	h := jobHarness(t)
+	h.s.admin.ProxyToken = "proxy-secret"
+	out := h.mustRun(fastPoll, "job", "run", "--expires", "2s", "--", "sh", "-c", "sleep 30")
+	id, _ := strconv.ParseInt(out, 10, 64)
+	h.running(id)
+	if _, err := h.s.db.Exec(`UPDATE jobs SET expires_at=? WHERE id=?`, time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), id); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2500 * time.Millisecond)
+	if j, _ := h.s.jobs().Get(id); j.State != wire.JobRunning {
+		t.Fatalf("job ended at its first expiry: %+v", j)
+	}
+	adminWrite(h.s, "POST", "/api/admin/jobs/"+out+"/stop", "")
+	if j := h.ended(id); j.State != wire.JobStopped {
+		t.Fatalf("job: %+v", j)
+	}
+}

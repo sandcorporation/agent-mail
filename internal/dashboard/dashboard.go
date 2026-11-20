@@ -322,6 +322,7 @@ table.cards td.cardhide{display:none}
 <button type="button" class="sc-sidenav-item" title="세션" role="tab" id="tab-sessions" data-tab="sessions" aria-controls="panel-sessions" aria-selected="false" tabindex="-1"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11v7h-11zM6 13.5h4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="tab-name sc-sidenav-label">세션</span><span class="tab-count sc-sidenav-count"></span></button>
 <button type="button" class="sc-sidenav-item" title="메일" role="tab" id="tab-mail" data-tab="mail" aria-controls="panel-mail" aria-selected="false" tabindex="-1"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3.5h12v9H2zM2 4l6 5 6-5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="tab-name sc-sidenav-label">메일</span><span class="tab-count sc-sidenav-count"></span></button>
 <button type="button" class="sc-sidenav-item" title="보고" role="tab" id="tab-reports" data-tab="reports" aria-controls="panel-reports" aria-selected="false" tabindex="-1"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 1.5h6l3 3v10h-9zM9.5 1.5v3h3M5.5 8h5M5.5 10.5h5M5.5 13h3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="tab-name sc-sidenav-label">보고</span><span class="tab-count sc-sidenav-count"></span></button>
+<button type="button" class="sc-sidenav-item" title="작업" role="tab" id="tab-jobs" data-tab="jobs" aria-controls="panel-jobs" aria-selected="false" tabindex="-1"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 14.5a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13zM8 4.5V8l2.5 1.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="tab-name sc-sidenav-label">작업</span><span class="tab-count sc-sidenav-count"></span></button>
 <div class="sc-sidenav-heading" aria-hidden="true">응답</div>
 <button type="button" class="sc-sidenav-item" title="질문" data-wait role="tab" id="tab-questions" data-tab="questions" aria-controls="panel-questions" aria-selected="false" tabindex="-1"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 14.5a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13zM6.3 6a1.8 1.8 0 1 1 2.4 1.7c-.5.2-.7.6-.7 1.1v.5M8 11.2v.1" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="tab-name sc-sidenav-label">질문</span><span class="tab-count sc-sidenav-count"></span></button>
 <button type="button" class="sc-sidenav-item" title="권한 요청" data-wait role="tab" id="tab-permissions" data-tab="permissions" aria-controls="panel-permissions" aria-selected="false" tabindex="-1"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5l5.5 2v4c0 3.5-2.5 6-5.5 7-3-1-5.5-3.5-5.5-7v-4z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="tab-name sc-sidenav-label">권한 요청</span><span class="tab-count sc-sidenav-count"></span></button>
@@ -397,6 +398,14 @@ table.cards td.cardhide{display:none}
 <div class="toolbar"><h2>보고</h2><button id="reloadReports">새로 고침</button><span id="reportsNote" class="muted" role="status" aria-live="polite"></span></div>
 <div class="listbar"><div class="chips" id="reportChips" role="group" aria-label="상태 고르기"></div></div>
 <table id="reportsTbl" class="stack list"><thead><tr><th>상태</th><th>제목</th><th>보낸 쪽</th><th>시각</th></tr></thead><tbody id="reports"></tbody></table>
+</section>
+<section id="panel-jobs" role="tabpanel" aria-labelledby="tab-jobs" tabindex="0" class="card" hidden>
+<div class="toolbar"><h2>작업</h2><button id="reloadJobs">새로 고침</button><span id="jobsNote" class="muted" role="status" aria-live="polite"></span></div>
+<div class="filters">
+<select id="jobRole" aria-label="역할"><option value="">모든 역할</option></select>
+<select id="jobState" aria-label="상태"><option value="live">진행 중</option><option value="">모든 상태</option><option value="exited">끝남</option><option value="failed">시작 실패</option><option value="stopped">중지됨</option><option value="expired">만료</option><option value="lost">잃음</option></select>
+</div>
+<table id="jobsTbl" class="stack list cards"><thead><tr><th>종류</th><th>이름</th><th>역할</th><th>기계</th><th>상태</th><th>시작</th><th>만료</th><th>마지막 줄</th><th></th></tr></thead><tbody id="jobs"></tbody></table>
 </section>
 <section id="panel-permissions" role="tabpanel" aria-labelledby="tab-permissions" tabindex="0" class="card" hidden>
 <div class="toolbar"><h2>권한 요청</h2><button id="reloadPerms">새로 고침</button><span id="permsNote" class="muted" role="status" aria-live="polite"></span></div>
@@ -844,8 +853,8 @@ registerDetail('mail',{
 // Each tab's loader runs once, the first time the tab is shown; after that the
 // tab's own 「새로 고침」 button reloads it. #33 sets tabLoaders.permissions and
 // #42 sets tabLoaders.questions / tabLoaders.settings (null = nothing to load).
-const tabNames=['progress','sessions','mail','reports','questions','permissions','metrics','terminals','settings'];
-const tabLoaders={progress:null,sessions:loadSessions,reports:loadReports,metrics:null,mail:initMail,permissions:null,questions:null,settings:null};
+const tabNames=['progress','sessions','mail','reports','jobs','questions','permissions','metrics','terminals','settings'];
+const tabLoaders={progress:null,sessions:loadSessions,reports:loadReports,jobs:loadJobs,metrics:null,mail:initMail,permissions:null,questions:null,settings:null};
 const tabLoaded=new Set();
 // setTabCount(name,n) shows n as a small count next to the tab name; n
 // null/undefined hides it.
@@ -1386,6 +1395,70 @@ function reportRow(r){
   const at=cell(shortWhen(r.created_at),reportCols[3],'nowrap');at.title=when(r.created_at);
   tr.append(st,t,cell(r.author,reportCols[2]),at);
   detailRow(tr,'reports',r.id);
+  return tr;
+}
+// ---- 작업 (#291) ----
+// Jobs, watches (and schedules, #293) of every role: a live one has 중지, an
+// ended one 지우기, each behind a confirm. The command text is never shown.
+const jobCols=['종류','이름','역할','기계','상태','시작','만료','마지막 줄',''];
+const jobKinds={command:'명령',watch:'감시',cron:'예약',once:'예약 1회'};
+const jobStates={handed:['넘겨짐','neutral'],running:['실행 중','info'],exited:['끝남','success'],failed:['시작 실패','danger'],stopped:['중지됨','neutral'],expired:['만료','warning'],lost:['잃음','danger']};
+const jobLive=s=>s==='handed'||s==='running';
+let jobsSeq=0,jobRolesFilled=false;
+async function loadJobs(){
+  const seq=++jobsSeq;
+  $('jobsNote').textContent='불러오는 중…';
+  try{
+    if(!jobRolesFilled){for(const v of await api('roles'))$('jobRole').append(new Option(v.role,v.role));jobRolesFilled=true}
+    const q=new URLSearchParams();
+    if($('jobRole').value)q.set('role',$('jobRole').value);
+    if($('jobState').value)q.set('state',$('jobState').value);
+    const list=await api('jobs'+(q.toString()?'?'+q:''));
+    if(seq!==jobsSeq)return;
+    drawJobs(list);
+  }catch(e){if(seq===jobsSeq)$('jobsNote').textContent=e.message}
+}
+function drawJobs(list){
+  const body=$('jobs');
+  keepRowFocus(body,()=>{
+    body.replaceChildren();
+    for(const j of list)body.append(jobRow(j));
+    if(!list.length)emptyRow(body,jobCols.length,'작업 없음');
+  });
+  if(['live',''].includes($('jobState').value))setTabCount('jobs',list.filter(j=>jobLive(j.state)).length||null);
+  $('jobsNote').textContent=list.length+'개';
+}
+function jobRow(j){
+  const tr=node('tr','',jobLive(j.state)?'':'done');
+  let [label,tone]=jobStates[j.state]||[j.state,'neutral'];
+  if(j.state==='exited'&&j.exit_code!==undefined){label+=' · exit '+j.exit_code;if(j.exit_code)tone='danger'}
+  if(j.stop_requested&&jobLive(j.state))label+=' · 중지 요청';
+  const st=cell('',jobCols[4]);st.append(badge(label,tone));
+  const name=cell('',jobCols[1],'wrap');name.append(node('strong',j.label));
+  const started=cell(shortWhen(j.started_at||j.created_at),jobCols[5],'nowrap');started.title=when(j.started_at||j.created_at);
+  const expires=cell(jobLive(j.state)?shortWhen(j.expires_at):'-',jobCols[6],'nowrap');expires.title=when(j.expires_at);
+  const lines=(j.tail||'').split('\n'),last=lines[lines.length-1]||'-';
+  const tail=cell(last,jobCols[7],'wrap mono');
+  const act=cell('','','nowrap'),msg=node('span','','msg');msg.setAttribute('role','status');
+  if(jobLive(j.state)){
+    const b=setButton('중지','',async()=>{
+      if(!confirm('#'+j.id+' '+j.label+' 작업을 멈출까요?'))return;
+      b.disabled=true;setMsg(msg,'멈추는 중…');
+      try{await apiSend('POST','jobs/'+encodeURIComponent(j.id)+'/stop');loadJobs()}
+      catch(e){b.disabled=false;setMsg(msg,e.message,'err')}
+    });
+    b.disabled=!!j.stop_requested;act.append(b);
+  }else{
+    const b=setButton('지우기','',async()=>{
+      if(!confirm('#'+j.id+' '+j.label+' 기록을 지울까요? 되돌릴 수 없습니다.'))return;
+      b.disabled=true;setMsg(msg,'지우는 중…');
+      try{await apiSend('DELETE','jobs/'+encodeURIComponent(j.id));loadJobs()}
+      catch(e){b.disabled=false;setMsg(msg,e.message,'err')}
+    });
+    act.append(b);
+  }
+  act.append(msg);
+  tr.append(cell(jobKinds[j.kind]||j.kind,jobCols[0],'nowrap'),name,cell(j.role,jobCols[2],'nowrap'),cell(j.machine,jobCols[3],'nowrap'),st,started,expires,tail,act);
   return tr;
 }
 // A linked thread: the directive with its state (열림 / 끝남, the answered
@@ -2194,7 +2267,7 @@ tabLoaders.permissions=loadPermissions;
 // and {type:'change',seq,kinds}; kinds are tab names. The shown tab reloads
 // (not while a field in it has focus), the others reload when next shown.
 // Reconnects back off exponentially (1s to 30s) and resume with boot+after.
-const liveReload={progress:loadProgress,sessions:loadSessions,reports:loadReports,metrics:loadMetrics,mail:load,permissions:loadPermissions,questions:loadQuestions,settings:loadSettingsView,terminals:loadTerminals};
+const liveReload={progress:loadProgress,sessions:loadSessions,reports:loadReports,jobs:loadJobs,metrics:loadMetrics,mail:load,permissions:loadPermissions,questions:loadQuestions,settings:loadSettingsView,terminals:loadTerminals};
 const liveCounts={reports:refreshReportCount,questions:refreshQuestionCount,permissions:refreshPermissionCount,metrics:refreshMetricsCount};
 let liveBoot='',liveSeq=0,liveDelay=1000,liveDirty=new Set(),liveStale=new Set(),liveTimer=0,liveDetail=false;
 function liveMark(kinds){
@@ -2315,6 +2388,8 @@ $('reloadMetrics').onclick=loadMetrics;
 $('metDays7').onclick=()=>setMetricsDays(7);
 $('metDays30').onclick=()=>setMetricsDays(30);
 $('reloadReports').onclick=()=>loadReports();
+$('reloadJobs').onclick=()=>loadJobs();
+$('jobRole').onchange=$('jobState').onchange=()=>loadJobs();
 $('reloadQuestions').onclick=()=>{setMsg($('questionsMsg'),'');loadQuestions()};
 $('reloadSettings').onclick=()=>{setMsg($('settingsMsg'),'');loadSettingsView()};
 $('reset').onclick=()=>{$('thread').value='';$('task').value='';mailID='';$('search').value='';$('status').value='';$('role').value='';$('box').value='all';load()};

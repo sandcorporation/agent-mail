@@ -41,9 +41,22 @@ const (
 	MaxJobTailBytes = 8 << 10 // the server keeps at most this much tail
 	MaxJobTailLines = 50
 	// DefaultJobExpiry is how long a command job may run unless --expires
-	// says otherwise.
-	DefaultJobExpiry = 24 * time.Hour
+	// says otherwise; DefaultWatchExpiry a watch (and a schedule).
+	DefaultJobExpiry   = 24 * time.Hour
+	DefaultWatchExpiry = 7 * 24 * time.Hour
 )
+
+// DefaultExpiry is a kind's expiry when the creator gave none.
+func DefaultExpiry(kind string) time.Duration {
+	if kind == JobCommand {
+		return DefaultJobExpiry
+	}
+	return DefaultWatchExpiry
+}
+
+// AutoExtends reports whether a kind's expiry moves forward while a session
+// of its owner role is attached: watches and schedules do, commands do not.
+func AutoExtends(kind string) bool { return kind != JobCommand }
 
 // Job is one command handed over to a runner (GET /api/jobs/ID).
 type Job struct {
@@ -72,7 +85,7 @@ type JobCreate struct {
 	Command        string `json:"command"`
 	Cwd            string `json:"cwd"`
 	Machine        string `json:"machine"`
-	ExpiresIn      int64  `json:"expires_in,omitempty"` // seconds; 0 is DefaultJobExpiry
+	ExpiresIn      int64  `json:"expires_in,omitempty"` // seconds; 0 is DefaultExpiry(kind)
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
 

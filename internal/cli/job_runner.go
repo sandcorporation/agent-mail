@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sandcorporation/switchboard/internal/config"
 	"github.com/sandcorporation/switchboard/internal/ownerfile"
 	"github.com/sandcorporation/switchboard/internal/wire"
 )
@@ -23,12 +24,28 @@ const (
 	reportTries = 12               // end report retries (backoff 0.5 s doubling, capped)
 	reportCap   = 30 * time.Second // longest pause between end report retries
 	tailRead    = int64(wire.MaxJobTailBytes) * 2
+	// defaultJobPoll is how often the runner asks the server whether the job
+	// was stopped (dashboard, another machine) and when it expires.
+	defaultJobPoll = 5 * time.Second
 )
+
+// jobPoll is the poll interval, SWITCHBOARD_JOB_POLL when set (tests).
+func jobPoll() time.Duration {
+	if v, _ := config.EnvFrom(os.Getenv, "JOB_POLL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return defaultJobPoll
+}
 
 // jobRunner is the hidden `__job-runner ID`: it runs the job's command as its
 // child (in a process group of its own), writes the output to the job
 // directory, reports running and the end to the server, and stops the
-// command on SIGTERM or SIGINT (`job stop`). It never logs the command.
+// command on SIGTERM or SIGINT (`job stop` on this machine), on a stop the
+// server recorded (the dashboard, `job stop` elsewhere) and at its expiry.
+// The stop request and the expiry are all it reads from the server: the
+// command comes from the local spec only. It never logs the command.
 func jobRunner(c Config, arg string) (int, error) {
 	id, err := strconv.ParseInt(arg, 10, 64)
 	if err != nil || id <= 0 {
@@ -79,17 +96,38 @@ func jobRunner(c Config, arg string) (int, error) {
 	report(wire.JobReport{State: wire.JobRunning}, 3)
 	done := make(chan struct{})
 	go func() { _ = cmd.Wait(); close(done) }()
-	stopping := false
+	polled := make(chan wire.Job)
+	go pollJob(c, id, done, polled)
+	expiry := time.NewTimer(time.Until(spec.Expires))
+	defer expiry.Stop()
+	if spec.Expires.IsZero() {
+		expiry.Stop()
+	}
+	expires := spec.Expires
+	endState := "" // stopped or expired once the runner began stopping
 	var kill <-chan time.Time
+	stop := func(state string) {
+		if endState == "" {
+			endState = state
+			_ = signalGroup(cmd.Process.Pid, false)
+			kill = time.After(stopGrace)
+		}
+	}
 wait:
 	for {
 		select {
 		case <-sigs:
-			if !stopping {
-				stopping = true
-				_ = signalGroup(cmd.Process.Pid, false)
-				kill = time.After(stopGrace)
+			stop(wire.JobStopped)
+		case j := <-polled:
+			if j.StopRequested {
+				stop(wire.JobStopped)
+			} else if !j.ExpiresAt.IsZero() && !j.ExpiresAt.Equal(expires) {
+				expires = j.ExpiresAt
+				expiry.Stop()
+				expiry.Reset(time.Until(expires))
 			}
+		case <-expiry.C:
+			stop(wire.JobExpired)
 		case <-kill:
 			_ = signalGroup(cmd.Process.Pid, true)
 		case <-done:
@@ -97,11 +135,34 @@ wait:
 		}
 	}
 	q := wire.JobReport{State: wire.JobExited, ExitCode: intPtr(exitCodeOf(cmd.ProcessState))}
-	if stopping {
-		q.State = wire.JobStopped
+	if endState != "" {
+		q.State = endState
 	}
 	finishJob(dir, q, report)
 	return ExitOK, nil
+}
+
+// pollJob sends the server's record of the job to out every jobPoll until
+// done closes. A failed poll is skipped: the runner keeps the last expiry.
+func pollJob(c Config, id int64, done <-chan struct{}, out chan<- wire.Job) {
+	t := time.NewTicker(jobPoll())
+	defer t.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-t.C:
+		}
+		j, err := getJob(c, id)
+		if err != nil {
+			continue
+		}
+		select {
+		case out <- j:
+		case <-done:
+			return
+		}
+	}
 }
 
 // finishJob writes exit.json (what local waiters wait for), gives a live

@@ -111,13 +111,13 @@ func (s *Service) create(w http.ResponseWriter, r *http.Request, p identity.Prin
 			return
 		}
 	}
-	expires := wire.DefaultJobExpiry
+	expires := wire.DefaultExpiry(q.Kind)
 	if q.ExpiresIn > 0 {
 		expires = time.Duration(q.ExpiresIn) * time.Second
 	}
 	now := s.now().UTC()
-	res, err := s.db.Exec(`INSERT INTO jobs(role,machine,kind,label,command,cwd,state,created_at,expires_at,idem) VALUES(?,?,?,?,?,?,?,?,?,?)`,
-		p.Role, q.Machine, q.Kind, q.Label, q.Command, q.Cwd, wire.JobHanded, stamp(now), stamp(now.Add(expires)), nullable(key))
+	res, err := s.db.Exec(`INSERT INTO jobs(role,machine,kind,label,command,cwd,state,created_at,expires_at,duration_s,idem) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		p.Role, q.Machine, q.Kind, q.Label, q.Command, q.Cwd, wire.JobHanded, stamp(now), stamp(now.Add(expires)), int64(expires/time.Second), nullable(key))
 	if err != nil {
 		// A concurrent retry with the same key won the insert.
 		if j, ok := s.byIdem(p.Role, key); key != "" && ok {
@@ -137,7 +137,6 @@ func (s *Service) create(w http.ResponseWriter, r *http.Request, p identity.Prin
 }
 
 func (s *Service) list(w http.ResponseWriter, r *http.Request, p identity.Principal) {
-	where, args := []string{}, []any{}
 	role := r.URL.Query().Get("role")
 	if !s.ids.IsBoss(p) {
 		if role != "" && role != p.Role {
@@ -146,11 +145,30 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request, p identity.Princi
 		}
 		role = p.Role
 	}
+	out, err := s.query(role, r.URL.Query().Get("state"))
+	if err != nil {
+		http.Error(w, "query failed", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// StateLive is the list filter for every job not yet ended.
+const StateLive = "live"
+
+// query lists jobs newest first, of role and in state when given (StateLive:
+// handed or running).
+func (s *Service) query(role, state string) ([]wire.Job, error) {
+	where, args := []string{}, []any{}
 	if role != "" {
 		where, args = append(where, "role=?"), append(args, role)
 	}
-	if st := r.URL.Query().Get("state"); st != "" {
-		where, args = append(where, "state=?"), append(args, st)
+	switch state {
+	case "":
+	case StateLive:
+		where, args = append(where, "state IN (?,?)"), append(args, wire.JobHanded, wire.JobRunning)
+	default:
+		where, args = append(where, "state=?"), append(args, state)
 	}
 	q := `SELECT ` + columns + ` FROM jobs`
 	if len(where) > 0 {
@@ -158,20 +176,75 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request, p identity.Princi
 	}
 	rows, err := s.db.Query(q+` ORDER BY id DESC LIMIT 500`, args...)
 	if err != nil {
-		http.Error(w, "query failed", http.StatusInternalServerError)
-		return
+		return nil, err
 	}
 	defer rows.Close()
 	out := []wire.Job{}
 	for rows.Next() {
 		j, err := scan(rows)
 		if err != nil {
-			http.Error(w, "query failed", http.StatusInternalServerError)
-			return
+			return nil, err
 		}
 		out = append(out, j)
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out, rows.Err()
+}
+
+// AdminAPI serves the dashboard's /api/admin/jobs (rest is the path after
+// it, without the slash). The admin guard and the write guard ran already.
+//
+//	GET    ""        every role's jobs, ?role= and ?state= (live: not ended);
+//	                 the command text is left out
+//	POST   "ID/stop" ask the runner to stop
+//	DELETE "ID"      remove an ended job's record
+func (s *Service) AdminAPI(w http.ResponseWriter, r *http.Request, rest string) {
+	if rest == "" {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		out, err := s.query(r.URL.Query().Get("role"), r.URL.Query().Get("state"))
+		if err != nil {
+			http.Error(w, "query failed", http.StatusInternalServerError)
+			return
+		}
+		for i := range out {
+			out[i].Command = ""
+		}
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	idPart, action, _ := strings.Cut(rest, "/")
+	id, err := strconv.ParseInt(idPart, 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "invalid job ID", http.StatusBadRequest)
+		return
+	}
+	j, err := s.Get(id)
+	if err != nil {
+		if errors.Is(err, errNotFound) {
+			http.Error(w, "unknown job", http.StatusNotFound)
+		} else {
+			http.Error(w, "query failed", http.StatusInternalServerError)
+		}
+		return
+	}
+	switch {
+	case action == "stop" && r.Method == http.MethodPost:
+		s.stop(w, j)
+	case action == "" && r.Method == http.MethodDelete:
+		if !wire.JobEnded(j.State) {
+			http.Error(w, "stop the job first", http.StatusConflict)
+			return
+		}
+		if _, err := s.db.Exec(`DELETE FROM jobs WHERE id=?`, id); err != nil {
+			http.Error(w, "could not remove job", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"id": id, "removed": true})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 // report records the runner's state. running only moves a handed job; an end
@@ -200,7 +273,8 @@ func (s *Service) report(w http.ResponseWriter, r *http.Request, j wire.Job) {
 		if err != nil {
 			return err
 		}
-		if n, _ := res.RowsAffected(); n == 0 || q.Watched {
+		// An expiry is always told: the waiter saw only a killed command.
+		if n, _ := res.RowsAffected(); n == 0 || (q.Watched && q.State != wire.JobExpired) {
 			return nil
 		}
 		box, ok := identity.Mailbox(tx, j.Role)
@@ -327,4 +401,62 @@ func nullable(v string) any {
 		return nil
 	}
 	return v
+}
+
+// ExtendAttached moves the expiry of every live job whose kind auto-extends
+// (wire.AutoExtends) to now plus the duration it was created with, when a
+// session of its owner role is attached. base maps a role to its base role;
+// attached reports a live session of a base. It returns how many moved.
+func (s *Service) ExtendAttached(ctx context.Context, base func(string) string, attached func(context.Context, string) (bool, error)) (int, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,role,kind,duration_s FROM jobs WHERE state IN (?,?) AND duration_s>0`, wire.JobHanded, wire.JobRunning)
+	if err != nil {
+		return 0, err
+	}
+	type live struct {
+		id       int64
+		role     string
+		duration int64
+	}
+	var due []live
+	for rows.Next() {
+		var x live
+		var kind string
+		if err = rows.Scan(&x.id, &x.role, &kind, &x.duration); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		if wire.AutoExtends(kind) {
+			due = append(due, x)
+		}
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+	now := s.now().UTC()
+	seen := map[string]bool{}
+	moved := 0
+	for _, x := range due {
+		b := base(x.role)
+		on, ok := seen[b]
+		if !ok {
+			if on, err = attached(ctx, b); err != nil {
+				return moved, err
+			}
+			seen[b] = on
+		}
+		if !on {
+			continue
+		}
+		res, err := s.db.ExecContext(ctx, `UPDATE jobs SET expires_at=? WHERE id=? AND state IN (?,?)`,
+			stamp(now.Add(time.Duration(x.duration)*time.Second)), x.id, wire.JobHanded, wire.JobRunning)
+		if err != nil {
+			return moved, err
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			moved++
+		}
+	}
+	return moved, nil
 }
