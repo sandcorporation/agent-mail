@@ -121,6 +121,9 @@ type sweepResult struct {
 	NoSession int
 	// Extended counts the jobs whose expiry moved forward (#291).
 	Extended int
+	// Schedules counts the schedules a sweep changed: a fire, a delivery,
+	// an expiry or an end, or an expiry moved forward (#292).
+	Schedules int
 }
 
 // sweep sends every due stall notice and metrics alert once and prunes old
@@ -148,6 +151,9 @@ func (s *Server) sweep(ctx context.Context) (sweepResult, error) {
 	if out.Extended, err = s.jobs().ExtendAttached(ctx, insight.NewBaseResolver(s.db).Of, s.presence().Attached); err != nil {
 		return out, err
 	}
+	if out.Schedules, err = s.jobs().SweepSchedules(ctx, insight.NewBaseResolver(s.db).Of, s.presence().Attached); err != nil {
+		return out, err
+	}
 	if _, err = presence.PruneLog(s.db, s.now()); err != nil {
 		return out, err
 	}
@@ -172,6 +178,9 @@ func (s *Server) publishSweep(res sweepResult) {
 	}
 	if res.Extended > 0 {
 		kinds = append(kinds, "jobs")
+	}
+	if res.Schedules > 0 {
+		kinds = append(kinds, "jobs", "mail")
 	}
 	s.live.Publish(kinds...)
 }

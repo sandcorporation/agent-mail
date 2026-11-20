@@ -122,6 +122,23 @@ switchboard job show ID | job tail ID [-f] | job stop ID | job wait ID
 - The dashboard's 작업 tab (under 운영) lists every role's jobs with role and state filters (default: not ended), and stops a live job or removes an ended job's record after a confirm. It does not show the command text. States: `handed`, `running`, then `exited`, `failed`, `stopped`, `expired` or `lost`.
 - Only the owner role sees, stops or reports on a job; `job list` shows a boss role every role's jobs. The server keeps the command text; the runner never logs it. Nothing sends a command to a machine: the runner reports up, and only a stop travels down.
 
+## Schedules
+
+A schedule is a prompt the server mails to the role at times. Nothing runs on the machine, so a schedule survives a session restart and a reboot of the machine.
+
+```sh
+switchboard schedule add --cron '*/30 9-18 * * 1-5' --label standup --prompt 'Check the build and report'
+switchboard schedule add --in 20m --prompt 'Look at the deploy again'     # once
+switchboard schedule add --at '2026-12-01 09:00' --prompt 'Release day'    # once, local time
+switchboard schedule list [--state active] [--owner team/worker] [--json]
+switchboard schedule show ID | schedule rm ID
+```
+
+- `schedule add (--cron EXPR | --at TIME | --in DURATION) [--expires DURATION] [--label TEXT] [--idem KEY] --prompt TEXT` stores the schedule (`POST /api/schedules`) and prints its ID. `--cron` takes the standard five fields (minute, hour, day of month, month, day of week; `*`, values, ranges, lists, steps, `jan`-`dec`, `sun`-`sat`) read in the machine's time zone, recorded at creation (`$TZ`, else `/etc/localtime`; on Windows the current UTC offset). `--at` takes RFC 3339, `YYYY-MM-DD HH:MM` or `HH:MM` (today, or tomorrow when it has passed). The label defaults to the first 60 characters of the prompt.
+- The server sweep fires schedules. A fire while a session of the role is attached is one normal mail, `[주기] <label>` with the prompt as the body. A fire with no session attached is recorded as missed; the next sweep that finds a session attached sends one mail with the prompt and `밀린 N회, 마지막 <time>`. While a schedule's previous mail is unread, its next fires are counted the same way, so a schedule never has more than one unread mail. Each mail's idempotency key names the schedule and the fire, so a server restart sends no fire twice.
+- A `once` schedule ends (`ended`) after its fire is delivered. Expiry defaults to 7 days and moves forward while a session of the role is attached, as for watches. At expiry the state becomes `expired` and the role gets one mail, `[주기 만료] <label>`, with any missed fires.
+- `schedule rm ID` deletes it. Only the owner role sees or removes a schedule; `schedule list` shows a boss role every role's. The dashboard's 작업 tab lists schedules with the jobs (without the prompt) and removes one after a confirm.
+
 ## Docker deployment
 
 The Compose file binds to loopback by default (`127.0.0.1:8097`). For private network access, set `MAIL_BIND_ADDRESS` in the external `.env` to the intended private interface address; do not bind publicly without a TLS reverse proxy and appropriate network controls. Set `SWITCHBOARD_TOKENS` and, when enabling dynamic enrollment, `SWITCHBOARD_ENROLLMENT_TOKEN` in an external `.env` file with mode `0600`; build and start with `docker compose up -d --build`. The enrollment value is optional so existing deployments continue to start; registration is disabled until it is set. Existing role definitions and message history stay in the SQLite volume. The container runs as nonroot, drops capabilities, has a read-only root filesystem, health check, restart policy, and a named volume. Never put credentials in the Compose file or source control.

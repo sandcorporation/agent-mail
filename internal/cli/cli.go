@@ -490,6 +490,8 @@ func dispatch(args []string) (int, error) {
 		return cliReport(c, p, os.Stdout)
 	case "job":
 		return cliJob(c, p)
+	case "schedule":
+		return cliSchedule(c, p)
 	case "permission":
 		return cliPermission(c, p)
 	case "question":

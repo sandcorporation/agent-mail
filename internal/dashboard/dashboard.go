@@ -1398,12 +1398,16 @@ function reportRow(r){
   return tr;
 }
 // ---- 작업 (#291) ----
-// Jobs, watches (and schedules, #293) of every role: a live one has 중지, an
-// ended one 지우기, each behind a confirm. The command text is never shown.
+// Jobs, watches and schedules (#292) of every role: a live job has 중지, an
+// ended job and every schedule 지우기, each behind a confirm. The command and
+// prompt text are never shown.
 const jobCols=['종류','이름','역할','기계','상태','시작','만료','마지막 줄',''];
 const jobKinds={command:'명령',watch:'감시',cron:'예약',once:'예약 1회'};
 const jobStates={handed:['넘겨짐','neutral'],running:['실행 중','info'],exited:['끝남','success'],failed:['시작 실패','danger'],stopped:['중지됨','neutral'],expired:['만료','warning'],lost:['잃음','danger']};
-const jobLive=s=>s==='handed'||s==='running';
+const jobLive=s=>s==='handed'||s==='running'||s==='active';
+const schedStates={active:['예약됨','info'],ended:['끝남','success'],expired:['만료','warning']};
+// The job state filter as a schedule state; undefined: no schedule has it.
+const schedFilter={live:'live','':'',exited:'ended',expired:'expired'};
 let jobsSeq=0,jobRolesFilled=false;
 async function loadJobs(){
   const seq=++jobsSeq;
@@ -1413,9 +1417,12 @@ async function loadJobs(){
     const q=new URLSearchParams();
     if($('jobRole').value)q.set('role',$('jobRole').value);
     if($('jobState').value)q.set('state',$('jobState').value);
-    const list=await api('jobs'+(q.toString()?'?'+q:''));
+    const sq=new URLSearchParams(q),sf=schedFilter[$('jobState').value];
+    if(sf)sq.set('state',sf);else sq.delete('state');
+    const [jobs,scheds]=await Promise.all([api('jobs'+(q.toString()?'?'+q:'')),sf===undefined?[]:api('schedules'+(sq.toString()?'?'+sq:''))]);
     if(seq!==jobsSeq)return;
-    drawJobs(list);
+    for(const sc of scheds)sc.schedule=true;
+    drawJobs(jobs.concat(scheds).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))));
   }catch(e){if(seq===jobsSeq)$('jobsNote').textContent=e.message}
 }
 function drawJobs(list){
@@ -1429,6 +1436,7 @@ function drawJobs(list){
   $('jobsNote').textContent=list.length+'개';
 }
 function jobRow(j){
+  if(j.schedule)return schedRow(j);
   const tr=node('tr','',jobLive(j.state)?'':'done');
   let [label,tone]=jobStates[j.state]||[j.state,'neutral'];
   if(j.state==='exited'&&j.exit_code!==undefined){label+=' · exit '+j.exit_code;if(j.exit_code)tone='danger'}
@@ -1459,6 +1467,30 @@ function jobRow(j){
   }
   act.append(msg);
   tr.append(cell(jobKinds[j.kind]||j.kind,jobCols[0],'nowrap'),name,cell(j.role,jobCols[2],'nowrap'),cell(j.machine,jobCols[3],'nowrap'),st,started,expires,tail,act);
+  return tr;
+}
+function schedRow(j){
+  const tr=node('tr','',j.state==='active'?'':'done');
+  const [label,tone]=schedStates[j.state]||[j.state,'neutral'];
+  const st=cell('',jobCols[4]);st.append(badge(label,tone));
+  const name=cell('',jobCols[1],'wrap');name.append(node('strong',j.label));
+  if(j.cron){const c=node('div',j.cron,'muted mono');c.title=j.tz;name.append(c)}
+  const created=cell(shortWhen(j.created_at),jobCols[5],'nowrap');created.title=when(j.created_at);
+  const expires=cell(j.state==='active'?shortWhen(j.expires_at):'-',jobCols[6],'nowrap');expires.title=when(j.expires_at);
+  const parts=[];
+  if(j.next_fire_at)parts.push('다음 '+shortWhen(j.next_fire_at));
+  if(j.missed)parts.push('밀린 '+j.missed+'회');
+  const next=cell(parts.join(' · ')||'-',jobCols[7],'wrap');
+  if(j.next_fire_at)next.title=when(j.next_fire_at);
+  const act=cell('','','nowrap'),msg=node('span','','msg');msg.setAttribute('role','status');
+  const b=setButton('지우기','',async()=>{
+    if(!confirm('#'+j.id+' '+j.label+' 예약을 지울까요? 되돌릴 수 없습니다.'))return;
+    b.disabled=true;setMsg(msg,'지우는 중…');
+    try{await apiSend('DELETE','schedules/'+encodeURIComponent(j.id));loadJobs()}
+    catch(e){b.disabled=false;setMsg(msg,e.message,'err')}
+  });
+  act.append(b,msg);
+  tr.append(cell(jobKinds[j.kind]||j.kind,jobCols[0],'nowrap'),name,cell(j.role,jobCols[2],'nowrap'),cell(j.machine,jobCols[3],'nowrap'),st,created,expires,next,act);
   return tr;
 }
 // A linked thread: the directive with its state (열림 / 끝남, the answered
