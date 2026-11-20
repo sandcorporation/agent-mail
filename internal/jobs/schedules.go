@@ -176,8 +176,8 @@ func (s *Service) createSchedule(w http.ResponseWriter, r *http.Request, p ident
 			return
 		}
 	}
-	res, err := s.db.Exec(`INSERT INTO schedules(role,machine,kind,label,prompt,cron,tz,state,created_at,expires_at,duration_s,next_fire_at,idem) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		p.Role, q.Machine, q.Kind, q.Label, q.Prompt, q.Cron, q.TZ, wire.ScheduleActive, stamp(now), stamp(now.Add(expires)), int64(expires/time.Second), stamp(next.UTC()), nullable(key))
+	res, err := s.db.Exec(`INSERT INTO schedules(role,machine,kind,label,prompt,cron,tz,state,created_at,expires_at,duration_s,no_extend,next_fire_at,idem) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		p.Role, q.Machine, q.Kind, q.Label, q.Prompt, q.Cron, q.TZ, wire.ScheduleActive, stamp(now), stamp(now.Add(expires)), int64(expires/time.Second), q.NoExtend, stamp(next.UTC()), nullable(key))
 	if err != nil {
 		// A concurrent retry with the same key won the insert.
 		if sc, ok := s.scheduleByIdem(p.Role, key); key != "" && ok {
@@ -252,7 +252,7 @@ func (s *Service) Schedules(role, state string) ([]wire.Schedule, error) {
 	return out, rows.Err()
 }
 
-const scheduleColumns = `id,role,machine,kind,label,prompt,cron,tz,state,created_at,expires_at,next_fire_at,last_fire_at,missed,missed_last_at,duration_s,last_mail_id`
+const scheduleColumns = `id,role,machine,kind,label,prompt,cron,tz,state,created_at,expires_at,next_fire_at,last_fire_at,missed,missed_last_at,duration_s,last_mail_id,no_extend`
 
 // scheduleRow is a schedule with the columns the sweep needs.
 type scheduleRow struct {
@@ -266,14 +266,16 @@ func scanSchedule(r scanner) (scheduleRow, error) {
 	var created, expires string
 	var next, last, missedLast sql.NullString
 	var duration int64
+	var noExtend bool
 	err := r.Scan(&sc.ID, &sc.Role, &sc.Machine, &sc.Kind, &sc.Label, &sc.Prompt, &sc.Cron, &sc.TZ, &sc.State,
-		&created, &expires, &next, &last, &sc.Missed, &missedLast, &duration, &sc.lastMail)
+		&created, &expires, &next, &last, &sc.Missed, &missedLast, &duration, &sc.lastMail, &noExtend)
 	if err != nil {
 		return sc, err
 	}
 	sc.CreatedAt, sc.ExpiresAt = parse(created), parse(expires)
 	sc.NextFireAt, sc.LastFireAt, sc.MissedLastAt = parseNull(next), parseNull(last), parseNull(missedLast)
 	sc.duration = time.Duration(duration) * time.Second
+	sc.Extends = !noExtend
 	return sc, nil
 }
 
@@ -364,7 +366,7 @@ func sweepSchedule(tx *sql.Tx, id int64, attached bool, now time.Time) (box stri
 		return "", false, err
 	}
 	expires := sc.ExpiresAt
-	if attached && sc.duration > 0 {
+	if attached && sc.Extends && sc.duration > 0 {
 		expires = now.Add(sc.duration)
 	}
 	// Fires up to the expiry count; later ones never happen.

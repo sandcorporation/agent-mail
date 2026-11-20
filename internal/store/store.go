@@ -664,7 +664,22 @@ func migrateJobs(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	return migrateJobDuration(db)
+	if err = migrateJobDuration(db); err != nil {
+		return err
+	}
+	return addNoExtend(db, "jobs")
+}
+
+// addNoExtend adds no_extend (#307) to a jobs or schedules table: 1 when the
+// row was created with --no-extend, so the presence sweep never moves its
+// expiry. Rows from before keep 0.
+func addNoExtend(db *sql.DB, table string) error {
+	has, err := HasColumn(db, table, "no_extend")
+	if err != nil || has {
+		return err
+	}
+	_, err = db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN no_extend INTEGER NOT NULL DEFAULT 0`)
+	return err
 }
 
 // migrateJobDuration adds jobs.duration_s (#291): the expiry the job was
@@ -708,5 +723,8 @@ func migrateSchedules(db *sql.DB) error {
 		UNIQUE(role, idem));
 	CREATE INDEX IF NOT EXISTS idx_schedules_role ON schedules(role, id);
 	CREATE INDEX IF NOT EXISTS idx_schedules_state ON schedules(state);`)
-	return err
+	if err != nil {
+		return err
+	}
+	return addNoExtend(db, "schedules")
 }

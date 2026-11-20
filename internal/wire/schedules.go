@@ -45,6 +45,8 @@ type Schedule struct {
 	LastFireAt   *time.Time `json:"last_fire_at,omitempty"`
 	Missed       int        `json:"missed,omitempty"`
 	MissedLastAt *time.Time `json:"missed_last_at,omitempty"`
+	// Extends is false for a row created with --no-extend.
+	Extends bool `json:"extends"`
 }
 
 // ScheduleCreate is the body of POST /api/schedules (switchboard schedule
@@ -60,6 +62,7 @@ type ScheduleCreate struct {
 	Machine        string     `json:"machine"`
 	ExpiresIn      int64      `json:"expires_in,omitempty"` // seconds; 0 is DefaultWatchExpiry
 	IdempotencyKey string     `json:"idempotency_key,omitempty"`
+	NoExtend       bool       `json:"no_extend,omitempty"` // fixed expiry
 }
 
 // Check fills the label from the prompt and refuses a missing or over-long

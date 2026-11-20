@@ -140,6 +140,7 @@ var commands = []command{
 			{"--batch", "DURATION", "start: batch window, lines within it make one mail (default 30s)"},
 			{"--cwd", "DIR", "start: working directory (default the current one)"},
 			{"--label", "TEXT", "start: label (default the first 60 characters of the command)"},
+			{"--no-extend", "", "start: the expiry is fixed; it does not move forward while a session is attached"},
 			{"--idem", "KEY", "start: retry-safe key; starting again with the same key returns the first watch"},
 			optJSON, optProfile,
 		}},

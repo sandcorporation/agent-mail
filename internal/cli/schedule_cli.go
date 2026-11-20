@@ -23,6 +23,7 @@ var scheduleCmd = command{name: "schedule", args: "ACTION [ID]", nargs: 2, optAr
 		{"--prompt", "TEXT", "add: the prompt each fire mails"},
 		{"--expires", "DURATION", "add: when it ends unless a session of the role is attached, e.g. 7d (default 7d)"},
 		{"--label", "TEXT", "add: label (default the first 60 characters of the prompt)"},
+		{"--no-extend", "", "add: the expiry is fixed; it does not move forward while a session is attached"},
 		{"--idem", "KEY", "add: retry-safe key; adding again with the same key returns the first schedule"},
 		{"--state", "STATE", "list: only schedules in this state (active, ended, expired)"},
 		{"--owner", "ROLE", "list: only this role's schedules (boss roles)"},
@@ -82,7 +83,7 @@ func scheduleAdd(c Config, p parsedArgs, now time.Time) (int, error) {
 	}
 	machine, _ := os.Hostname()
 	q := wire.ScheduleCreate{Prompt: p.values["--prompt"], Label: p.values["--label"], Machine: machine,
-		TZ: cron.LocalZone(), IdempotencyKey: p.values["--idem"]}
+		TZ: cron.LocalZone(), IdempotencyKey: p.values["--idem"], NoExtend: p.bool("--no-extend")}
 	if v := p.values["--expires"]; v != "" {
 		d, err := parseDays(v)
 		if err != nil || d <= 0 {
@@ -209,9 +210,9 @@ func scheduleShow(c Config, id int64, jsonOut bool) (int, error) {
 	if err = json.Unmarshal(b, &sc); err != nil {
 		return 0, fmt.Errorf("unexpected response from server: %v", err)
 	}
-	fmt.Printf("schedule #%d\nstate    %s\nwhen     %s (%s)\nlabel    %s\nowner    %s@%s\nnext     %s\ncreated  %s\nexpires  %s\n",
+	fmt.Printf("schedule #%d\nstate    %s\nwhen     %s (%s)\nlabel    %s\nowner    %s@%s\nnext     %s\ncreated  %s\nexpires  %s\nextends  %t\n",
 		sc.ID, sc.State, scheduleWhen(sc), sc.TZ, sc.Label, sc.Role, sc.Machine, nextText(sc),
-		sc.CreatedAt.Format(time.RFC3339), sc.ExpiresAt.Format(time.RFC3339))
+		sc.CreatedAt.Format(time.RFC3339), sc.ExpiresAt.Format(time.RFC3339), sc.Extends)
 	if sc.LastFireAt != nil {
 		fmt.Printf("last     %s\n", sc.LastFireAt.Format(time.RFC3339))
 	}

@@ -42,6 +42,7 @@ var jobCmd = command{name: "job", args: "ACTION [ID]", nargs: 2, optArgs: true, 
 	options: []option{
 		{"--wait", "", "run: stream the output and exit with the command's exit code (killing the waiter leaves the job running)"},
 		{"--expires", "DURATION", "run: how long it may run, e.g. 90m, 24h, 7d (default 24h)"},
+		{"--no-extend", "", "run, watch start: the expiry is fixed; a presence sweep never moves it"},
 		{"--cwd", "DIR", "run: working directory (default the current one)"},
 		{"--label", "TEXT", "run: label (default the first 60 characters of the command)"},
 		{"--idem", "KEY", "run: retry-safe key; running again with the same key returns the first job"},
@@ -172,7 +173,7 @@ func startJob(c Config, p parsedArgs, kind string, batch time.Duration, wait boo
 	machine, _ := os.Hostname()
 	sweepJobs(jobsRoot(), time.Now())
 	q := wire.JobCreate{Kind: kind, Label: p.values["--label"], Command: shellJoin(p.extra), Cwd: cwd, Machine: machine,
-		ExpiresIn: int64(expires / time.Second), IdempotencyKey: p.values["--idem"]}
+		ExpiresIn: int64(expires / time.Second), IdempotencyKey: p.values["--idem"], NoExtend: p.bool("--no-extend")}
 	b, created, err := createJob(c, q)
 	if err != nil {
 		return 0, err
@@ -308,8 +309,8 @@ func jobShow(c Config, id int64, jsonOut bool) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	fmt.Printf("job      #%d\nstate    %s\nlabel    %s\nowner    %s@%s\ncwd      %s\ncommand  %s\ncreated  %s\nexpires  %s\n",
-		j.ID, stateText(j), j.Label, j.Role, j.Machine, j.Cwd, j.Command, j.CreatedAt.Format(time.RFC3339), j.ExpiresAt.Format(time.RFC3339))
+	fmt.Printf("job      #%d\nstate    %s\nlabel    %s\nowner    %s@%s\ncwd      %s\ncommand  %s\ncreated  %s\nexpires  %s\nextends  %t\n",
+		j.ID, stateText(j), j.Label, j.Role, j.Machine, j.Cwd, j.Command, j.CreatedAt.Format(time.RFC3339), j.ExpiresAt.Format(time.RFC3339), j.Extends)
 	if j.EndedAt != nil {
 		fmt.Printf("ended    %s\n", j.EndedAt.Format(time.RFC3339))
 	}
