@@ -857,6 +857,8 @@ func TestE2E_HostingDocWindows(t *testing.T) {
 		"$dl = '" + dl + "'\n$asset = '" + asset + "'\n" +
 		". \"$env:LOCALAPPDATA\\switchboard-pc\\env.ps1\"\n" +
 		"$id = Get-Content \"$env:LOCALAPPDATA\\sb-id.txt\"\n" +
+		// A new window signs in again (sbget needs it), in a TOTP step of its own.
+		"Start-Sleep -Seconds (31 - ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() % 30))\nsblogin\n" +
 		"'SBSTOP BEFORE ' + [bool](Get-Command sbstop -ErrorAction SilentlyContinue)\n" +
 		update + "\n"
 	file = filepath.Join(root, "update.ps1")
