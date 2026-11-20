@@ -131,7 +131,10 @@ func Init(db *sql.DB) error {
 	if e = migrateReports(db); e != nil {
 		return e
 	}
-	return migrateJobs(db)
+	if e = migrateJobs(db); e != nil {
+		return e
+	}
+	return migrateSchedules(db)
 }
 
 // migrateQuestionRefusals adds question_refusals (#286): per role, the last
@@ -673,5 +676,37 @@ func migrateJobDuration(db *sql.DB) error {
 		return err
 	}
 	_, err = db.Exec(`ALTER TABLE jobs ADD COLUMN duration_s INTEGER NOT NULL DEFAULT 0`)
+	return err
+}
+
+// migrateSchedules adds schedules (#292): prompts the server delivers to the
+// owner role as mail at fire times (wire.Schedule*). cron is the five-field
+// expression read in tz (recorded at creation); next_fire_at is the next
+// fire not yet handled, NULL once nothing is left to fire; missed and
+// missed_last_at hold fires not yet delivered; last_mail_id is the newest
+// fire mail, so at most one stays unread. Times are RFC 3339.
+func migrateSchedules(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS schedules(
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		role TEXT NOT NULL,
+		machine TEXT NOT NULL DEFAULT '',
+		kind TEXT NOT NULL,
+		label TEXT NOT NULL DEFAULT '',
+		prompt TEXT NOT NULL,
+		cron TEXT NOT NULL DEFAULT '',
+		tz TEXT NOT NULL DEFAULT 'UTC',
+		state TEXT NOT NULL DEFAULT 'active',
+		created_at TEXT NOT NULL,
+		expires_at TEXT NOT NULL,
+		duration_s INTEGER NOT NULL DEFAULT 0,
+		next_fire_at TEXT,
+		last_fire_at TEXT,
+		missed INTEGER NOT NULL DEFAULT 0,
+		missed_last_at TEXT,
+		last_mail_id INTEGER,
+		idem TEXT,
+		UNIQUE(role, idem));
+	CREATE INDEX IF NOT EXISTS idx_schedules_role ON schedules(role, id);
+	CREATE INDEX IF NOT EXISTS idx_schedules_state ON schedules(state);`)
 	return err
 }

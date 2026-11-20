@@ -334,6 +334,10 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.jobs().API(w, r, who, strings.TrimPrefix(strings.TrimPrefix(path, "jobs"), "/"))
 		return
 	}
+	if path == "schedules" || strings.HasPrefix(path, "schedules/") {
+		s.jobs().ScheduleAPI(w, r, who, strings.TrimPrefix(strings.TrimPrefix(path, "schedules"), "/"))
+		return
+	}
 	if path == "slots" || strings.HasPrefix(path, "slots/") {
 		s.presence().SlotAPI(w, r, who, strings.TrimPrefix(strings.TrimPrefix(path, "slots"), "/"))
 		return
@@ -448,6 +452,10 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	if rest, ok := strings.CutPrefix(path, "jobs"); ok && (rest == "" || strings.HasPrefix(rest, "/")) {
 		s.jobs().AdminAPI(w, r, strings.TrimPrefix(rest, "/"))
+		return
+	}
+	if rest, ok := strings.CutPrefix(path, "schedules"); ok && (rest == "" || strings.HasPrefix(rest, "/")) {
+		s.jobs().ScheduleAdminAPI(w, r, strings.TrimPrefix(rest, "/"))
 		return
 	}
 	if rest, ok := strings.CutPrefix(path, "roles"); ok && (rest == "" || strings.HasPrefix(rest, "/")) {

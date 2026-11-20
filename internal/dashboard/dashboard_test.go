@@ -583,12 +583,13 @@ func TestDashboardJobsTab(t *testing.T) {
 		`<select id="jobRole" aria-label="역할">`, `<select id="jobState" aria-label="상태">`,
 		`<th>종류</th><th>이름</th><th>역할</th><th>기계</th><th>상태</th><th>시작</th><th>만료</th><th>마지막 줄</th>`,
 		"api('jobs'", "apiSend('POST','jobs/'", "apiSend('DELETE','jobs/'", "jobs:loadJobs",
+		"api('schedules'", "apiSend('DELETE','schedules/'",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("jobs tab missing %q", want)
 		}
 	}
-	for _, want := range []string{"if(!confirm('#'+j.id+' '+j.label+' 작업을 멈출까요?'))return;", "if(!confirm('#'+j.id+' '+j.label+' 기록을 지울까요? 되돌릴 수 없습니다.'))return;"} {
+	for _, want := range []string{"if(!confirm('#'+j.id+' '+j.label+' 작업을 멈출까요?'))return;", "if(!confirm('#'+j.id+' '+j.label+' 기록을 지울까요? 되돌릴 수 없습니다.'))return;", "if(!confirm('#'+j.id+' '+j.label+' 예약을 지울까요? 되돌릴 수 없습니다.'))return;"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("job stop and remove need a confirm: %q", want)
 		}
