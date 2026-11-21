@@ -134,7 +134,55 @@ func (s *Service) AdminList(w http.ResponseWriter, r *http.Request) {
 
 // Send serves POST /api/messages for the caller p.
 func (s *Service) Send(w http.ResponseWriter, r *http.Request, p identity.Principal) {
-	s.send(w, r, p, nil, func(m *wire.Message) { m.NoSession = s.noSession(m) })
+	s.send(w, r, p, nil, nil)
+}
+
+// RecipientState is the receiving mailbox's state for m, just sent (#354):
+// whether a session reads it, when its last one ended, whether m was held for
+// that session, and for mail to a base whose slot 1 is empty the numbered
+// mailboxes that are live. It is nil for label mail and unknown mailboxes.
+func (s *Service) RecipientState(m *wire.Message) *wire.RecipientState {
+	box := m.Recipient
+	if strings.HasPrefix(box, handoffPrefix) {
+		box = m.AddressedTo
+	} else if m.AddressedTo != "" {
+		return nil // label mail
+	}
+	base, number, ok := SlotOf(s.db, box)
+	if !ok {
+		return nil
+	}
+	now := ms(s.now())
+	st := &wire.RecipientState{Mailbox: box, Held: m.Status == statusHeld}
+	var until int64
+	switch err := s.db.QueryRow(`SELECT lease_until FROM slots WHERE base=? AND number=?`, base, number).Scan(&until); {
+	case err == nil && until > now:
+		st.Live = true
+		return st
+	case err == nil:
+		st.EndedS = (now - until) / 1000
+	}
+	if number != 1 {
+		return st
+	}
+	rows, err := s.db.Query(`SELECT number FROM slots WHERE base=? AND number<>1 AND lease_until>? ORDER BY number`, base, now)
+	if err != nil {
+		return st
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var n int
+		if rows.Scan(&n) == nil {
+			st.LiveSlots = append(st.LiveSlots, identity.SlotRole(base, n))
+		}
+	}
+	return st
+}
+
+// fillState sets the send response's recipient fields (#300, #354).
+func (s *Service) fillState(m *wire.Message) {
+	m.NoSession = s.noSession(m)
+	m.RecipientState = s.RecipientState(m)
 }
 
 // noSession reports whether m waits for a role with no live session (#300).
@@ -239,6 +287,7 @@ func (s *Service) send(w http.ResponseWriter, r *http.Request, p identity.Princi
 	if key != "" {
 		existing, e := scanMessage(s.db.QueryRow(`SELECT `+messageCols(`m.status`)+` FROM messages m WHERE m.sender=? AND m.idem=?`, role, key))
 		if e == nil {
+			s.fillState(&existing)
 			if respond != nil {
 				respond(&existing)
 			}
@@ -252,7 +301,9 @@ func (s *Service) send(w http.ResponseWriter, r *http.Request, p identity.Princi
 		m.ThreadID = m.ReplyTo
 	}
 	m.Status = "pending"
+	var told string
 	e := store.InTx(r.Context(), s.db, func(tx *sql.Tx) error {
+		told = ""
 		var heldAt any
 		if label.Base != "" {
 			// Look up the label's session in the same transaction as the insert, so
@@ -272,8 +323,21 @@ func (s *Service) send(w http.ResponseWriter, r *http.Request, p identity.Princi
 		if err != nil {
 			return err
 		}
-		if m.ID, err = res.LastInsertId(); err != nil || inTx == nil {
+		if m.ID, err = res.LastInsertId(); err != nil {
 			return err
+		}
+		if label.Base == "" {
+			// A slot whose session ended: hold the mail for that session (#354).
+			held, to, err := HoldIfEnded(tx, m.ID, m.Recipient, role, m.Subject, m.TaskID, now)
+			if err != nil {
+				return err
+			}
+			if held {
+				m.AddressedTo, m.Recipient, m.Status, m.HeldAt, told = m.Recipient, handoffPrefix+m.TaskID, statusHeld, &now, to
+			}
+		}
+		if inTx == nil {
+			return nil
 		}
 		return inTx(tx, now)
 	})
@@ -285,7 +349,11 @@ func (s *Service) send(w http.ResponseWriter, r *http.Request, p identity.Princi
 	if m.Status != statusHeld {
 		s.hub.Publish(m.Recipient)
 	}
+	if told != "" {
+		s.hub.Publish(told)
+	}
 	m.Done = false
+	s.fillState(&m)
 	if respond != nil {
 		respond(&m)
 	}

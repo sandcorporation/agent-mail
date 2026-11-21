@@ -37,7 +37,7 @@ func alertSubjects(t *testing.T, s *Server, token, role string) []string {
 func TestAlertsEachKindOncePerDay(t *testing.T) {
 	t.Parallel()
 	s, clock := alertServer(t)
-	sendMail(t, s, "secret-b", "team/worker", "please look")
+	look := sendMail(t, s, "secret-b", "team/worker", "please look")
 	slotDo(t, s, "register", report("m", "/e", "error:StopFailure", nil, ""))
 	slotDo(t, s, "register", report("m", "/b", "blocked:permission_prompt", nil, ""))
 
@@ -85,7 +85,9 @@ func TestAlertsEachKindOncePerDay(t *testing.T) {
 			t.Fatalf("alert mail: %+v", m)
 		}
 		if strings.HasPrefix(m.Subject, "[지표] pending") {
-			if m.TaskID != "alert:pending:team/worker:2026-11-17" || !strings.Contains(m.Body, "1통") || !strings.Contains(m.Body, "2h") {
+			// The body names the pending mail: ID, sender, subject (#354).
+			if m.TaskID != "alert:pending:team/worker:2026-11-17" || !strings.Contains(m.Body, "1통") || !strings.Contains(m.Body, "2h") ||
+				!strings.Contains(m.Body, "#"+itoa(look)+" b — please look") {
 				t.Fatalf("pending alert: %+v", m)
 			}
 		}

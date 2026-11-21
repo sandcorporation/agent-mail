@@ -225,31 +225,45 @@ func identityRow(tx *sql.Tx, base string, req wire.SlotRequest) (wire.SlotView, 
 // req's own identity, which renews its lease in this transaction. Every
 // register and heartbeat runs it first, so it sees an ended lease before the
 // number is given to another identity and before held mail is delivered; a
-// handoff can only be taken in such a transaction.
-func endLeases(tx *sql.Tx, base string, req wire.SlotRequest, now time.Time) error {
+// handoff can only be taken in such a transaction. It returns the mailboxes
+// of senders told that their mail was held (#354), to wake after commit.
+func endLeases(tx *sql.Tx, base string, req wire.SlotRequest, now time.Time) ([]string, error) {
 	rows, err := tx.Query(`SELECT number FROM slots WHERE base=? AND lease_until<=? AND NOT (machine=? AND directory=?)`, base, ms(now), req.Machine, req.Directory)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var ended []int
 	for rows.Next() {
 		var n int
 		if err = rows.Scan(&n); err != nil {
 			rows.Close()
-			return err
+			return nil, err
 		}
 		ended = append(ended, n)
 	}
 	rows.Close()
 	if err = rows.Err(); err != nil {
-		return err
+		return nil, err
 	}
+	var told []string
 	for _, n := range ended {
-		if _, err = mail.HandOffUnread(tx, base, n, now); err != nil {
-			return err
+		_, t, err := mail.HandOffUnread(tx, base, n, now)
+		if err != nil {
+			return nil, err
 		}
+		told = append(told, t...)
 	}
-	return nil
+	return told, nil
+}
+
+// wakeTold wakes the senders endLeases told, once the transaction committed.
+func (s *Service) wakeTold(err error, told []string) {
+	if err != nil {
+		return
+	}
+	for _, box := range told {
+		s.wake(box)
+	}
 }
 
 // claimSlot registers (takeover=false) or takes slot 1 (takeover=true).
@@ -267,8 +281,10 @@ func (s *Service) claimSlot(ctx context.Context, base string, req wire.SlotReque
 	var g wire.SlotGrant
 	var box, handed string
 	var moved int
+	var told []string
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
-		if err := endLeases(tx, base, req, now); err != nil {
+		var err error
+		if told, err = endLeases(tx, base, req, now); err != nil {
 			return err
 		}
 		own, has, err := identityRow(tx, base, req)
@@ -328,6 +344,7 @@ func (s *Service) claimSlot(ctx context.Context, base string, req wire.SlotReque
 	})
 	s.wakeHeld(err, box, g.HeldDelivered)
 	s.wakeHeld(err, handed, moved)
+	s.wakeTold(err, told)
 	return g, err
 }
 
@@ -389,6 +406,7 @@ func (s *Service) renewSlot(ctx context.Context, base string, req wire.SlotReque
 	var g wire.SlotGrant
 	var box, handed string
 	var moved int
+	var told []string
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
 		own, has, err := identityRow(tx, base, req)
 		if err != nil {
@@ -398,7 +416,7 @@ func (s *Service) renewSlot(ctx context.Context, base string, req wire.SlotReque
 			return errNoSlot
 		}
 		if !release {
-			if err = endLeases(tx, base, req, now); err != nil {
+			if told, err = endLeases(tx, base, req, now); err != nil {
 				return err
 			}
 		}
@@ -436,6 +454,7 @@ func (s *Service) renewSlot(ctx context.Context, base string, req wire.SlotReque
 	})
 	s.wakeHeld(err, box, g.HeldDelivered)
 	s.wakeHeld(err, handed, moved)
+	s.wakeTold(err, told)
 	return g, err
 }
 

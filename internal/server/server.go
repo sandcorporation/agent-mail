@@ -44,6 +44,7 @@ type Server struct {
 	clock       func() time.Time    // nil means time.Now; tests move time forward
 	sweepEvery  time.Duration       // SWITCHBOARD_SWEEP_INTERVAL; 0 means defaultSweepInterval
 	labelStall  time.Duration       // SWITCHBOARD_LABEL_STALL; 0 means defaultLabelStall
+	handoffTTL  time.Duration       // SWITCHBOARD_HANDOFF_EXPIRE; 0 means defaultHandoffTTL (#354)
 	asksCfg     asks.Config         // permission TTL (internal/asks)
 	bossRoles   map[string]bool     // SWITCHBOARD_BOSS_ROLES; may answer any permission request
 	bossOrder   []string            // SWITCHBOARD_BOSS_ROLES in listed order (identity.Service.AskVia)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/sandcorporation/switchboard/internal/identity"
@@ -54,6 +55,30 @@ func shortAge(d time.Duration) string {
 
 const alertHint = "자세히: `switchboard metrics` 또는 대시보드 #metrics 탭."
 
+// pendingListMax is how many pending messages a pending alert names (#354).
+const pendingListMax = 5
+
+// pendingList names the oldest pending non-system mail of box, at most max,
+// one line each: "#<id> <sender> — <subject>".
+func (s *Service) pendingList(box string, max int) (string, error) {
+	rows, err := s.db.Query(`SELECT m.id,m.sender,m.subject FROM messages m `+mail.StatusJoin+` WHERE m.recipient=? AND m.sender NOT IN (?,?) AND `+mail.StatusExpr+`='pending' ORDER BY m.id LIMIT ?`,
+		box, identity.SystemSender, identity.LegacySystemSender, max)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	var b strings.Builder
+	for rows.Next() {
+		var id int64
+		var sender, subject string
+		if err = rows.Scan(&id, &sender, &subject); err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, "- #%d %s — %s\n", id, sender, subject)
+	}
+	return b.String(), rows.Err()
+}
+
 // dueAlerts lists the alerts whose threshold is crossed at now, before
 // dedupe.
 func (s *Service) dueAlerts(now time.Time) ([]alertDue, error) {
@@ -69,12 +94,16 @@ func (s *Service) dueAlerts(now time.Time) ([]alertDue, error) {
 				continue
 			}
 			age := shortAge(time.Duration(p.OldestS) * time.Second)
+			list, err := s.pendingList(p.Role, pendingListMax)
+			if err != nil {
+				return nil, err
+			}
 			out = append(out, alertDue{
 				Kind:    "pending",
 				Role:    p.Role,
 				Subject: fmt.Sprintf("[지표] pending %s %d통, 가장 오래 %s", p.Role, p.Pending, age),
-				Body: fmt.Sprintf("%s 앞으로 아직 읽지 않은(pending) 메일이 %d통 있습니다(시스템 메일 제외). 가장 오래된 것은 %s 전에 왔습니다. 문턱은 %s(SWITCHBOARD_ALERT_PENDING)입니다.\n\n%s",
-					p.Role, p.Pending, age, shortAge(lim.Pending), alertHint),
+				Body: fmt.Sprintf("%s 앞으로 아직 읽지 않은(pending) 메일이 %d통 있습니다(시스템 메일 제외). 가장 오래된 것은 %s 전에 왔습니다. 문턱은 %s(SWITCHBOARD_ALERT_PENDING)입니다.\n\n%s\n%s",
+					p.Role, p.Pending, age, shortAge(lim.Pending), list, alertHint),
 			})
 		}
 	}

@@ -196,7 +196,8 @@ func TestLabelMailGoesStraightToAnActiveSession(t *testing.T) {
 	}
 
 	// Leases end: only expired sessions carry the label, so mail is held, and
-	// the next heartbeat of a labelled session collects it.
+	// the next heartbeat of a labelled session collects it, with the unread
+	// mail of the ended label session (held for its label, #354).
 	clock.add(2 * time.Minute)
 	if m := sendFrom(t, s, label22, "later", "", 201); m.Status != "held" {
 		t.Fatalf("mail to expired label: %+v", m)
@@ -204,7 +205,7 @@ func TestLabelMailGoesStraightToAnActiveSession(t *testing.T) {
 	if g := slotDo(t, s, "heartbeat", labeled("m", "/c", "22")); g.Role != "team/worker-3" || g.HeldDelivered != 1 {
 		t.Fatalf("heartbeat grant: %+v", g)
 	}
-	if got := inboxSubjects(t, s, "team/worker-3"); strings.Join(got, ",") != "later" {
+	if got := inboxSubjects(t, s, "team/worker-3"); strings.Join(got, ",") != "now,later" {
 		t.Fatalf("worker-3 inbox: %v", got)
 	}
 }
