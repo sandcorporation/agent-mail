@@ -111,8 +111,9 @@ func (s *Service) openDirectivesUnder(rule mail.AnsweredRule, wide bool, base fu
 		return nil, err
 	}
 	// Completed and closed directives are never open (every version's Open),
-	// so the query leaves them out before the answered rule runs.
-	directives, err := s.progressMailQuery(`m.sender IN (`+placeholders(len(bossSenders))+`) AND (COALESCE(m.reply_to,0)=0 OR m.directive=1) AND m.no_reply=0 AND `+mail.StatusExpr+` NOT IN ('complete','completed')`, anySlice(bossSenders)...)
+	// so the query leaves them out before the answered rule runs; so is mail
+	// to a revoked role, which no session can read.
+	directives, err := s.progressMailQuery(`m.sender IN (`+placeholders(len(bossSenders))+`) AND (COALESCE(m.reply_to,0)=0 OR m.directive=1) AND m.no_reply=0 AND `+mail.StatusExpr+` NOT IN ('complete','completed') AND `+mail.LiveRecipient, anySlice(bossSenders)...)
 	if err != nil {
 		return nil, err
 	}

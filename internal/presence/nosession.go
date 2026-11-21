@@ -37,7 +37,7 @@ type noSessionMail struct {
 func (s *Service) SweepNoSession(ctx context.Context, base func(string) string) (int, error) {
 	now := s.now().UTC()
 	rows, err := s.db.QueryContext(ctx, `SELECT m.id,m.sender,m.recipient,COALESCE(m.task_id,''),m.created_at FROM messages m `+mail.StatusJoin+
-		` WHERE m.sender NOT IN (?,?) AND `+mail.StatusExpr+`='pending' ORDER BY m.id`, identity.SystemSender, identity.LegacySystemSender)
+		` WHERE m.sender NOT IN (?,?) AND `+mail.StatusExpr+`='pending' AND `+mail.LiveRecipient+` ORDER BY m.id`, identity.SystemSender, identity.LegacySystemSender)
 	if err != nil {
 		return 0, err
 	}

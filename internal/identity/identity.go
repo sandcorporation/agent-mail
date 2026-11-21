@@ -24,6 +24,18 @@ type Service struct {
 	bossOrder  []string
 	groups     *Groups
 	logOffline func(tx *sql.Tx, base string, number int, at time.Time) error
+	revoked    RevokeNotice
+}
+
+// RevokeNotice tells the senders of role's pending mail, inside the revoke's
+// transaction, that it will not be read. stamp is the stored revoked_at. The
+// returned function, when not nil, runs after the commit.
+type RevokeNotice func(tx *sql.Tx, role, stamp string, now time.Time) (after func(), err error)
+
+// WithRevokeNotice sets the notice a first revoke of a role sends.
+func (s *Service) WithRevokeNotice(f RevokeNotice) *Service {
+	s.revoked = f
+	return s
 }
 
 // New returns the identity rules over db. clock is the current time,
@@ -68,6 +80,17 @@ type Queryer interface {
 func SlotRole(base string, n int) string { return base + "-" + strconv.Itoa(n) }
 
 func RoleExists(q Queryer, role string) bool { _, _, ok := roleRecord(q, role); return ok }
+
+// RevokedAt is when role was revoked; ok is false for a role that is not
+// revoked or has no row.
+func RevokedAt(q Queryer, role string) (at time.Time, ok bool) {
+	var stamp sql.NullString
+	if q.QueryRow(`SELECT revoked_at FROM roles WHERE role=?`, role).Scan(&stamp) != nil || !stamp.Valid {
+		return time.Time{}, false
+	}
+	at, _ = time.Parse(time.RFC3339Nano, stamp.String)
+	return at, true
+}
 
 func sameSecret(a, b string) bool {
 	return len(a) == len(b) && subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1

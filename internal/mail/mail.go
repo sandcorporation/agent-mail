@@ -180,6 +180,9 @@ func (s *Service) send(w http.ResponseWriter, r *http.Request, p identity.Princi
 			http.Error(w, "unknown recipient role", 403)
 			return
 		}
+		if refuseRevoked(w, s.db, label.Base) {
+			return
+		}
 		if !s.ids.MaySend(p, label.Base) {
 			http.Error(w, "outside your group", 403)
 			return
@@ -189,6 +192,9 @@ func (s *Service) send(w http.ResponseWriter, r *http.Request, p identity.Princi
 		box, ok := identity.Mailbox(s.db, m.Recipient)
 		if !ok {
 			http.Error(w, "unknown recipient role", 403)
+			return
+		}
+		if refuseRevoked(w, s.db, identity.BaseOf(s.db, box)) {
 			return
 		}
 		if !s.ids.MaySend(p, identity.BaseOf(s.db, box)) && !s.isReplyToSender(role, m.ReplyTo, box) {
@@ -257,6 +263,18 @@ func (s *Service) send(w http.ResponseWriter, r *http.Request, p identity.Princi
 	w.WriteHeader(201)
 	writeJSON(w, m)
 }
+
+// refuseRevoked answers 410 when base is a revoked role: no session can
+// read mail to it. It runs before the idempotency lookup, so a retry of a
+// refused send gets the same answer and nothing is stored.
+func refuseRevoked(w http.ResponseWriter, q identity.Queryer, base string) bool {
+	at, revoked := identity.RevokedAt(q, base)
+	if revoked {
+		http.Error(w, "recipient role revoked at "+at.UTC().Format(time.RFC3339), http.StatusGone)
+	}
+	return revoked
+}
+
 func nullable(s string) any {
 	if s == "" {
 		return nil
@@ -345,6 +363,12 @@ func (s *Service) Read(w http.ResponseWriter, r *http.Request, role string, id i
 const (
 	StatusJoin = `LEFT JOIN role_states rs ON rs.message_id=m.id AND rs.role=m.recipient`
 	StatusExpr = `COALESCE(rs.status,m.status,'pending')`
+	// LiveRecipient holds for mail m whose recipient's base role is not
+	// revoked: the role itself, or <base>-N without a role row of its own
+	// (identity.BaseOf). A recipient with no role behind it counts as live.
+	LiveRecipient = `NOT EXISTS (SELECT 1 FROM roles rv WHERE rv.revoked_at IS NOT NULL AND (rv.role=m.recipient OR (` +
+		`substr(m.recipient,1,length(rv.role)+1)=rv.role||'-' AND substr(m.recipient,length(rv.role)+2) GLOB '[1-9]*' ` +
+		`AND substr(m.recipient,length(rv.role)+2) NOT GLOB '*[^0-9]*' AND NOT EXISTS (SELECT 1 FROM roles rx WHERE rx.role=m.recipient))))`
 )
 
 // View returns message id with the status every mailbox view shows.
