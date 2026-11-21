@@ -175,6 +175,8 @@ table.list tr.urgent td:first-child{box-shadow:inset 3px 0 var(--st-error)}
 @media (max-width:720px){
 .sc-app-main.has-detail{grid-template-columns:minmax(0,1fr)}
 .detail{position:fixed;inset:0;align-self:stretch;height:auto;z-index:20;border-left:0}
+.detail,.sc-drawer,.sc-drawer-body{overscroll-behavior:contain}
+:root:has(.detail:not([hidden])),:root:has(dialog.sc-drawer[open]){overflow:hidden}
 .detail-back{display:inline-block}
 #termWide{display:none}
 }
