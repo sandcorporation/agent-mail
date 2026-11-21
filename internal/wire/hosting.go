@@ -39,6 +39,10 @@ type HostedSession struct {
 	CreatedAt  int64         `json:"created_at"`
 	UpdatedAt  int64         `json:"updated_at"`
 	Runtime    HostedRuntime `json:"runtime"`
+	// LastRun is the run the host last saw reported for the record, sent
+	// to its node only (#348): a node that starts over continues counting
+	// from it. Zero when the host has not seen one.
+	LastRun int `json:"last_run,omitempty"`
 	// Slot is the numbered slot the session's plugin holds (the host's
 	// list only; nodes never get it), and Presence what it says:
 	// PresenceOnline while its lease runs, PresenceProcessAlive when the

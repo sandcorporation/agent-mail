@@ -445,3 +445,36 @@ func TestLaunchCommandRunsFakeAgent(t *testing.T) {
 		}
 	}
 }
+
+func TestAdoptedSessionContinuesTheHostsRun(t *testing.T) {
+	r := newRig(t)
+	n1 := r.node(rec("a"))
+	r.reconcile(n1)
+	r.reconcile(n1)
+
+	a := rec("a")
+	a.LastRun = 4
+	n2 := r.node(a)
+	r.reconcile(n2)
+	if st := r.state(n2, "a"); st.Run != 4 {
+		t.Fatalf("adopted run %d, want 4", st.Run)
+	}
+	if err := r.fake.Exit("sb-a", 1); err != nil {
+		t.Fatal(err)
+	}
+	r.relaunch(n2)
+	if st := r.state(n2, "a"); st.Run != 5 {
+		t.Fatalf("run after exit %d, want 5", st.Run)
+	}
+}
+
+func TestLaunchContinuesTheHostsRunWhenTheSessionIsGone(t *testing.T) {
+	r := newRig(t)
+	a := rec("a")
+	a.LastRun = 4
+	n := r.node(a)
+	r.reconcile(n)
+	if st := r.state(n, "a"); st.Run != 5 {
+		t.Fatalf("launch run %d, want 5", st.Run)
+	}
+}

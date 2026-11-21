@@ -102,8 +102,8 @@ type State struct {
 	ID       string
 	Observed string
 	PID      int
-	// Run counts launches by this node process; an adopted session counts
-	// as run 1.
+	// Run counts launches of the record, continuing from the run the host
+	// last saw (#348); an adopted session the host never saw counts as 1.
 	Run       int
 	StartedAt time.Time
 	// LastExit is the exit code of the last finished run, nil before one.
@@ -524,7 +524,7 @@ func (n *Node) reconcile(ctx context.Context, r Record, in term.Info, exists boo
 		if s.Run == 0 {
 			// A session this node process did not launch: its keeper or
 			// tmux server kept it across a node restart.
-			s.Run = 1
+			s.Run = max(1, r.LastRun)
 			n.event(s, wire.HostedEventAdopt, wire.HostedActorNode, nil)
 		}
 		return nil
@@ -680,6 +680,9 @@ func (n *Node) launch(ctx context.Context, r Record, s *state, kind, actor strin
 	}
 	s.resumed = s.Launched
 	s.Launched = true
+	if s.Run == 0 {
+		s.Run = r.LastRun
+	}
 	s.Run++
 	s.next, s.NextAttemptAt = time.Time{}, time.Time{}
 	s.Observed, s.PID, s.StartedAt = ObservedStarting, 0, n.cfg.Now()

@@ -146,7 +146,7 @@ func (h *Hub) Sync() error {
 	}
 	for name, c := range h.conns {
 		h.deliverLocked(c, byNode[name], live)
-		h.assignLocked(c, byNode[name])
+		h.assignLocked(c, h.withLastRunLocked(byNode[name]))
 	}
 	h.mu.Unlock()
 	if changed {
@@ -204,6 +204,17 @@ func (h *Hub) assignLocked(c *nodeConn, recs []wire.HostedSession) {
 	}
 	c.sent = string(b)
 	h.sendLocked(c, wire.NodeFrame{Type: wire.NodeAssign, Sessions: recs})
+}
+
+// withLastRunLocked copies recs with the run the host last saw for each,
+// so a node that starts over continues the count (#348).
+func (h *Hub) withLastRunLocked(recs []wire.HostedSession) []wire.HostedSession {
+	out := make([]wire.HostedSession, len(recs))
+	for i, r := range recs {
+		r.LastRun = h.runtime[r.ID].Run
+		out[i] = r
+	}
+	return out
 }
 
 func (h *Hub) sendLocked(c *nodeConn, f wire.NodeFrame) bool {
@@ -400,7 +411,7 @@ func (h *Hub) attach(c *nodeConn) {
 			}
 		}
 		h.deliverLocked(c, mine, live)
-		h.assignLocked(c, mine)
+		h.assignLocked(c, h.withLastRunLocked(mine))
 		h.attachViewedLocked(c)
 	} else {
 		c.cancel()
