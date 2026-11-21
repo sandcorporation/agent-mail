@@ -82,7 +82,7 @@ var fullNameColumns = [][2]string{
 var baseColumns = [][2]string{
 	{"slots", "base"}, {"presence_log", "base"}, {"questions", "asker_base"},
 	{"permissions", "requester_base"}, {"permissions", "parent_base"},
-	{"handoffs", "base"},
+	{"handoffs", "base"}, {"role_credentials", "role"},
 }
 
 // labelColumns hold label addresses label:<base>/<label>.

@@ -54,6 +54,7 @@ type Service struct {
 	db         *sql.DB
 	clock      func() time.Time
 	roleExists func(base string) bool
+	creds      *RoleCredentials
 }
 
 // New builds the service. roleExists answers whether base is a registered
@@ -498,8 +499,9 @@ func (s *Service) SetDesired(id, desired string) (wire.HostedSession, error) {
 	return s.Update(id, wire.HostedSessionChange{Desired: &desired})
 }
 
-// Delete removes the record id and returns it as it was. The node stops the
-// session when it next reconciles; the conversation files stay on disk.
+// Delete removes the record id and returns it as it was, and revokes its
+// role credential (#343). The node stops the session when it next
+// reconciles; the conversation files stay on disk.
 func (s *Service) Delete(id string) (wire.HostedSession, error) {
 	h, err := s.Get(id)
 	if err != nil {
@@ -512,8 +514,10 @@ func (s *Service) Delete(id string) (wire.HostedSession, error) {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return h, ErrNotFound
 	}
-	_, err = s.db.Exec(`DELETE FROM hosted_events WHERE session=?`, id)
-	return h, err
+	if _, err = s.db.Exec(`DELETE FROM hosted_events WHERE session=?`, id); err != nil {
+		return h, err
+	}
+	return h, s.revokeCredentials(func(c LiveCredential) bool { return c.Record == id })
 }
 
 // Nodes lists the node registry, by name.

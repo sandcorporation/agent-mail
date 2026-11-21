@@ -190,6 +190,10 @@ const (
 	NodeDetach  = "detach"  // ID: no viewer is left: stop streaming it
 	NodeInput   = "input"   // ID, Data: type these bytes into the terminal
 	NodeResize  = "resize"  // ID, Cols, Rows: resize the terminal
+	// NodeCredentialType carries Credential: the role credential of record ID
+	// (#343), sent before the assign that needs it, only to a node that
+	// asked for credentials (config.NodeCredentialsHeaderName).
+	NodeCredentialType = "credential"
 	// Node to host.
 	NodeHelloType  = "hello"  // Hello: who the node is
 	NodeStateType  = "state"  // States: what the node observes, every record
@@ -286,9 +290,24 @@ type NodeFrame struct {
 	Rows     int               `json:"rows,omitempty"`
 	Notice   *NodeNotice       `json:"notice,omitempty"`
 	Event    *HostedEvent      `json:"event,omitempty"`
+	// Credential rides on credential frames (#343).
+	Credential *NodeCredential `json:"credential,omitempty"`
 	// Limit rides on state frames (#190).
 	Limit *NodeLimit `json:"limit,omitempty"`
 }
+
+// NodeCredential is a role credential for one hosted record (#343): the
+// node writes it as the profile HostedProfileName(record) and the record's
+// session runs with that profile. Token crosses only the node channel.
+type NodeCredential struct {
+	ID    string `json:"id"`
+	Role  string `json:"role"`
+	Token string `json:"token"`
+}
+
+// HostedProfileName is the profile a node writes for the credential of
+// record id (#343).
+func HostedProfileName(id string) string { return "hosted-" + id }
 
 // NodeHello is what a node says about itself when it attaches.
 type NodeHello struct {

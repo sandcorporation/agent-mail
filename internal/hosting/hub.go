@@ -14,6 +14,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
+	"github.com/sandcorporation/switchboard/internal/config"
 	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
@@ -69,6 +70,10 @@ type nodeConn struct {
 	out    chan wire.NodeFrame
 	cancel context.CancelFunc
 	sent   string // the last assign list sent
+	// takes is whether the node asked for role credentials (#343); held
+	// is the credential ids it holds.
+	takes bool
+	held  map[string]bool
 }
 
 // NewHub returns the hub over svc. publish may be nil.
@@ -120,6 +125,10 @@ func (h *Hub) Sync() error {
 	if err != nil {
 		return err
 	}
+	live, err := h.svc.liveCredentials(recs, revoked)
+	if err != nil {
+		return err
+	}
 	h.mu.Lock()
 	for name, c := range h.conns {
 		if revoked[name] {
@@ -136,6 +145,7 @@ func (h *Hub) Sync() error {
 		}
 	}
 	for name, c := range h.conns {
+		h.deliverLocked(c, byNode[name], live)
 		h.assignLocked(c, byNode[name])
 	}
 	h.mu.Unlock()
@@ -328,6 +338,7 @@ func (h *Hub) nodeSocket(w http.ResponseWriter, r *http.Request, name string) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	c := &nodeConn{name: name, out: make(chan wire.NodeFrame, nodeQueue), cancel: cancel}
+	c.held, c.takes = parseHeld(r.Header.Values(config.HeaderPrefix + config.NodeCredentialsHeaderName))
 	go func() {
 		for {
 			select {
@@ -367,6 +378,13 @@ func (h *Hub) nodeSocket(w http.ResponseWriter, r *http.Request, name string) {
 // it the node's records.
 func (h *Hub) attach(c *nodeConn) {
 	recs, err := h.svc.List()
+	var live map[string]string
+	if err == nil {
+		var revoked map[string]bool
+		if revoked, err = h.svc.revokedNodes(); err == nil {
+			live, err = h.svc.liveCredentials(recs, revoked)
+		}
+	}
 	h.mu.Lock()
 	if old, ok := h.conns[c.name]; ok {
 		old.cancel()
@@ -381,6 +399,7 @@ func (h *Hub) attach(c *nodeConn) {
 				mine = append(mine, r)
 			}
 		}
+		h.deliverLocked(c, mine, live)
 		h.assignLocked(c, mine)
 		h.attachViewedLocked(c)
 	} else {

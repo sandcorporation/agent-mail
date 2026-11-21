@@ -672,6 +672,188 @@ If it fails: `sbwait` times out → the sessions did not stop; `sbterm` shows wh
 
 Reinstall: a removed node (revoked in the dashboard, Settings) cannot come back in the same data directory; `up` stops with `node local: node is revoked`. Uninstall as above and start again at L3.
 
+## Node on another machine
+
+A node on a second machine runs hosted sessions there for the instance above (the host). The node machine needs only the binary, the agent and a private-network path to the host; it runs no server and no database. The host listens for it on its private-network address, `100.64.0.10:8091` below. Other values: <!-- leak-guard:allow -->
+
+| Value | Windows | Linux |
+| --- | --- | --- |
+| Node name | `pc2` | `pc2` |
+| Node directory | `%LOCALAPPDATA%\switchboard-node` | `~/.local/share/switchboard-node` |
+| Profile folder (`SWITCHBOARD_CONFIG_DIR`) | `<node>\config` | `<node>/config` |
+| Start at sign-in | Task Scheduler task `switchboard-node` | systemd user unit `switchboard-node.service` |
+
+The host gives each session on the node its own credential of the session's base role over the node channel. The node writes it into its profile folder as `hosted-<record id>.json` (user-only: mode 0600, a protected DACL on Windows) and starts the session with `SWITCHBOARD_PROFILE=hosted-<record id>`; the role's own token never leaves the host machine and no profile is copied by hand. `--profile` of `host add` is still required but the node does not read it. The credential stops working (401) when the record is removed, the node is revoked or the role is revoked; a node that lost its profile folder gets new ones when it attaches. The host's own node (`local`) keeps using the profiles named in its records.
+
+### H1. Open the host to the private network
+
+On the host machine, add the remote listener to the start file and restart: on Windows add `set SWITCHBOARD_HOSTING_REMOTE_LISTEN=100.64.0.10:8091` after the `SWITCHBOARD_HOSTING_AGENT` line of the W6 block and run W6 again; on Linux add `Environment=SWITCHBOARD_HOSTING_REMOTE_LISTEN=100.64.0.10:8091` after the `SWITCHBOARD_HOSTING_AGENT` line of the L6 block and run L6 again. Use the host's own address on the private network (Tailscale: `tailscale ip -4`). <!-- leak-guard:allow -->
+
+Check: `up.log` shows `switchboard remote listener on 100.64.0.10:8091 (node channel and role API; …)` besides `switchboard listening on 127.0.0.1:8090`. <!-- leak-guard:allow -->
+
+If it fails: `up` refuses the address (see [Refusals](#refusals)) → it is not inside `SWITCHBOARD_HOSTING_REMOTE_ALLOW` (default `100.64.0.0/10,fd7a:115c:a1e9::/48`), is a wildcard, a host name or loopback; use the machine's own private-network IP. <!-- leak-guard:allow -->
+
+### H2. Invite the node
+
+On the host machine, in a window with the host's environment (`env.ps1` / `env.sh`):
+
+```sh
+sbpc node invite pc2
+```
+
+Check: one line with a code `sbj_…`, valid 15 minutes and usable once.
+
+If it fails: `already exists` → the name is taken (a removed node's name stays taken); pick another name.
+
+### NW1. Windows node: download and install
+
+On the node machine run W1 and W2, then:
+
+```powershell
+$node = Join-Path $env:LOCALAPPDATA 'switchboard-node'
+New-Item -ItemType Directory -Force "$node\bin", "$node\config" | Out-Null
+Expand-Archive "$dl\$asset" -DestinationPath "$node\bin" -Force
+$sbn = "$node\bin\switchboard.exe"
+$agent = (Get-Command claude -CommandType Application | Where-Object Source -like '*.exe' | Select-Object -First 1).Source
+$hostUrl = 'http://100.64.0.10:8091' # leak-guard:allow
+& $sbn version
+```
+
+Check: `version` prints the tag from W2 (the host's tag or newer). `$agent` is a path ending in `.exe`.
+
+### NW2. Windows node: join
+
+```powershell
+$env:SWITCHBOARD_CONFIG_DIR = "$node\config"
+$env:SWITCHBOARD_HOSTING_AGENT = $agent
+& $sbn node --host $hostUrl --join 'sbj_…'
+```
+
+Check: the node prints `node pc2: joined; token saved to …\config\node.token`, then `node: attached to http://100.64.0.10:8091`. `pc2` is listed in the host's dashboard (Settings, nodes) with this machine's name. Stop it with Ctrl+C; NW3 runs it from now on. <!-- leak-guard:allow -->
+
+If it fails: `join refused (401)` → the code expired or was used; run H2 again. A refusal naming `SWITCHBOARD_HOSTING_REMOTE_ALLOW` → the host URL resolves outside the private ranges. `… already exists; run without --join` → this machine already joined; skip to NW3.
+
+### NW3. Windows node: start, and start at sign-in
+
+```powershell
+Stop-ScheduledTask -TaskName 'switchboard-node' -ErrorAction SilentlyContinue
+@"
+@echo off
+set "SWITCHBOARD_CONFIG_DIR=%~dp0config"
+set "SWITCHBOARD_HOSTING_AGENT=$agent"
+"%~dp0bin\switchboard.exe" node --host $hostUrl >> "%~dp0node.log" 2>&1
+"@ | Set-Content "$node\node.cmd" -Encoding Ascii
+$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -WindowStyle Hidden -Command `"& '$node\node.cmd'`""
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
+$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName 'switchboard-node' -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
+Start-ScheduledTask -TaskName 'switchboard-node'
+Start-Sleep 5
+Select-String -Path "$node\node.log" -Pattern 'conpty backend', 'attached to'
+```
+
+Check: `Select-String` shows `node: conpty backend, socket …` and `node: attached to http://100.64.0.10:8091`. The task runs at every sign-in of this user, without administrator rights. <!-- leak-guard:allow -->
+
+If it fails: no `attached to` line → read `Get-Content "$node\node.log" -Tail 20`; `host channel down (…)` means the host or the private network is not reachable (the node keeps retrying). `Register-ScheduledTask` says `Access is denied` → use the Startup folder as in W6, with `node.cmd`.
+
+### NL1. Linux node: download and install
+
+On the node machine run L1 and L2, then:
+
+```sh
+umask 077
+SBNODE="$HOME/.local/share/switchboard-node"
+mkdir -p "$SBNODE/bin" "$SBNODE/config"
+chmod 700 "$SBNODE" "$SBNODE/config"
+tar -xzf "$SBDL/$SBASSET" -C "$SBNODE/bin" switchboard
+SBHOST=http://100.64.0.10:8091 # leak-guard:allow
+AGENT="$(command -v claude)"
+"$SBNODE/bin/switchboard" version
+```
+
+Check: `version` prints the tag from L2 (the host's tag or newer). `AGENT` is a path.
+
+### NL2. Linux node: join
+
+```sh
+SWITCHBOARD_CONFIG_DIR="$SBNODE/config" SWITCHBOARD_HOSTING_AGENT="$AGENT" "$SBNODE/bin/switchboard" node --host "$SBHOST" --join 'sbj_…'
+```
+
+Check and failures: as in NW2 (the token is saved to `$SBNODE/config/node.token`). Stop it with Ctrl+C.
+
+### NL3. Linux node: start, and start at sign-in
+
+```sh
+mkdir -p "$HOME/.config/systemd/user"
+cat > "$HOME/.config/systemd/user/switchboard-node.service" <<EOF
+[Unit]
+Description=switchboard node for a hosting instance on another machine
+
+[Service]
+Environment=SWITCHBOARD_CONFIG_DIR=$SBNODE/config
+Environment=SWITCHBOARD_HOSTING_AGENT=$AGENT
+Environment=PATH=$PATH
+ExecStart=$SBNODE/bin/switchboard node --host $SBHOST
+StandardOutput=append:$SBNODE/node.log
+StandardError=append:$SBNODE/node.log
+KillMode=process
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+EOF
+systemctl --user daemon-reload
+systemctl --user enable switchboard-node.service
+systemctl --user restart switchboard-node.service
+sleep 5
+grep -E 'tmux backend|attached to' "$SBNODE/node.log"
+```
+
+Check: `grep` shows `node: tmux backend, socket …` and `node: attached to http://100.64.0.10:8091`. `KillMode=process` stops only the node; the tmux server with the sessions keeps running. <!-- leak-guard:allow -->
+
+If it fails: as in NW3, reading `tail -n 20 "$SBNODE/node.log"`.
+
+### N4. Add a session on the node
+
+On the host machine, as in W7/L7 with `--node pc2` and a directory on the node machine (`--profile` is still required; the node runs the session with its own profile):
+
+```sh
+sbpc host add --node pc2 --base team/worker --profile pc-worker --dir /home/user/work/app --label app --parent team/boss -- --model opus
+```
+
+Check: the dashboard's 터미널 tab shows the session on `pc2` as `running` and, after the agent's plugin registers, holding `team/worker-1`. On the node machine the profile folder has `hosted-<id>.json` and nothing else names the token.
+
+### N5. Disconnect and reconnect
+
+While the host is stopped, restarted or unreachable, the node logs `host channel down (…); retrying in …` and keeps its sessions running as last assigned; it reconnects (1 s, doubling to 30 s) and logs `attached to …` again, keeping the credentials it holds. The host shows the node's sessions as `node offline` meanwhile. A stopped node (task or unit stopped, machine off) leaves its sessions to the keeper or tmux; the next start adopts them.
+
+A revoked node stops with exit code 4 and `the host refused this node's token (HTTP 401): the node was revoked`; its sessions' credentials are refused from then on. It cannot come back under the same name: remove it as below and start again at H2 with a new name.
+
+### N6. Remove the node
+
+On the host machine remove the node's sessions (`sbpc host remove <id>` for each record on `pc2`), then revoke the node in the dashboard (Settings, nodes, 끊기). Both revoke the credentials on the node. Then on the node machine:
+
+Windows:
+
+```powershell
+Unregister-ScheduledTask -TaskName 'switchboard-node' -Confirm:$false
+Get-Process switchboard -ErrorAction SilentlyContinue | Where-Object Path -like "$node\bin\*" | Stop-Process -Force
+Remove-Item -Recurse -Force $node
+```
+
+Linux:
+
+```sh
+systemctl --user disable --now switchboard-node.service
+rm -f "$HOME/.config/systemd/user/switchboard-node.service"
+systemctl --user daemon-reload
+SBSOCK="$(sed -n 's/.*tmux backend, socket \([^ ]*\).*/\1/p' "$SBNODE/node.log" | tail -n 1)"
+[ -z "$SBSOCK" ] || tmux -L "$SBSOCK" kill-server 2>/dev/null || true
+rm -r "$SBNODE"
+```
+
+Check: the task or unit is gone and the node directory no longer exists; with it go `node.token` and every `hosted-*.json`.
+
 ## OIDC sign-in
 
 Instead of names, passwords and TOTP, the instance can sign admins in with an OpenID Connect provider of the installer's choice. Do this after W8 / L8: the checks there sign in as `pcadmin`, which the oidc mode no longer accepts (`sblogin` gets `401`).

@@ -141,6 +141,13 @@ func Node(v, hostURL, tokenFile, joinCode string, restartSessions bool) error {
 	if err != nil {
 		return err
 	}
+	// A separate node takes its sessions' role credentials from the host
+	// (#343); `up`'s own node keeps the profiles its records name.
+	dir, err := node.ClientConfigDir()
+	if err != nil {
+		return fmt.Errorf("node: config directory: %w", err)
+	}
+	link.Profiles = &node.Profiles{Dir: dir, Endpoint: hostURL}
 	log.Printf("node: %s backend, socket %s", part.backendName, part.socket)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

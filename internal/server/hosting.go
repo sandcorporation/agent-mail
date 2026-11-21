@@ -211,7 +211,25 @@ func (s *Server) hostingNotify(to []string, subject, body, key string) error {
 
 // hostingService is the hosted-session store over this server's database.
 func (s *Server) hostingService() *hosting.Service {
-	return hosting.New(s.db, s.now, func(base string) bool { return identity.RoleExists(s.db, base) })
+	return hosting.New(s.db, s.now, func(base string) bool { return identity.RoleExists(s.db, base) }).WithCredentials(roleCredentials(s.db, s.now))
+}
+
+// roleCredentials is identity's role credential store as hosting takes it
+// (#343).
+func roleCredentials(db *sql.DB, clock func() time.Time) *hosting.RoleCredentials {
+	c := identity.NewCredentials(db, clock)
+	return &hosting.RoleCredentials{
+		Issue: c.Issue,
+		Live: func() ([]hosting.LiveCredential, error) {
+			live, err := c.Live()
+			out := make([]hosting.LiveCredential, 0, len(live))
+			for _, v := range live {
+				out = append(out, hosting.LiveCredential{ID: v.ID, Record: v.Record, Node: v.Node})
+			}
+			return out, err
+		},
+		Revoke: c.Revoke,
+	}
 }
 
 // HostCLI is the binary's `host` command: the hosted-session records in
@@ -251,7 +269,7 @@ func withInstanceDB(cmd string, fn func(*hosting.Service) error) (int, error) {
 		return 0, err
 	}
 	defer db.Close()
-	if err = fn(hosting.New(db, time.Now, func(base string) bool { return identity.RoleExists(db, base) })); err != nil {
+	if err = fn(hosting.New(db, time.Now, func(base string) bool { return identity.RoleExists(db, base) }).WithCredentials(roleCredentials(db, time.Now))); err != nil {
 		return 0, err
 	}
 	return 0, nil

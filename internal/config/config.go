@@ -30,6 +30,12 @@ const (
 // without it is an older CLI.
 const VersionHeaderName = "Version"
 
+// NodeCredentialsHeaderName is HeaderPrefix + this on GET /api/node/socket
+// (#343): a node that takes role credentials sends it with the credential
+// ids it holds, comma separated, or "-" for none. Without it the host sends
+// no credentials and the node's sessions use the profiles their records name.
+const NodeCredentialsHeaderName = "Node-Credentials"
+
 // CLIMinName is SWITCHBOARD_CLI_MIN without the prefix: the minimum client
 // major.minor (#308), read with EnvFrom. Unset or invalid: the server's own.
 const CLIMinName = "CLI_MIN"
