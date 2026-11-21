@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# scripts/go <go args...>  runs like `go <go args...>`; `scripts/go gofmt <args...>` runs gofmt.
+# Uses the host go when present, otherwise docker run golang:<major.minor from go.mod>.
+# The build and module caches live on disk (SWITCHBOARD_GO_CACHE, default
+# ${XDG_CACHE_HOME:-$HOME/.cache}/switchboard-go), never under /tmp or on tmpfs.
+set -euo pipefail
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+cache=${SWITCHBOARD_GO_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/switchboard-go}
+
+if [ "${1:-}" = "--cache-dir" ]; then
+  printf '%s\n' "$cache"
+  exit 0
+fi
+
+# Resolve to an absolute path, then find the nearest existing ancestor for the fs type.
+case $cache in /*) ;; *) cache=$PWD/$cache ;; esac
+probe=$cache
+while [ ! -e "$probe" ] && [ "$probe" != "/" ]; do probe=$(dirname "$probe"); done
+real=$(cd "$probe" && pwd -P)
+fstype=$(stat -f -c %T "$probe")
+case "$cache" in /tmp|/tmp/*) bad=1 ;; *) bad=0 ;; esac
+case "$real" in /tmp|/tmp/*) bad=1 ;; esac
+[ "$fstype" = "tmpfs" ] && bad=1
+if [ "$bad" = 1 ]; then
+  echo "scripts/go: cache dir $cache is under /tmp or on tmpfs (RAM); set SWITCHBOARD_GO_CACHE to a disk path" >&2
+  exit 2
+fi
+
+tool=go
+if [ "${1:-}" = "gofmt" ]; then tool=gofmt; shift; fi
+
+mkdir -p "$cache/build" "$cache/mod"
+
+if command -v go >/dev/null 2>&1; then
+  export GOCACHE=$cache/build GOMODCACHE=$cache/mod
+  exec "$tool" "$@"
+fi
+
+ver=$(sed -n 's/^go \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' "$root/go.mod" | head -n1)
+top=$(git rev-parse --show-toplevel 2>/dev/null || echo "$root")
+envs=()
+for name in GOOS GOARCH CGO_ENABLED $(compgen -e | grep '^SWITCHBOARD_TEST_' || true); do
+  envs+=(-e "$name")
+done
+exec docker run --rm \
+  -u "$(id -u):$(id -g)" \
+  -v "$top:$top" -w "$PWD" \
+  -v "$cache/build:/gocache/build" -v "$cache/mod:/gocache/mod" \
+  -e HOME=/tmp/gohome -e GOCACHE=/gocache/build -e GOMODCACHE=/gocache/mod \
+  -e "GOFLAGS=${GOFLAGS:+$GOFLAGS }-buildvcs=false" \
+  ${envs[@]+"${envs[@]}"} \
+  "golang:$ver" "$tool" "$@"

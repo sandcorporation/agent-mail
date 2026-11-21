@@ -47,6 +47,7 @@ jobs:
       - run: go build ./cmd/switchboard
       - run: GOOS=windows go build ./... && GOOS=windows go vet ./...
       - run: bash scripts/ci/promote_test.sh
+      - run: bash scripts/go_test.sh
   windows:
     # ConPTY backend and keeper against real Windows. The ConPTY output of
     # each golden scene is uploaded as the conpty-recordings artifact (the
