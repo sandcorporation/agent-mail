@@ -387,7 +387,7 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if parts[2] == "close" {
-				s.mail().Close(w, role, id)
+				s.mail().Close(w, r, role, id)
 				return
 			}
 			if parts[2] == "ack" || parts[2] == "complete" || parts[2] == "read" {
@@ -479,7 +479,7 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
-		s.mail().Close(w, "", id)
+		s.mail().Close(w, r, "", id)
 		return
 	}
 	if r.Method != http.MethodGet {
