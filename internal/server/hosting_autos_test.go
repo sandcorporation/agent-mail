@@ -114,18 +114,40 @@ func TestHostAutoLaunchesAStoppedSessionAndMailsItsRole(t *testing.T) {
 		t.Fatalf("a second sweep handled %d", n)
 	}
 
-	// The session already runs: only the mail.
+	// The role completes the run's mail: the session the run launched stops.
 	eventually(t, "running", func() bool { return terminals(t, base, cookie)[rec.ID].Runtime.State == "running" })
+	completeMail(t, base, *run.MailID)
+	sweepAutos(t, s)
+	if r, _ := s.hostingService().Get(rec.ID); r.Desired != "stopped" {
+		t.Fatalf("after the mail was completed desired = %s", r.Desired)
+	}
+	if run = lastAutoRun(t, s, auto.ID); run.Result != wire.AutoFired || run.EndedAt == nil || run.Detail != "mail completed, session stopped" {
+		t.Fatalf("ended run %+v", run)
+	}
+	eventually(t, "stopped by the completed mail", func() bool { return terminals(t, base, cookie)[rec.ID].Runtime.State == "stopped" })
+
+	// A session someone started already runs: only the mail, and completing
+	// it leaves the session running.
+	if got := adminCall(t, base, "PUT", "/api/admin/terminals/"+rec.ID, cookie, true, `{"desired":"running"}`); got.code != http.StatusOK {
+		t.Fatalf("start = %d %s", got.code, got.body)
+	}
+	eventually(t, "running", func() bool { return terminals(t, base, cookie)[rec.ID].Runtime.State == "running" })
+	launches := len(launchArgs(fake))
 	makeDue(t, s, auto.ID)
 	sweepAutos(t, s)
 	if run = lastAutoRun(t, s, auto.ID); run.Result != wire.AutoFired || run.Launched || run.MailID == nil {
 		t.Fatalf("run on a running session %+v", run)
 	}
-	if l := launchArgs(fake); len(l) != 1 {
+	if l := launchArgs(fake); len(l) != launches {
 		t.Fatalf("launches %q", l)
 	}
 	if m := autoMails(t, s); len(m) != 2 {
 		t.Fatalf("mails %q", m)
+	}
+	completeMail(t, base, *run.MailID)
+	sweepAutos(t, s)
+	if r, _ := s.hostingService().Get(rec.ID); r.Desired != "running" {
+		t.Fatalf("a session the run did not launch was stopped: %s", r.Desired)
 	}
 
 	// The node is away: node-offline, no mail, and the next time stays ahead
@@ -233,6 +255,101 @@ func TestHostAutoLaunchesAStoppedSessionAndMailsItsRole(t *testing.T) {
 	}
 }
 
+// completeMail marks mail id complete as its recipient, role a.
+func completeMail(t *testing.T, base string, id int64) {
+	t.Helper()
+	got := send(t, base, "POST", fmt.Sprintf("/api/messages/%d/complete", id), nil, map[string]string{"Authorization": "Bearer secret-a", "X-Switchboard-Role": "a"})
+	if got.code/100 != 2 {
+		t.Fatalf("complete %d = %d %s", id, got.code, got.body)
+	}
+}
+
+func TestHostAutoMaxRunAndBusy(t *testing.T) {
+	s, base, cookie := signedInServer(t, true)
+	token := nodeToken(t, s, "pc")
+	got := adminCall(t, base, "POST", "/api/admin/terminals", cookie, true, `{"node":"pc","base":"a","profile":"team-a","directory":"/work/app","desired":"stopped"}`)
+	var rec wire.HostedSession
+	if err := json.Unmarshal([]byte(got.body), &rec); err != nil || got.code != http.StatusCreated {
+		t.Fatalf("create = %d %s", got.code, got.body)
+	}
+	fake := termtest.New()
+	attachNode(t, base, token, fake)
+	eventually(t, "stopped", func() bool { return terminals(t, base, cookie)[rec.ID].Runtime.State == "stopped" })
+
+	got = adminCall(t, base, "POST", "/api/admin/terminals/"+rec.ID+"/autos", cookie, true, `{"cron":"0 9 * * *","prompt":"p"}`)
+	var plain wire.HostAuto
+	if err := json.Unmarshal([]byte(got.body), &plain); err != nil || plain.MaxRunMS != wire.DefaultAutoMaxRunMS {
+		t.Fatalf("default max-run: %d %s", got.code, got.body)
+	}
+	if got = adminCall(t, base, "POST", "/api/admin/terminals/"+rec.ID+"/autos", cookie, true, `{"cron":"0 9 * * *","prompt":"p","max_run_ms":5}`); got.code != http.StatusBadRequest {
+		t.Errorf("max-run under a minute = %d %s", got.code, got.body)
+	}
+	got = adminCall(t, base, "POST", "/api/admin/terminals/"+rec.ID+"/autos", cookie, true, `{"cron":"0 9 * * *","prompt":"q","max_run_ms":600000}`)
+	var auto wire.HostAuto
+	if err := json.Unmarshal([]byte(got.body), &auto); err != nil || auto.MaxRunMS != 600000 {
+		t.Fatalf("auto add = %d %s", got.code, got.body)
+	}
+
+	makeDue(t, s, auto.ID)
+	sweepAutos(t, s)
+	first := lastAutoRun(t, s, auto.ID)
+	if first.Result != wire.AutoFired || !first.Launched || first.LaunchedAt == nil || first.EndedAt != nil {
+		t.Fatalf("first run %+v", first)
+	}
+
+	// The next time comes while that session runs: busy, no mail, no launch,
+	// for this scheduled run and any other of the same session.
+	mails, launches := len(autoMails(t, s)), len(launchArgs(fake))
+	makeDue(t, s, auto.ID)
+	makeDue(t, s, plain.ID)
+	sweepAutos(t, s)
+	for _, id := range []int64{auto.ID, plain.ID} {
+		if r := lastAutoRun(t, s, id); r.Result != wire.AutoBusy || r.MailID != nil || r.Launched {
+			t.Fatalf("overlapping run of %d %+v", id, r)
+		}
+	}
+	if len(autoMails(t, s)) != mails || len(launchArgs(fake)) != launches {
+		t.Fatalf("a busy run mailed or launched")
+	}
+
+	// Max-run passes from the launch: stopped, overrun.
+	if _, err := s.db.Exec(`UPDATE host_auto_runs SET launched_at=? WHERE id=?`, *first.LaunchedAt-600000, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	sweepAutos(t, s)
+	runs, _ := s.hostingService().AutoRuns(auto.ID, 5)
+	var over wire.HostAutoRun
+	for _, r := range runs {
+		if r.ID == first.ID {
+			over = r
+		}
+	}
+	if over.Result != wire.AutoOverrun || over.EndedAt == nil || !strings.Contains(over.Detail, "max-run 10m0s") {
+		t.Fatalf("overrun run %+v", over)
+	}
+	if r, _ := s.hostingService().Get(rec.ID); r.Desired != "stopped" {
+		t.Fatalf("after max-run desired = %s", r.Desired)
+	}
+
+	// Nothing holds the session now: the next time launches it again, in a
+	// new conversation.
+	makeDue(t, s, auto.ID)
+	sweepAutos(t, s)
+	if r := lastAutoRun(t, s, auto.ID); r.Result != wire.AutoFired || !r.Launched || r.AgentSessionID == first.AgentSessionID {
+		t.Fatalf("run after overrun %+v", r)
+	}
+
+	// Stopped by hand: no longer held, so the next run is not busy.
+	if got := adminCall(t, base, "PUT", "/api/admin/terminals/"+rec.ID, cookie, true, `{"desired":"stopped"}`); got.code != http.StatusOK {
+		t.Fatalf("stop = %d %s", got.code, got.body)
+	}
+	makeDue(t, s, plain.ID)
+	sweepAutos(t, s)
+	if r := lastAutoRun(t, s, plain.ID); r.Result != wire.AutoFired || !r.Launched {
+		t.Fatalf("run after a stop by hand %+v", r)
+	}
+}
+
 func TestHostAutoKeepsTheNewest500Runs(t *testing.T) {
 	s, _, _ := signedInServer(t, true)
 	nodeToken(t, s, "pc")
@@ -277,9 +394,9 @@ func TestHostAutoCLI(t *testing.T) {
 		t.Fatalf("host add = %d %s", code, stderr)
 	}
 
-	code, out, stderr := hostCLI(t, dbPath, "auto", "add", id, "--cron", "*/5 * * * *", "--prompt", "check the queue", "--label", "queue", "--resume", "--notify", "team/boss", "--json")
+	code, out, stderr := hostCLI(t, dbPath, "auto", "add", id, "--cron", "*/5 * * * *", "--prompt", "check the queue", "--label", "queue", "--resume", "--notify", "team/boss", "--max-run", "30m", "--json")
 	var a wire.HostAuto
-	if code != 0 || json.Unmarshal([]byte(out), &a) != nil || a.Session != id || !a.Resume || a.Label != "queue" || len(a.Notify) != 1 || a.Notify[0] != "team/boss" || a.NextFireAt == nil {
+	if code != 0 || json.Unmarshal([]byte(out), &a) != nil || a.Session != id || !a.Resume || a.Label != "queue" || len(a.Notify) != 1 || a.Notify[0] != "team/boss" || a.NextFireAt == nil || a.MaxRunMS != 30*60*1000 {
 		t.Fatalf("auto add = %d %q %s", code, out, stderr)
 	}
 	aid := fmt.Sprint(a.ID)
@@ -293,6 +410,8 @@ func TestHostAutoCLI(t *testing.T) {
 		{[]string{"auto", "add", id, "--cron", "nope", "--prompt", "p"}, 1, "cron"},
 		{[]string{"auto", "add", id, "--cron", "* * * * *", "--prompt", "p", "--notify", "team/nobody"}, 1, "not a registered role"},
 		{[]string{"auto", "show", aid, "--cron", "* * * * *"}, 2, "--cron is not one of its options"},
+		{[]string{"auto", "add", id, "--cron", "* * * * *", "--prompt", "p", "--max-run", "10s"}, 2, "--max-run wants a duration"},
+		{[]string{"auto", "show", aid, "--max-run", "1h"}, 2, "--max-run is not one of its options"},
 		{[]string{"auto", "show", "999"}, 1, "no scheduled run 999"},
 		{[]string{"auto", "fly", aid}, 2, "unknown action"},
 		{[]string{"auto"}, 2, "requires ACTION"},
@@ -321,7 +440,7 @@ func TestHostAutoCLI(t *testing.T) {
 	if code != 0 || json.Unmarshal([]byte(out), &v) != nil || v.RunRequestedAt == nil || len(v.Runs) != 0 || v.Prompt != "check the queue" {
 		t.Fatalf("auto show = %d %q", code, out)
 	}
-	if code, out, _ = hostCLI(t, dbPath, "auto", "show", aid); code != 0 || !strings.Contains(out, "launch: resume") || !strings.Contains(out, "no runs yet") {
+	if code, out, _ = hostCLI(t, dbPath, "auto", "show", aid); code != 0 || !strings.Contains(out, "launch: resume, max-run 30m0s") || !strings.Contains(out, "no runs yet") {
 		t.Fatalf("auto show text = %d %q", code, out)
 	}
 	if code, out, _ = hostCLI(t, dbPath, "auto", "rm", aid); code != 0 || out != "removed "+aid {

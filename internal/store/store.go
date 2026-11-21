@@ -140,7 +140,10 @@ func Init(db *sql.DB) error {
 	if e = migrateRoleCredentials(db); e != nil {
 		return e
 	}
-	return migrateHostAutos(db)
+	if e = migrateHostAutos(db); e != nil {
+		return e
+	}
+	return migrateHostAutoStops(db)
 }
 
 // migrateRoleCredentials adds role_credentials (#343): extra tokens of a
@@ -163,6 +166,32 @@ CREATE INDEX IF NOT EXISTS host_autos_session ON host_autos(session);
 CREATE TABLE IF NOT EXISTS host_auto_runs(id INTEGER PRIMARY KEY AUTOINCREMENT, auto INTEGER NOT NULL, at INTEGER NOT NULL, result TEXT NOT NULL, manual INTEGER NOT NULL DEFAULT 0, exit_code INTEGER, duration_ms INTEGER, output TEXT NOT NULL DEFAULT '', mail_id INTEGER, launched INTEGER NOT NULL DEFAULT 0, agent_session_id TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS host_auto_runs_auto ON host_auto_runs(auto, id);`)
 	return err
+}
+
+// migrateHostAutoStops adds the stop rules of scheduled runs (#335), all
+// additive: host_autos.max_run_ms (how long a session a run launched may
+// run, default 2h) and host_auto_runs.launched_at (when the run launched the
+// session, the max-run clock's start) and ended_at (when the host stopped
+// watching the session it launched; null while it watches). Times are Unix
+// ms.
+func migrateHostAutoStops(db *sql.DB) error {
+	adds := []struct{ table, column, def string }{
+		{"host_autos", "max_run_ms", `INTEGER NOT NULL DEFAULT 7200000`},
+		{"host_auto_runs", "launched_at", `INTEGER`},
+		{"host_auto_runs", "ended_at", `INTEGER`},
+	}
+	for _, c := range adds {
+		has, err := HasColumn(db, c.table, c.column)
+		if err != nil {
+			return err
+		}
+		if !has {
+			if _, err = db.Exec(`ALTER TABLE ` + c.table + ` ADD COLUMN ` + c.column + ` ` + c.def); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // migrateQuestionRefusals adds question_refusals (#286): per role, the last

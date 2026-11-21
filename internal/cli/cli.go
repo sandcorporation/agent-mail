@@ -245,6 +245,7 @@ var commands = []command{
 			{"--prompt", "TEXT", "auto add: the mail the session gets at each run"},
 			{"--resume", "", "auto add: continue the session's last conversation when the run launches it (default: a new conversation each run)"},
 			{"--notify", "ROLE[,ROLE]", "auto add: roles told about runs that need attention"},
+			{"--max-run", "DURATION", "auto add: stop a session the run launched after this long (default 2h; it also stops when the run's mail is completed)"},
 			{"--runs", "N", "auto show: newest N runs (default 20, at most 500)"},
 			optJSON,
 		}},

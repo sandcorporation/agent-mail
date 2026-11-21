@@ -24,6 +24,10 @@ const (
 	AutoWaiting     = "waiting"
 )
 
+// DefaultAutoMaxRunMS is a scheduled run's max-run when none is given: a
+// session the run launched is stopped after two hours.
+const DefaultAutoMaxRunMS int64 = 2 * 60 * 60 * 1000
+
 // HostAuto is one scheduled run of a hosted session. Times are Unix ms.
 type HostAuto struct {
 	ID      int64  `json:"id"`
@@ -36,9 +40,12 @@ type HostAuto struct {
 	// false starts a new conversation each run.
 	Resume bool `json:"resume"`
 	// Notify are the roles told about runs that need attention (#336).
-	Notify     []string `json:"notify"`
-	State      string   `json:"state"`
-	NextFireAt *int64   `json:"next_fire_at"`
+	Notify []string `json:"notify"`
+	// MaxRunMS is how long a session this run launched may run before the
+	// host stops it (result overrun), from its launch.
+	MaxRunMS   int64  `json:"max_run_ms"`
+	State      string `json:"state"`
+	NextFireAt *int64 `json:"next_fire_at"`
 	// RunRequestedAt is a `host auto run` the host has not handled yet.
 	RunRequestedAt *int64       `json:"run_requested_at,omitempty"`
 	CreatedAt      int64        `json:"created_at"`
@@ -54,6 +61,8 @@ type HostAutoCreate struct {
 	Label  string   `json:"label,omitempty"`
 	Resume bool     `json:"resume,omitempty"`
 	Notify []string `json:"notify,omitempty"`
+	// MaxRunMS is the max-run; 0 is DefaultAutoMaxRunMS.
+	MaxRunMS int64 `json:"max_run_ms,omitempty"`
 }
 
 // HostAutoRun is one line of a scheduled run's history.
@@ -73,7 +82,13 @@ type HostAutoRun struct {
 	// then the conversation it started (or resumed).
 	Launched       bool   `json:"launched"`
 	AgentSessionID string `json:"agent_session_id,omitempty"`
-	Detail         string `json:"detail,omitempty"`
+	// LaunchedAt is when the run launched the session (the max-run clock's
+	// start); EndedAt is when the host stopped watching it: the run's mail
+	// was completed, max-run passed, or the session stopped otherwise. A
+	// launched run without EndedAt still holds its session (#335).
+	LaunchedAt *int64 `json:"launched_at,omitempty"`
+	EndedAt    *int64 `json:"ended_at,omitempty"`
+	Detail     string `json:"detail,omitempty"`
 }
 
 // HostAutoView is `host auto show` and GET …/autos/{id}: the record and its

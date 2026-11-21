@@ -19,20 +19,23 @@ const (
 	// AutoRunsKept is how many history lines a scheduled run keeps.
 	AutoRunsKept  = 500
 	maxAutoPrompt = 16 << 10
+	// minAutoMaxRun and maxAutoMaxRun bound a scheduled run's max-run.
+	minAutoMaxRun = 60 * 1000
+	maxAutoMaxRun = 7 * 24 * 60 * 60 * 1000
 )
 
 // ErrNoSuchAuto means no scheduled run has the given id (or it belongs to
 // another hosted session).
 var ErrNoSuchAuto = errors.New("no such scheduled run")
 
-const autoColumns = `id,session,cron,tz,prompt,label,resume,notify,state,next_fire_at,run_requested_at,created_at,updated_at`
+const autoColumns = `id,session,cron,tz,prompt,label,resume,notify,state,next_fire_at,run_requested_at,created_at,updated_at,max_run_ms`
 
 func scanAuto(r rowScanner) (wire.HostAuto, error) {
 	var a wire.HostAuto
 	var resume int
 	var notify string
 	var next, req sql.NullInt64
-	if err := r.Scan(&a.ID, &a.Session, &a.Cron, &a.TZ, &a.Prompt, &a.Label, &resume, &notify, &a.State, &next, &req, &a.CreatedAt, &a.UpdatedAt); err != nil {
+	if err := r.Scan(&a.ID, &a.Session, &a.Cron, &a.TZ, &a.Prompt, &a.Label, &resume, &notify, &a.State, &next, &req, &a.CreatedAt, &a.UpdatedAt, &a.MaxRunMS); err != nil {
 		return a, err
 	}
 	a.Resume = resume != 0
@@ -74,6 +77,9 @@ func (s *Service) checkAuto(c wire.HostAutoCreate) error {
 	if len(c.Prompt) > maxAutoPrompt || strings.ContainsRune(c.Prompt, 0) {
 		return invalidf("prompt: at most %d bytes of text", maxAutoPrompt)
 	}
+	if c.MaxRunMS != 0 && (c.MaxRunMS < minAutoMaxRun || c.MaxRunMS > maxAutoMaxRun) {
+		return invalidf("max_run_ms: from %d (1m) to %d (7 days)", minAutoMaxRun, maxAutoMaxRun)
+	}
 	if err := checkLabel(c.Label); err != nil {
 		return err
 	}
@@ -108,9 +114,13 @@ func (s *Service) CreateAuto(id string, c wire.HostAutoCreate) (wire.HostAuto, e
 		notify = []string{}
 	}
 	nb, _ := json.Marshal(notify)
+	maxRun := c.MaxRunMS
+	if maxRun == 0 {
+		maxRun = wire.DefaultAutoMaxRunMS
+	}
 	ms := now.UnixMilli()
-	res, err := s.db.Exec(`INSERT INTO host_autos(session,cron,tz,prompt,label,resume,notify,state,next_fire_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-		id, c.Cron, tz, c.Prompt, c.Label, boolInt(c.Resume), string(nb), wire.HostAutoActive, *next, ms, ms)
+	res, err := s.db.Exec(`INSERT INTO host_autos(session,cron,tz,prompt,label,resume,notify,state,next_fire_at,created_at,updated_at,max_run_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+		id, c.Cron, tz, c.Prompt, c.Label, boolInt(c.Resume), string(nb), wire.HostAutoActive, *next, ms, ms, maxRun)
 	if err != nil {
 		return wire.HostAuto{}, err
 	}
@@ -179,7 +189,13 @@ func (s *Service) AutoRuns(id int64, n int) ([]wire.HostAutoRun, error) {
 	if n <= 0 || n > AutoRunsKept {
 		n = AutoRunsKept
 	}
-	rows, err := s.db.Query(`SELECT id,auto,at,result,manual,exit_code,duration_ms,output,mail_id,launched,agent_session_id,detail FROM host_auto_runs WHERE auto=? ORDER BY id DESC LIMIT ?`, id, n)
+	return s.queryAutoRuns(`WHERE auto=? ORDER BY id DESC LIMIT ?`, id, n)
+}
+
+const autoRunColumns = `id,auto,at,result,manual,exit_code,duration_ms,output,mail_id,launched,agent_session_id,detail,launched_at,ended_at`
+
+func (s *Service) queryAutoRuns(where string, args ...any) ([]wire.HostAutoRun, error) {
+	rows, err := s.db.Query(`SELECT `+autoRunColumns+` FROM host_auto_runs `+where, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -189,8 +205,8 @@ func (s *Service) AutoRuns(id int64, n int) ([]wire.HostAutoRun, error) {
 		var r wire.HostAutoRun
 		var manual, launched int
 		var exit sql.NullInt64
-		var dur, mailID sql.NullInt64
-		if err := rows.Scan(&r.ID, &r.Auto, &r.At, &r.Result, &manual, &exit, &dur, &r.Output, &mailID, &launched, &r.AgentSessionID, &r.Detail); err != nil {
+		var dur, mailID, launchedAt, endedAt sql.NullInt64
+		if err := rows.Scan(&r.ID, &r.Auto, &r.At, &r.Result, &manual, &exit, &dur, &r.Output, &mailID, &launched, &r.AgentSessionID, &r.Detail, &launchedAt, &endedAt); err != nil {
 			return nil, err
 		}
 		r.Manual, r.Launched = manual != 0, launched != 0
@@ -204,9 +220,38 @@ func (s *Service) AutoRuns(id int64, n int) ([]wire.HostAutoRun, error) {
 		if mailID.Valid {
 			r.MailID = &mailID.Int64
 		}
+		if launchedAt.Valid {
+			r.LaunchedAt = &launchedAt.Int64
+		}
+		if endedAt.Valid {
+			r.EndedAt = &endedAt.Int64
+		}
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// heldAutoRuns are the runs that launched a session the host still watches
+// (launched, not ended), oldest first; only those of the hosted session id's
+// scheduled runs when id is not empty.
+func (s *Service) heldAutoRuns(id string) ([]wire.HostAutoRun, error) {
+	if id != "" {
+		return s.queryAutoRuns(`WHERE launched=1 AND ended_at IS NULL AND auto IN (SELECT id FROM host_autos WHERE session=?) ORDER BY id`, id)
+	}
+	return s.queryAutoRuns(`WHERE launched=1 AND ended_at IS NULL ORDER BY id`)
+}
+
+// endAutoRun stops watching the session run id launched, at ms; a non-empty
+// result replaces the run's (overrun) and detail is added to its detail.
+// It reports whether this call ended it (a second one finds it ended).
+func (s *Service) endAutoRun(id, ms int64, result, detail string) (bool, error) {
+	res, err := s.db.Exec(`UPDATE host_auto_runs SET ended_at=?, result=CASE WHEN ?='' THEN result ELSE ? END, detail=CASE WHEN ?='' THEN detail WHEN detail='' THEN ? ELSE detail||'; '||? END WHERE id=? AND ended_at IS NULL`,
+		ms, result, result, detail, detail, detail, id)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 // AutoView is the scheduled run id with its newest n history lines.
@@ -305,8 +350,15 @@ func (s *Service) addAutoRun(r wire.HostAutoRun) (wire.HostAutoRun, error) {
 	if r.DurationMS != nil {
 		dur = *r.DurationMS
 	}
-	res, err := s.db.Exec(`INSERT INTO host_auto_runs(auto,at,result,manual,exit_code,duration_ms,output,mail_id,launched,agent_session_id,detail) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-		r.Auto, r.At, r.Result, boolInt(r.Manual), exit, dur, r.Output, mailID, boolInt(r.Launched), r.AgentSessionID, r.Detail)
+	var launchedAt, endedAt any
+	if r.LaunchedAt != nil {
+		launchedAt = *r.LaunchedAt
+	}
+	if r.EndedAt != nil {
+		endedAt = *r.EndedAt
+	}
+	res, err := s.db.Exec(`INSERT INTO host_auto_runs(auto,at,result,manual,exit_code,duration_ms,output,mail_id,launched,agent_session_id,detail,launched_at,ended_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		r.Auto, r.At, r.Result, boolInt(r.Manual), exit, dur, r.Output, mailID, boolInt(r.Launched), r.AgentSessionID, r.Detail, launchedAt, endedAt)
 	if err != nil {
 		return r, err
 	}

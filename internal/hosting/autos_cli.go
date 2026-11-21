@@ -132,7 +132,7 @@ func printAutoView(w io.Writer, v wire.HostAutoView) {
 	}
 	fmt.Fprintf(w, "scheduled run %d of %s\n", v.ID, v.Session)
 	fmt.Fprintf(w, "cron %s (%s), %s, next %s\n", v.Cron, v.TZ, v.State, msTime(v.NextFireAt))
-	fmt.Fprintf(w, "launch: %s\n", mode)
+	fmt.Fprintf(w, "launch: %s, max-run %s\n", mode, time.Duration(v.MaxRunMS)*time.Millisecond)
 	if v.Label != "" {
 		fmt.Fprintf(w, "label: %s\n", v.Label)
 	}
