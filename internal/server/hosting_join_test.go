@@ -37,6 +37,7 @@ func dialNode(t *testing.T, base, token string) int {
 }
 
 func TestNodeInviteJoinAndRevoke(t *testing.T) {
+	t.Parallel()
 	s, base, cookie := signedInServer(t, true)
 	code, _, err := s.hostingService().InviteNode("pc2")
 	if err != nil {
@@ -116,6 +117,7 @@ func TestNodeInviteJoinAndRevoke(t *testing.T) {
 }
 
 func TestRevokedInDatabaseIsDroppedAtSync(t *testing.T) {
+	t.Parallel()
 	s, base, cookie := signedInServer(t, true)
 	token := nodeToken(t, s, "pc")
 	got := adminCall(t, base, "POST", "/api/admin/terminals", cookie, true, newRecord)
@@ -135,6 +137,7 @@ func TestRevokedInDatabaseIsDroppedAtSync(t *testing.T) {
 }
 
 func TestJoinRouteAnswers(t *testing.T) {
+	t.Parallel()
 	_, base, _ := signedInServer(t, true)
 	for body, want := range map[string]int{`{}`: 401, `{"code":"sbj_nope"}`: 401, `nope`: 400} {
 		req, _ := http.NewRequest("POST", base+"/api/node/join", strings.NewReader(body))
@@ -155,6 +158,7 @@ func TestJoinRouteAnswers(t *testing.T) {
 // TestNodeRefusesAHostOutsideTheRanges: names are covered with an injected
 // resolver in TestCheckNodeHost.
 func TestNodeRefusesAHostOutsideTheRanges(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	for _, host := range []string{"http://192.0.2.10:8090", "https://[2001:db8::1]:8090"} {
 		err := Node("test", host, filepath.Join(dir, "node.token"), "sbj_x", false)
@@ -171,6 +175,7 @@ func TestNodeRefusesAHostOutsideTheRanges(t *testing.T) {
 }
 
 func TestNodeInviteCLI(t *testing.T) {
+	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "pc.db")
 	code, out, stderr := binaryCLI(t, dbPath, "node", "invite", "laptop")
 	if code != 0 || !strings.HasPrefix(out, "sbj_") {

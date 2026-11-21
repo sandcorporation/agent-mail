@@ -36,6 +36,7 @@ func jobHarness(t *testing.T) *cliHarness {
 }
 
 func TestJobRunWaitStreamsAndExitsWithTheCode(t *testing.T) {
+	t.Parallel()
 	h := jobHarness(t)
 	r := h.run(nil, "job", "run", "--wait", "--label", "build", "--", "sh", "-c", "echo out; echo err >&2; exit 3")
 	if r.code != 3 || r.stdout != "out\nerr" {
@@ -56,6 +57,7 @@ func TestJobRunWaitStreamsAndExitsWithTheCode(t *testing.T) {
 }
 
 func TestJobRunUnwatchedMailsTheEndOnce(t *testing.T) {
+	t.Parallel()
 	h := jobHarness(t)
 	out := h.mustRun(nil, "job", "run", "--idem", "k", "--", "sh", "-c", "echo boom; exit 4")
 	id, err := strconv.ParseInt(out, 10, 64)
@@ -84,6 +86,7 @@ func TestJobRunUnwatchedMailsTheEndOnce(t *testing.T) {
 }
 
 func TestJobSurvivesAKilledWaiterAndWaitReattaches(t *testing.T) {
+	t.Parallel()
 	h := jobHarness(t)
 	ready := filepath.Join(t.TempDir(), "ready")
 	cmd := exec.Command(os.Args[0], "-test.run=^TestCLIHelperProcess$")
@@ -105,8 +108,21 @@ func TestJobSurvivesAKilledWaiterAndWaitReattaches(t *testing.T) {
 	if j, _ := h.s.jobs().Get(id); wire.JobEnded(j.State) {
 		t.Fatalf("job ended with its waiter: %+v", j)
 	}
+	// Let the command finish only once the new waiter has registered: a
+	// fixed pause raced the waiter's start on a busy machine (#340).
+	killed := strconv.Itoa(cmd.Process.Pid)
 	go func() {
-		time.Sleep(300 * time.Millisecond)
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			entries, _ := os.ReadDir(filepath.Join(h.jobDir(id), "waiters"))
+			for _, e := range entries {
+				if e.Name() != killed {
+					_ = os.WriteFile(ready, nil, 0o600)
+					return
+				}
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
 		_ = os.WriteFile(ready, nil, 0o600)
 	}()
 	r := h.run(nil, "job", "wait", strconv.FormatInt(id, 10))
@@ -122,6 +138,7 @@ func TestJobSurvivesAKilledWaiterAndWaitReattaches(t *testing.T) {
 }
 
 func TestJobStop(t *testing.T) {
+	t.Parallel()
 	h := jobHarness(t)
 	out := h.mustRun(nil, "job", "run", "--", "sh", "-c", "echo up; sleep 30")
 	id, _ := strconv.ParseInt(out, 10, 64)
@@ -165,6 +182,7 @@ func (h *cliHarness) runnerGone(id int64) {
 // A stop from the dashboard reaches the runner through the server record
 // alone: nothing on this machine signals it.
 func TestJobStopFromTheDashboardReachesTheRunner(t *testing.T) {
+	t.Parallel()
 	h := jobHarness(t)
 	h.s.admin.ProxyToken = "proxy-secret"
 	out := h.mustRun(fastPoll, "job", "run", "--", "sh", "-c", "echo up; sleep 30")
@@ -185,6 +203,7 @@ func TestJobStopFromTheDashboardReachesTheRunner(t *testing.T) {
 
 // At its expiry the runner terminates the command: state expired, one mail.
 func TestJobExpiresAtItsDeadline(t *testing.T) {
+	t.Parallel()
 	h := jobHarness(t)
 	out := h.mustRun(fastPoll, "job", "run", "--expires", "1s", "--label", "slow", "--", "sh", "-c", "echo up; sleep 30")
 	id, _ := strconv.ParseInt(out, 10, 64)
@@ -200,6 +219,7 @@ func TestJobExpiresAtItsDeadline(t *testing.T) {
 
 // The runner follows an expiry the server moved forward (auto-extension).
 func TestJobRunnerFollowsAMovedExpiry(t *testing.T) {
+	t.Parallel()
 	h := jobHarness(t)
 	h.s.admin.ProxyToken = "proxy-secret"
 	out := h.mustRun(fastPoll, "job", "run", "--expires", "2s", "--", "sh", "-c", "sleep 30")

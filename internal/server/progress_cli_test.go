@@ -66,6 +66,7 @@ const progressWebBlock = "web [busy] 마지막 소식 12분 전 — PR 열림\n"
 	"    #6 → web/coord pending 10분 지남 — (제목 없음)\n"
 
 func TestProgressCommandText(t *testing.T) {
+	t.Parallel()
 	h, api := progressHarness(t)
 	// Relative times count from generated_at, so the local zone must not matter.
 	out := h.mustRun([]string{"TZ=Asia/Seoul"}, "progress")
@@ -89,6 +90,7 @@ func TestProgressCommandText(t *testing.T) {
 }
 
 func TestProgressCommandServiceFilter(t *testing.T) {
+	t.Parallel()
 	h, _ := progressHarness(t)
 	if out := h.mustRun(nil, "progress", "web"); out != strings.TrimSpace(progressWebBlock) {
 		t.Fatalf("web only:\n%s", out)
@@ -103,6 +105,7 @@ func TestProgressCommandServiceFilter(t *testing.T) {
 }
 
 func TestProgressCommandPassthrough(t *testing.T) {
+	t.Parallel()
 	h, _ := progressHarness(t)
 	for _, args := range [][]string{{"progress", "--json"}, {"progress", "web", "--json"}} {
 		if out := h.mustRun(nil, args...); out != progressJSON {
@@ -112,6 +115,7 @@ func TestProgressCommandPassthrough(t *testing.T) {
 }
 
 func TestProgressCommandForbidden(t *testing.T) {
+	t.Parallel()
 	h, api := progressHarness(t)
 	api.status = http.StatusForbidden
 	for _, args := range [][]string{{"progress"}, {"progress", "--json"}, {"progress", "web"}} {

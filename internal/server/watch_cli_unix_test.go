@@ -44,6 +44,7 @@ func (h *cliHarness) startWatch(args ...string) int64 {
 }
 
 func TestWatchLinesWithinTheWindowMakeOneMail(t *testing.T) {
+	t.Parallel()
 	h := jobHarness(t)
 	id := h.startWatch("--batch", "300ms", "--label", "app log", "--", "sh", "-c", "for i in 1 2 3 4 5; do echo l$i; done; sleep 30")
 	m := h.watchMails(1)
@@ -68,6 +69,7 @@ func TestWatchLinesWithinTheWindowMakeOneMail(t *testing.T) {
 }
 
 func TestWatchLinesInTwoWindowsMakeTwoMailsAndTheExitOneEndMail(t *testing.T) {
+	t.Parallel()
 	h := jobHarness(t)
 	ready := filepath.Join(t.TempDir(), "ready")
 	id := h.startWatch("--batch", "200ms", "--label", "w", "--", "sh", "-c",
@@ -94,6 +96,7 @@ func TestWatchLinesInTwoWindowsMakeTwoMailsAndTheExitOneEndMail(t *testing.T) {
 // While attached, lines stream to stdout and no mail goes out; a killed
 // attacher leaves the watch running and mail takes over.
 func TestWatchAttachStreamsThenAKilledAttacherHandsOverToMail(t *testing.T) {
+	t.Parallel()
 	h := jobHarness(t)
 	ready := filepath.Join(t.TempDir(), "ready")
 	cmd := exec.Command(os.Args[0], "-test.run=^TestCLIHelperProcess$")

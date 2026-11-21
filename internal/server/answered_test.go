@@ -44,6 +44,7 @@ func answeredFixture(t *testing.T, s *Server, at time.Time) (open []int64, answe
 }
 
 func TestProgressAnsweredDirectivesHidden(t *testing.T) {
+	t.Parallel()
 	s, clock := slotServer(t)
 	open, _, _ := answeredFixture(t, s, clock.now().Add(-time.Hour))
 	var got []int64
@@ -64,6 +65,7 @@ func TestProgressAnsweredDirectivesHidden(t *testing.T) {
 }
 
 func TestMetricsFirstReplyFollowsAnsweredRule(t *testing.T) {
+	t.Parallel()
 	s, clock := slotServer(t)
 	_, answered, total := answeredFixture(t, s, clock.now().Add(-time.Hour))
 	fr := mustMetrics(t, s, 7).FirstReply
@@ -74,6 +76,7 @@ func TestMetricsFirstReplyFollowsAnsweredRule(t *testing.T) {
 
 // More directives than one lookup chunk: every replied one is still found.
 func TestProgressAnsweredAcrossChunks(t *testing.T) {
+	t.Parallel()
 	s, clock := slotServer(t)
 	s.bossRoles = map[string]bool{"hq/boss": true}
 	at := clock.now().Add(-time.Hour).UTC().Format(time.RFC3339Nano)

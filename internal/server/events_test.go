@@ -146,6 +146,7 @@ func eventServer(t *testing.T) (*Server, string) {
 }
 
 func TestEventsStreamNewMailForOwnRoleOnly(t *testing.T) {
+	t.Parallel()
 	s, base := eventServer(t)
 	st := openEvents(t, base, "secret-b", "b", nil, "")
 	h := st.resp.Header
@@ -171,6 +172,7 @@ func TestEventsStreamNewMailForOwnRoleOnly(t *testing.T) {
 }
 
 func TestEventsBacklogOnConnectAndResumeByLastEventID(t *testing.T) {
+	t.Parallel()
 	s, base := eventServer(t)
 	first := sendMail(t, s, "secret-a", "b", "one")
 	read := sendMail(t, s, "secret-a", "b", "already-read")
@@ -209,6 +211,7 @@ func TestEventsBacklogOnConnectAndResumeByLastEventID(t *testing.T) {
 }
 
 func TestEventsRejectsBadCredentialsAndCursor(t *testing.T) {
+	t.Parallel()
 	_, base := eventServer(t)
 	for _, c := range []struct{ token, role string }{{"wrong", "b"}, {"secret-a", "b"}, {"", "b"}} {
 		req, _ := http.NewRequest("GET", base+"/api/events", nil)
@@ -240,6 +243,7 @@ func TestEventsRejectsBadCredentialsAndCursor(t *testing.T) {
 }
 
 func TestEventsKeepAliveAndShutdown(t *testing.T) {
+	t.Parallel()
 	s, base := eventServer(t)
 	s.mailCfg.KeepAlive = 30 * time.Millisecond
 	s.done = make(chan struct{})
@@ -267,6 +271,7 @@ func TestEventsKeepAliveAndShutdown(t *testing.T) {
 }
 
 func TestEventsSlowSubscriberDoesNotBlockSendOrLoseMail(t *testing.T) {
+	t.Parallel()
 	s, base := eventServer(t)
 	st := openEvents(t, base, "secret-b", "b", nil, "")
 	st.untilReady(t)
@@ -287,6 +292,7 @@ func TestEventsSlowSubscriberDoesNotBlockSendOrLoseMail(t *testing.T) {
 }
 
 func TestEventsStreamEndsAfterRevoke(t *testing.T) {
+	t.Parallel()
 	s, base := eventServer(t)
 	s.mailCfg.KeepAlive = 30 * time.Millisecond
 	st := openEvents(t, base, "secret-b", "b", nil, "")

@@ -99,6 +99,7 @@ func questionMail(t *testing.T, s *Server, id string) []mailRow {
 }
 
 func TestQuestionAskRequiresCanAsk(t *testing.T) {
+	t.Parallel()
 	s := questionServer(t)
 	if _, err := s.db.Exec(`UPDATE question_settings SET can_ask=0`); err != nil {
 		t.Fatal(err)
@@ -126,6 +127,7 @@ func TestQuestionAskRequiresCanAsk(t *testing.T) {
 // A boss role's question has nobody to answer it but a person on the
 // dashboard: it is stored (201, answerer "owner") and answered there.
 func TestQuestionByBossGoesToOwner(t *testing.T) {
+	t.Parallel()
 	s := questionServer(t)
 	s.admin.ProxyToken = "proxy-secret"
 
@@ -188,6 +190,7 @@ func TestQuestionByBossGoesToOwner(t *testing.T) {
 // The asker of an owner question answers it itself from its session panel:
 // the answer is stored as "panel", mailed to the asker and kept as a decision.
 func TestOwnerQuestionAnsweredFromPanel(t *testing.T) {
+	t.Parallel()
 	s := questionServer(t)
 	s.admin.ProxyToken = "proxy-secret"
 	v := askQuestionAs(t, s, bossToken, "sandcorp/boss", 201)
@@ -229,6 +232,7 @@ func TestOwnerQuestionAnsweredFromPanel(t *testing.T) {
 
 // An ordinary question is never answered by its asker.
 func TestOrdinaryQuestionAskerCannotAnswer(t *testing.T) {
+	t.Parallel()
 	s := questionServer(t)
 	v := askQuestionAs(t, s, workerToken, "team/worker", 201)
 	if v.Answerer != "" {
@@ -238,6 +242,7 @@ func TestOrdinaryQuestionAskerCannotAnswer(t *testing.T) {
 }
 
 func TestQuestionAskValidation(t *testing.T) {
+	t.Parallel()
 	s := questionServer(t)
 	long := strings.Repeat("x", 1001)
 	bad := map[string]func([]wire.QuestionItem) []wire.QuestionItem{
@@ -279,6 +284,7 @@ func TestQuestionAskValidation(t *testing.T) {
 }
 
 func TestQuestionAnswerRules(t *testing.T) {
+	t.Parallel()
 	s := questionServer(t)
 	v := askQuestionAs(t, s, workerToken, "team/worker", 201)
 	answerQuestionAs(t, s, "secret-a", "a", v.ID, sampleAnswers(), 403) // not a boss
@@ -301,6 +307,7 @@ func TestQuestionAnswerRules(t *testing.T) {
 }
 
 func TestQuestionWithdrawOnlyByAskerBase(t *testing.T) {
+	t.Parallel()
 	s := questionServer(t)
 	v := askQuestionAs(t, s, workerToken, "team/worker", 201)
 	withdrawAs(t, s, "secret-a", "a", v.ID, 403)
@@ -317,6 +324,7 @@ func TestQuestionWithdrawOnlyByAskerBase(t *testing.T) {
 }
 
 func TestQuestionAnswerValidation(t *testing.T) {
+	t.Parallel()
 	s := questionServer(t)
 	v := askQuestionAs(t, s, workerToken, "team/worker", 201)
 	cases := map[string][]wire.QuestionAnswer{
@@ -340,6 +348,7 @@ func TestQuestionAnswerValidation(t *testing.T) {
 }
 
 func TestQuestionMail(t *testing.T) {
+	t.Parallel()
 	s := questionServer(t)
 	// a watches; team/worker (the asker's base) and an unknown role are skipped.
 	if _, err := s.db.Exec(`UPDATE question_settings SET watchers='["a","team/worker-2","ghost","a"]'`); err != nil {
@@ -370,6 +379,7 @@ func TestQuestionMail(t *testing.T) {
 }
 
 func TestQuestionReadAndList(t *testing.T) {
+	t.Parallel()
 	s := questionServer(t)
 	v1 := askQuestionAs(t, s, workerToken, "team/worker", 201)
 	v2 := askQuestionAs(t, s, "secret-b", "b", 201)
@@ -430,6 +440,7 @@ func pollAs(t *testing.T, s *Server, token, role, query string) asks.QuestionPol
 }
 
 func TestQuestionPoll(t *testing.T) {
+	t.Parallel()
 	s := questionServer(t)
 	v1 := askQuestionAs(t, s, workerToken, "team/worker", 201)
 	v2 := askQuestionAs(t, s, "secret-b", "b", 201)
@@ -477,6 +488,7 @@ func TestQuestionPoll(t *testing.T) {
 }
 
 func TestQuestionConcurrentAnswersOneWins(t *testing.T) {
+	t.Parallel()
 	s := questionServer(t)
 	v := askQuestionAs(t, s, workerToken, "team/worker", 201)
 	codes := make(chan int, 8)
@@ -502,6 +514,7 @@ func TestQuestionConcurrentAnswersOneWins(t *testing.T) {
 }
 
 func TestQuestionDashboardCore(t *testing.T) {
+	t.Parallel()
 	s := questionServer(t)
 	s.bossRoles = map[string]bool{"sandcorp/boss": true}
 	v := askQuestionAs(t, s, workerToken, "team/worker", 201)
@@ -529,6 +542,7 @@ func TestQuestionDashboardCore(t *testing.T) {
 }
 
 func TestQuestionCommand(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarnessWith(t, func(s *Server) {
 		s.bossRoles = map[string]bool{"a": true}
 		if _, err := s.db.Exec(`UPDATE question_settings SET can_ask=1`); err != nil {

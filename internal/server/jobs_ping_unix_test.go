@@ -11,6 +11,7 @@ import (
 )
 
 func TestJobPingPassesWhenAHandOverCanWork(t *testing.T) {
+	t.Parallel()
 	h := jobHarness(t)
 	o := h.ping(nil)
 	if !o.OK || o.Exit != 0 || len(o.Checks) != 5 {
@@ -26,6 +27,7 @@ func TestJobPingPassesWhenAHandOverCanWork(t *testing.T) {
 }
 
 func TestJobPingReadOnlyDataDirectoryIsADataFailure(t *testing.T) {
+	t.Parallel()
 	if os.Geteuid() == 0 {
 		t.Skip("root writes through a read-only mode")
 	}

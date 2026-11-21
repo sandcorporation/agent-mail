@@ -232,6 +232,7 @@ func callback(s *Server, code, state string, flow *http.Cookie) *httptest.Respon
 }
 
 func TestOIDCLoginRedirect(t *testing.T) {
+	t.Parallel()
 	p := newFakeIdP(t)
 	s, _ := oidcServer(t, p, "admin@example.com")
 	loc, _ := startOIDC(t, s)
@@ -260,6 +261,7 @@ func TestOIDCLoginRedirect(t *testing.T) {
 }
 
 func TestOIDCLoginPage(t *testing.T) {
+	t.Parallel()
 	p := newFakeIdP(t)
 	s, _ := oidcServer(t, p, "admin@example.com")
 	w := doAuth(s, authReq{method: "GET", path: "/"})
@@ -274,6 +276,7 @@ func TestOIDCLoginPage(t *testing.T) {
 }
 
 func TestOIDCSuccessStartsSession(t *testing.T) {
+	t.Parallel()
 	p := newFakeIdP(t)
 	s, now := oidcServer(t, p, "Admin@Example.com, sub:other")
 	loc, flow := startOIDC(t, s)
@@ -310,6 +313,7 @@ func TestOIDCSuccessStartsSession(t *testing.T) {
 }
 
 func TestOIDCSubjectAllowlist(t *testing.T) {
+	t.Parallel()
 	p := newFakeIdP(t)
 	s, now := oidcServer(t, p, "sub:user-9")
 	loc, flow := startOIDC(t, s)
@@ -323,6 +327,7 @@ func TestOIDCSubjectAllowlist(t *testing.T) {
 }
 
 func TestOIDCCallbackRefusals(t *testing.T) {
+	t.Parallel()
 	p := newFakeIdP(t)
 	cases := map[string]struct {
 		admins string
@@ -352,6 +357,7 @@ func TestOIDCCallbackRefusals(t *testing.T) {
 }
 
 func TestOIDCFlowCookieRefusals(t *testing.T) {
+	t.Parallel()
 	p := newFakeIdP(t)
 	s, now := oidcServer(t, p, "admin@example.com")
 	refused := func(name string, w *httptest.ResponseRecorder) {
@@ -396,6 +402,7 @@ func TestOIDCFlowCookieRefusals(t *testing.T) {
 }
 
 func TestOIDCSessionEndsWhenRemovedFromAllowlist(t *testing.T) {
+	t.Parallel()
 	p := newFakeIdP(t)
 	s, now := oidcServer(t, p, "admin@example.com")
 	loc, flow := startOIDC(t, s)
@@ -411,6 +418,7 @@ func TestOIDCSessionEndsWhenRemovedFromAllowlist(t *testing.T) {
 }
 
 func TestOIDCConfig(t *testing.T) {
+	t.Parallel()
 	p := newFakeIdP(t)
 	full := oidcEnv(p, "admin@example.com")
 	if err := adminauth.Configure(&adminauth.Config{}, fakeEnv(full)); err != nil {

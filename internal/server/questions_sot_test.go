@@ -205,6 +205,7 @@ func (h *sotHarness) poll(query string) asks.QuestionPoll {
 
 // 1. A boss panel answers: answered by that boss role, one answer mail.
 func TestQuestionSingleSourceOfTruth_PanelAnswer(t *testing.T) {
+	t.Parallel()
 	h := newSOT(t)
 	v := h.ask(sotAskerToken, sotAsker)
 	h.wantAnswerMail(sotAskerToken, sotAsker, v.ID, 0)
@@ -218,6 +219,7 @@ func TestQuestionSingleSourceOfTruth_PanelAnswer(t *testing.T) {
 
 // 2. The dashboard answers: answered by "dashboard", one answer mail.
 func TestQuestionSingleSourceOfTruth_DashboardAnswer(t *testing.T) {
+	t.Parallel()
 	h := newSOT(t)
 	v := h.ask(sotAskerToken, sotAsker)
 	h.dashboardAnswer(v.ID, 200)
@@ -228,6 +230,7 @@ func TestQuestionSingleSourceOfTruth_DashboardAnswer(t *testing.T) {
 // 3. Panel and dashboard both answer, in either order: the second gets 409,
 // the first answer stays, and the asker is told once.
 func TestQuestionSingleSourceOfTruth_FirstAnswerWins(t *testing.T) {
+	t.Parallel()
 	t.Run("panel then dashboard", func(t *testing.T) {
 		h := newSOT(t)
 		v := h.ask(sotAskerToken, sotAsker)
@@ -249,6 +252,7 @@ func TestQuestionSingleSourceOfTruth_FirstAnswerWins(t *testing.T) {
 // 4. A withdrawn question takes no answer from either side (409) and nobody
 // is mailed an answer.
 func TestQuestionSingleSourceOfTruth_WithdrawBeforeAnswer(t *testing.T) {
+	t.Parallel()
 	h := newSOT(t)
 	v := h.ask(sotAskerToken, sotAsker)
 	h.withdraw(sotAskerToken, sotAsker, v.ID, 200)
@@ -267,6 +271,7 @@ func TestQuestionSingleSourceOfTruth_WithdrawBeforeAnswer(t *testing.T) {
 // (release) and a new session registers under the same role. The answer
 // reaches the role address once and the restarted session's inbox shows it.
 func TestQuestionSingleSourceOfTruth_AskerSessionRestarts(t *testing.T) {
+	t.Parallel()
 	register := func(h *sotHarness, dir, session string) wire.SlotGrant {
 		t.Helper()
 		code, body := h.as("POST", "/api/slots/register", sotAskerToken, sotAsker, wire.SlotRequest{Machine: "box-1", Directory: dir, SessionID: session})
@@ -314,6 +319,7 @@ func TestQuestionSingleSourceOfTruth_AskerSessionRestarts(t *testing.T) {
 // 6. A boss long poll sees create, answer and withdraw once each, so a boss
 // panel closes items answered or withdrawn elsewhere.
 func TestQuestionSingleSourceOfTruth_BossPollSeesEachChangeOnce(t *testing.T) {
+	t.Parallel()
 	h := newSOT(t)
 	cursor := h.poll("?after=0&timeout=0").Cursor
 	once := func(step, id, status string) {
@@ -361,6 +367,7 @@ func TestQuestionSingleSourceOfTruth_BossPollSeesEachChangeOnce(t *testing.T) {
 // 7. An owner question (no boss of another base) is answered by its asker,
 // stored as "panel", with one answer mail.
 func TestQuestionSingleSourceOfTruth_OwnerQuestionPanelAnswer(t *testing.T) {
+	t.Parallel()
 	h := newSOT(t)
 	v := h.ask(sotBossToken, sotBoss)
 	if v.Answerer != wire.AnswererOwner {
@@ -433,6 +440,7 @@ func (h *sotHarness) delivery(id string) string {
 // 8. The asking session left and came back under another number (another
 // session took its old one): the answer reaches the new number, not the old.
 func TestQuestionSingleSourceOfTruth_AskerBackUnderAnotherNumber(t *testing.T) {
+	t.Parallel()
 	h := newSOT(t)
 	h.slot("/work/a", "")
 	q := h.slot("/work/q", "")
@@ -454,6 +462,7 @@ func TestQuestionSingleSourceOfTruth_AskerBackUnderAnotherNumber(t *testing.T) {
 // 9. The asking session is gone and two sessions of its base are live: only
 // the most recently registered one gets the answer.
 func TestQuestionSingleSourceOfTruth_NewestLiveSlotGetsAnswer(t *testing.T) {
+	t.Parallel()
 	h := newSOT(t)
 	q := h.slot("/work/q", "")
 	v := h.ask(sotAskerToken, q.Role)
@@ -468,6 +477,7 @@ func TestQuestionSingleSourceOfTruth_NewestLiveSlotGetsAnswer(t *testing.T) {
 // 10. No session of the asking base is live: the answer waits (the admin list
 // says so) and the next session that registers gets it, once.
 func TestQuestionSingleSourceOfTruth_WaitingAnswerGoesToNextSessionOnce(t *testing.T) {
+	t.Parallel()
 	h := newSOT(t)
 	a := h.slot("/work/a", "")
 	q := h.slot("/work/q", "")
@@ -490,6 +500,7 @@ func TestQuestionSingleSourceOfTruth_WaitingAnswerGoesToNextSessionOnce(t *testi
 // 11. A live session of the base with another label (another task) never
 // gets the answer; it waits for a session with the asker's label.
 func TestQuestionSingleSourceOfTruth_OtherLabelNeverGetsAnswer(t *testing.T) {
+	t.Parallel()
 	h := newSOT(t)
 	busy := h.slot("/work/a", "issue-2")
 	q := h.slot("/work/q", "issue-1")
@@ -511,6 +522,7 @@ func TestQuestionSingleSourceOfTruth_OtherLabelNeverGetsAnswer(t *testing.T) {
 // 12. The asking session is still live: it gets the answer even when a newer
 // session of its base registered after it asked.
 func TestQuestionSingleSourceOfTruth_LiveAskerKeepsAnswer(t *testing.T) {
+	t.Parallel()
 	h := newSOT(t)
 	h.slot("/work/a", "")
 	q := h.slot("/work/q", "")
@@ -556,6 +568,7 @@ func (h *sotHarness) outliveLease(g wire.SlotGrant, label string) {
 // the asking slot; once it ends the unread answer moves to the restarted
 // session, once.
 func TestQuestionSingleSourceOfTruth_CrashedAskerAnswerMovesAfterLease(t *testing.T) {
+	t.Parallel()
 	h := newSOT(t)
 	asked, restarted, v := h.crashed("")
 	h.panelAnswer(sotBossToken, sotBoss, v.ID, 200)
@@ -592,6 +605,7 @@ func (h *sotHarness) read(role, id string) {
 // 14. The crashed session read the answer before it died: the answer stays
 // where it was read and the restarted session gets no copy.
 func TestQuestionSingleSourceOfTruth_ReadAnswerStaysAfterLease(t *testing.T) {
+	t.Parallel()
 	h := newSOT(t)
 	asked, restarted, v := h.crashed("")
 	h.panelAnswer(sotBossToken, sotBoss, v.ID, 200)
@@ -605,6 +619,7 @@ func TestQuestionSingleSourceOfTruth_ReadAnswerStaysAfterLease(t *testing.T) {
 // session-marked directory): the server cannot tell this from a crash, so
 // the asking session gets the answer and keeps it while it heartbeats.
 func TestQuestionSingleSourceOfTruth_LiveSessionsInOneFolderAskerKeepsAnswer(t *testing.T) {
+	t.Parallel()
 	h := newSOT(t)
 	asked, sibling, v := h.crashed("")
 	h.panelAnswer(sotBossToken, sotBoss, v.ID, 200)
@@ -622,6 +637,7 @@ func TestQuestionSingleSourceOfTruth_LiveSessionsInOneFolderAskerKeepsAnswer(t *
 // another task: when the asking lease ends it does not get the answer; the
 // next session with the asker's label does.
 func TestQuestionSingleSourceOfTruth_OtherLabelInSameFolderNeverGetsAnswer(t *testing.T) {
+	t.Parallel()
 	h := newSOT(t)
 	asked := h.session("register", sotAsker, "/work/q", "issue-1", "1a2b3c4d-s1")
 	v := h.ask(sotAskerToken, asked.Role)
@@ -663,6 +679,7 @@ func (h *sotHarness) heartbeatsPastLease(r *hostedRig, g wire.SlotGrant, sid str
 // answer, given before the relaunched session registers, reaches the
 // relaunched session once under its old number and stays once.
 func TestQuestionSingleSourceOfTruth_HostedRelaunchGetsAnswerOnce(t *testing.T) {
+	t.Parallel()
 	h := newSOT(t)
 	r, asked := h.hostedAsker()
 	sid := r.record().AgentSessionID
@@ -690,6 +707,7 @@ func TestQuestionSingleSourceOfTruth_HostedRelaunchGetsAnswerOnce(t *testing.T) 
 // once, and after a relaunch into the followed conversation it is still
 // once under the same number.
 func TestQuestionSingleSourceOfTruth_HostedConversationFollowedGetsAnswerOnce(t *testing.T) {
+	t.Parallel()
 	h := newSOT(t)
 	r, asked := h.hostedAsker()
 	v := h.ask(sotAskerToken, asked.Role)

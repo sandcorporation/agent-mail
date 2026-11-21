@@ -39,6 +39,7 @@ func sweepNoSessionAt(t *testing.T, s *Server, clock *fakeClock, at time.Time) i
 // Pending mail to a role with no session, past the grace period: one notice
 // to the sender, and a second sweep sends nothing more (#300).
 func TestNoSessionNoticeOncePerStretch(t *testing.T) {
+	t.Parallel()
 	s, clock := slotsWithRoles(t)
 	first := apiMail(t, s, clock, "hq/boss", "/api/messages", map[string]any{"recipient": "team/worker", "subject": "do X"})
 	apiMail(t, s, clock, "hq/boss", "/api/messages", map[string]any{"recipient": "team/worker", "subject": "do Y"})
@@ -59,6 +60,7 @@ func TestNoSessionNoticeOncePerStretch(t *testing.T) {
 
 // A session that attaches before the grace period is over: no notice.
 func TestNoSessionNoNoticeWhenASessionAttaches(t *testing.T) {
+	t.Parallel()
 	s, clock := slotsWithRoles(t)
 	d := apiMail(t, s, clock, "hq/boss", "/api/messages", map[string]any{"recipient": "team/worker", "subject": "do X"})
 	clock.add(time.Minute)
@@ -70,6 +72,7 @@ func TestNoSessionNoNoticeWhenASessionAttaches(t *testing.T) {
 
 // A session that left within the grace period is a restart: no notice yet.
 func TestNoSessionNoNoticeRightAfterARelease(t *testing.T) {
+	t.Parallel()
 	s, clock := slotsWithRoles(t)
 	d := apiMail(t, s, clock, "hq/boss", "/api/messages", map[string]any{"recipient": "team/worker", "subject": "do X"})
 	slotDo(t, s, "register", ident("m", "/w"))
@@ -85,6 +88,7 @@ func TestNoSessionNoNoticeRightAfterARelease(t *testing.T) {
 
 // Read mail is not pending: no notice.
 func TestNoSessionNoNoticeForReadMail(t *testing.T) {
+	t.Parallel()
 	s, clock := slotsWithRoles(t)
 	d := apiMail(t, s, clock, "hq/boss", "/api/messages", map[string]any{"recipient": "team/worker", "subject": "do X"})
 	readAs(t, s, "team/worker", d.ID)
@@ -95,6 +99,7 @@ func TestNoSessionNoNoticeForReadMail(t *testing.T) {
 
 // The send response says whether the recipient role has a session (#300).
 func TestSendReportsNoSession(t *testing.T) {
+	t.Parallel()
 	s, clock := slotsWithRoles(t)
 	send := func() wire.Message {
 		t.Helper()
@@ -118,6 +123,7 @@ func TestSendReportsNoSession(t *testing.T) {
 // switchboard send prints one stderr line when no session of the recipient is
 // attached, and nothing extra when one is (#300).
 func TestCLISendNotesNoSession(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	h.configure(nil, "a")
 	const note = "no session of b is attached; the mail waits in its inbox"

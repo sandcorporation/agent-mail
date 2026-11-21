@@ -22,6 +22,7 @@ func stateOf(t *testing.T, s *Server, role string, id int64) string {
 // reply --complete is --done under another name, and it completes any mail
 // it answers, not only a directive (#327).
 func TestReplyCompleteOnNonDirective(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	h.configure([]string{"--profile", "a"}, "a")
 	h.configure([]string{"--profile", "b"}, "b")
@@ -48,6 +49,7 @@ func TestReplyCompleteOnNonDirective(t *testing.T) {
 // transaction; mail it did not receive or that does not exist refuses the
 // whole send; a retry with the same key marks nothing twice (#327).
 func TestSendCompleteMarksReceivedMail(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	h.configure([]string{"--profile", "a"}, "a")
 	h.configure([]string{"--profile", "b"}, "b")
@@ -95,6 +97,7 @@ func TestSendCompleteMarksReceivedMail(t *testing.T) {
 // report --mail completes the linked mail the boss received and only links
 // the rest; a retry with the same key marks nothing twice (#327).
 func TestReportMailCompletesReceivedMail(t *testing.T) {
+	t.Parallel()
 	s := reportServer(t)
 	d := directive(t, s, "build")
 	r := workerReply(t, s, d, "built")
@@ -124,6 +127,7 @@ func TestReportMailCompletesReceivedMail(t *testing.T) {
 // close with an answer's ID closes the directive it answers and completes
 // the answer for the caller, in one step; other mail stays 400 (#327).
 func TestCloseByAnswerClosesDirectiveAndCompletesAnswer(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	h.configure([]string{"--profile", "a"}, "a")
 	h.configure([]string{"--profile", "b"}, "b")
@@ -173,6 +177,7 @@ func TestCloseByAnswerClosesDirectiveAndCompletesAnswer(t *testing.T) {
 // read tells the recipient how to finish the mail, on stderr, until it is
 // complete; the reply note names the new form (#327).
 func TestReadTailNamesFinishCommands(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	h.configure([]string{"--profile", "a"}, "a")
 	h.configure(nil, "b")

@@ -74,6 +74,7 @@ func jobCommand(args ...string) []string {
 //	                reaches it), write its PID to PIDFILE, sleep
 //	sleep           sleep
 func TestJobCommandHelper(t *testing.T) {
+	t.Parallel()
 	a := flag.Args()
 	if len(a) < 2 || a[0] != "jobcmd" {
 		return
@@ -130,6 +131,7 @@ func jobOutput(t *testing.T, h *cliHarness, id int64) string {
 // own, keeps the job running to its end and reports it; nobody waited, so
 // the owner gets the end mail.
 func TestJobOutlivesItsTerminalWindows(t *testing.T) {
+	t.Parallel()
 	if outsideJob(t) {
 		return
 	}
@@ -175,6 +177,7 @@ func TestJobOutlivesItsTerminalWindows(t *testing.T) {
 // registers nothing; it exits with ExitNoRunner and says so on stderr, so
 // the hook runs the command itself.
 func TestJobRunRefusesWhenTheTerminalForbidsBreakawayWindows(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	h.configure(nil, "a")
 	cmd := h.cliCommand("", nil, "job", "run", "--", "cmd", "/c", "exit 0")
@@ -199,6 +202,7 @@ func TestJobRunRefusesWhenTheTerminalForbidsBreakawayWindows(t *testing.T) {
 // job ping in a terminal whose job forbids breakaway: the runner check
 // fails with its own code, and nothing is registered.
 func TestJobPingBreakawayRefusedIsARunnerFailureWindows(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	h.configure(nil, "a")
 	cmd := h.cliCommand("", nil, "job", "ping", "--json")
@@ -218,6 +222,7 @@ func TestJobPingBreakawayRefusedIsARunnerFailureWindows(t *testing.T) {
 
 // Outside any job that forbids breakaway, every check passes.
 func TestJobPingPassesWindows(t *testing.T) {
+	t.Parallel()
 	if outsideJob(t) {
 		return
 	}
@@ -230,6 +235,7 @@ func TestJobPingPassesWindows(t *testing.T) {
 // The runner runs from a copy in the data directory: the installed binary
 // can be replaced while a job runs.
 func TestJobRunnerLeavesTheInstalledBinaryReplaceableWindows(t *testing.T) {
+	t.Parallel()
 	if outsideJob(t) {
 		return
 	}
@@ -263,6 +269,7 @@ func TestJobRunnerLeavesTheInstalledBinaryReplaceableWindows(t *testing.T) {
 // job stop ends the command and every process it started, even one no
 // console event reaches.
 func TestJobStopEndsTheCommandTreeWindows(t *testing.T) {
+	t.Parallel()
 	if outsideJob(t) {
 		return
 	}

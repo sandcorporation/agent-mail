@@ -41,6 +41,7 @@ func jobMail(t *testing.T, s *Server, to string) []wire.Message {
 }
 
 func TestJobCreateIsIdempotentAndOwnerOnly(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	body := map[string]any{"command": "make build", "cwd": "/work", "machine": "partner-a"}
 	j, code := createJob(t, s, "secret-a", body, "k1")
@@ -88,6 +89,7 @@ func TestJobCreateIsIdempotentAndOwnerOnly(t *testing.T) {
 }
 
 func TestJobEndMailOnceAndOnlyWhenUnwatched(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	report := func(id int64, q map[string]any) wire.Job {
 		t.Helper()
@@ -142,6 +144,7 @@ func TestJobEndMailOnceAndOnlyWhenUnwatched(t *testing.T) {
 }
 
 func TestJobStopIsRecordedUntilTheEnd(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	j, _ := createJob(t, s, "secret-a", map[string]any{"command": "sleep 60", "cwd": "/w", "machine": "partner-a"}, "")
 	w := call(s, "POST", "/api/jobs/"+itoa(j.ID)+"/stop", "secret-a", nil, "")
@@ -157,6 +160,7 @@ func TestJobStopIsRecordedUntilTheEnd(t *testing.T) {
 }
 
 func TestJobTailIsCapped(t *testing.T) {
+	t.Parallel()
 	var b strings.Builder
 	for i := 0; i < 200; i++ {
 		b.WriteString(strings.Repeat("x", 99) + "\n")
@@ -172,6 +176,7 @@ func TestJobTailIsCapped(t *testing.T) {
 }
 
 func TestJobDefaultExpiryByKind(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	w, code := createJob(t, s, "secret-a", map[string]any{"kind": "watch", "command": "tail -f log", "cwd": "/w", "machine": "partner-a"}, "")
 	if code != 201 || w.ExpiresAt.Sub(w.CreatedAt) != wire.DefaultWatchExpiry {
@@ -186,6 +191,7 @@ func TestJobDefaultExpiryByKind(t *testing.T) {
 // A watch's expiry moves to now + its original duration at each sweep while
 // a session of the owner role is attached; a command job's never does.
 func TestJobAutoExtendsOnlyWhileAttached(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
 	s.clock = func() time.Time { return now }
@@ -237,6 +243,7 @@ func TestJobAutoExtendsOnlyWhileAttached(t *testing.T) {
 // A watch created with no_extend keeps its expiry while a session is
 // attached; the same watch without the flag moves, and both say so.
 func TestJobNoExtendKeepsExpiry(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
 	s.clock = func() time.Time { return now }
@@ -265,6 +272,7 @@ func TestJobNoExtendKeepsExpiry(t *testing.T) {
 
 // An expiry is one urgent mail even when a waiter saw it.
 func TestJobExpiryMailsOnce(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	j, _ := createJob(t, s, "secret-a", map[string]any{"command": "sleep 99", "label": "slow", "cwd": "/w", "machine": "partner-a"}, "")
 	for i := 0; i < 2; i++ {
@@ -278,6 +286,7 @@ func TestJobExpiryMailsOnce(t *testing.T) {
 }
 
 func TestAdminJobsListStopAndRemove(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	s.admin.ProxyToken = "proxy-secret"
 	run, _ := createJob(t, s, "secret-a", map[string]any{"command": "sleep 60", "label": "slow", "cwd": "/w", "machine": "partner-a"}, "")

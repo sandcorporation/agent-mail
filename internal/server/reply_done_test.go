@@ -11,6 +11,7 @@ import (
 
 // Replies never close a directive; reply --done does, in one step (#269).
 func TestReplyDoneClosesDirectiveOnce(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	h.configure(nil, "b")
 	if w := call(h.s, "POST", "/api/messages", "secret-a", map[string]string{"recipient": "b", "subject": "build", "body": "x"}, ""); w.Code != 201 {
@@ -61,6 +62,7 @@ func TestReplyDoneClosesDirectiveOnce(t *testing.T) {
 // A plain reply leaves the directive open, and the reminders go on: the next
 // is due SWITCHBOARD_REMIND_AFTER after the reply (#269).
 func TestPlainReplyKeepsReminding(t *testing.T) {
+	t.Parallel()
 	s, clock := slotsWithRoles(t)
 	remindOn(s)
 	sweepOnce(t, s)

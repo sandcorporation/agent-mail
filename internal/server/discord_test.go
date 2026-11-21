@@ -92,6 +92,7 @@ func captureLog(t *testing.T) *bytes.Buffer {
 }
 
 func TestDiscordNotSentWithoutWebhook(t *testing.T) {
+	t.Parallel()
 	hook := newWebhook(t)
 	s := discordQuestionServer(t, hook, nil)
 	s.discord = insight.ConfigureDiscord(envOf(map[string]string{"AGENT_MAIL_PUBLIC_URL": "https://mail.example"}))
@@ -106,6 +107,7 @@ func TestDiscordNotSentWithoutWebhook(t *testing.T) {
 }
 
 func TestDiscordNotSentWhenSettingOff(t *testing.T) {
+	t.Parallel()
 	hook := newWebhook(t)
 	s := discordQuestionServer(t, hook, nil)
 	if _, err := s.db.Exec(`UPDATE question_settings SET discord=0 WHERE target='default'`); err != nil {
@@ -119,6 +121,7 @@ func TestDiscordNotSentWhenSettingOff(t *testing.T) {
 }
 
 func TestDiscordSentOnceWithoutQuestionText(t *testing.T) {
+	t.Parallel()
 	hook := newWebhook(t)
 	s := discordQuestionServer(t, hook, map[string]string{"AGENT_MAIL_PUBLIC_URL": "https://mail.example/"})
 	v := askQuestionAs(t, s, workerToken, "team/worker-2", 201)
@@ -154,6 +157,7 @@ func TestDiscordSentOnceWithoutQuestionText(t *testing.T) {
 }
 
 func TestDiscordLinkOmittedWithoutPublicURL(t *testing.T) {
+	t.Parallel()
 	hook := newWebhook(t)
 	s := discordQuestionServer(t, hook, nil)
 	v := askQuestionAs(t, s, workerToken, "team/worker-2", 201)
@@ -165,6 +169,7 @@ func TestDiscordLinkOmittedWithoutPublicURL(t *testing.T) {
 }
 
 func TestDiscordUsernameAndAvatar(t *testing.T) {
+	t.Parallel()
 	hook := newWebhook(t)
 	s := discordQuestionServer(t, hook, map[string]string{
 		"AGENT_MAIL_DISCORD_USERNAME":   "mail-bot",

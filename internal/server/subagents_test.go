@@ -13,6 +13,7 @@ import (
 // Running background sub-agents (#215): stored per slot, shown in presence
 // and progress, and an idle session with some ranks busy in the badge.
 func TestPresenceSubagents(t *testing.T) {
+	t.Parallel()
 	s, clock := presenceServer(t)
 	// An old-plugin body (no field) is accepted, and so is a field this
 	// server does not know.
@@ -99,6 +100,7 @@ func TestCLIHarnessIgnoresMachineEnv(t *testing.T) {
 }
 
 func TestSubagentsCommands(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	h.configure(nil, "b")
 	h.mustRun(nil, "slot", "register", "--machine", "m", "--directory", "/a", "--state", "idle", "--subagents", "2")

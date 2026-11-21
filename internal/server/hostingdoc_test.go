@@ -173,6 +173,7 @@ func helpOptions(t *testing.T, bin, cmd string) (string, map[string]bool) {
 }
 
 func TestHostingDocCommandsMatchHelp(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds the binary")
 	}
@@ -249,6 +250,7 @@ func keys(m map[string]bool) []string {
 // TestE2E_HostingDocLinux runs every sh block of the Linux variant, in
 // order, as one bash script.
 func TestE2E_HostingDocLinux(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "linux" {
 		t.Skip("the Linux variant runs on Linux")
 	}
@@ -595,6 +597,7 @@ func isolateWindowsDoc(script, task string) (string, error) {
 // first, when W9 says to run it again; afterwards no process runs from the
 // old build. W1, W2 (network) and W9's uninstall are not run.
 func TestE2E_HostingDocWindows(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "windows" {
 		t.Skip("the Windows variant runs on Windows")
 	}
@@ -938,6 +941,7 @@ const sbstopGuard = "if (-not (Get-Command sbstop -ErrorAction SilentlyContinue)
 // PowerShell blocks, so a block run on an env.ps1 from older docs stops
 // before it changes anything (#243).
 func TestHostingDocGuardsSbstop(t *testing.T) {
+	t.Parallel()
 	n := 0
 	for _, b := range readDocBlocks(t) {
 		if b.lang != "powershell" {
@@ -1026,6 +1030,7 @@ $sbdone = Invoke-RestMethod -Method Post "http://127.0.0.1:$port/setup/confirm" 
 // runs names the test task and home after the rewrite, none the real ones
 // (#297). The Startup folder variant is not run and is skipped here.
 func TestHostingDocWindowsIsolated(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "windows" {
 		t.Skip("the Windows variant runs on Windows")
 	}

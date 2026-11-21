@@ -76,6 +76,7 @@ func TestOIDCConfidentialClientSendsSecret(t *testing.T) {
 // Start-up without a secret succeeds; issuer, client id and admins are still
 // required.
 func TestOIDCConfigWithoutSecret(t *testing.T) {
+	t.Parallel()
 	p := newFakeIdP(t)
 	p.clientSecret = ""
 	full := oidcEnv(p, "admin@example.com")
@@ -101,6 +102,7 @@ func TestOIDCConfigWithoutSecret(t *testing.T) {
 // The ID token's algorithm must be one discovery advertises: EdDSA
 // (Ed25519) and RS256 are accepted, anything else is refused.
 func TestOIDCIDTokenAlgorithms(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		sign string
 		algs []string

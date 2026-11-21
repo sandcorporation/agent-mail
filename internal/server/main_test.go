@@ -24,7 +24,7 @@ import (
 
 func testServer(t *testing.T) *Server {
 	t.Helper()
-	db, e := sql.Open("sqlite", filepath.Join(t.TempDir(), "mail.db"))
+	db, e := sql.Open("sqlite", testDSN(filepath.Join(t.TempDir(), "mail.db")))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -92,7 +92,7 @@ func TestDynamicRegistrationResumeAndMigration(t *testing.T) {
 	var dbPath string
 	_ = s.db.QueryRow("PRAGMA database_list").Scan(new(int), new(string), &dbPath)
 	s.db.Close()
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite", testDSN(dbPath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,6 +110,7 @@ func TestDynamicRegistrationResumeAndMigration(t *testing.T) {
 }
 
 func TestAdminReadAPIRequiresProxySecretAndIsReadOnly(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	s.admin.ProxyToken = "proxy-secret"
 	if w := call(s, "POST", "/api/messages", "secret-a", map[string]any{"recipient": "b", "subject": "admin fixture", "body": "hello", "thread_id": 41}, "fixture"); w.Code != 201 {
@@ -146,6 +147,7 @@ func TestAdminReadAPIRequiresProxySecretAndIsReadOnly(t *testing.T) {
 }
 
 func TestDashboardUsesSameOriginAndNoRoleCredentials(t *testing.T) {
+	t.Parallel()
 	w := httptest.NewRecorder()
 	dashboard.Page(w, httptest.NewRequest("GET", "/", nil))
 	body := w.Body.String()
@@ -172,6 +174,7 @@ func TestDashboardUsesSameOriginAndNoRoleCredentials(t *testing.T) {
 }
 
 func TestProtectedReverseProxyAdminRequest(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	s.admin.ProxyToken = "proxy-secret"
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -316,6 +319,7 @@ func call(s *Server, method, path, token string, body any, idem string) *httptes
 	return w
 }
 func TestPersistenceRetryAndStatus(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	payload := map[string]any{"recipient": "b", "subject": "hello", "body": "durable"}
 	w := call(s, "POST", "/api/messages", "secret-a", payload, "key-1")
@@ -337,7 +341,7 @@ func TestPersistenceRetryAndStatus(t *testing.T) {
 	var dbPath string
 	_ = s.db.QueryRow("PRAGMA database_list").Scan(new(int), new(string), &dbPath)
 	s.db.Close()
-	db, e := sql.Open("sqlite", dbPath)
+	db, e := sql.Open("sqlite", testDSN(dbPath))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -378,6 +382,7 @@ func TestPersistenceRetryAndStatus(t *testing.T) {
 	}
 }
 func TestAuthorizationAndWatchCursor(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	if w := call(s, "GET", "/api/messages", "wrong", nil, ""); w.Code != 401 {
 		t.Fatalf("auth=%d", w.Code)
@@ -412,6 +417,7 @@ func TestAuthorizationAndWatchCursor(t *testing.T) {
 }
 
 func TestParseIDRejectsTrailingJunk(t *testing.T) {
+	t.Parallel()
 	if _, err := wire.ParseID("12junk"); err == nil {
 		t.Fatal("expected malformed ID to be rejected")
 	}
@@ -419,3 +425,8 @@ func TestParseIDRejectsTrailingJunk(t *testing.T) {
 		t.Fatalf("parseID(12) = %d, %v", id, err)
 	}
 }
+
+// testDSN opens a test database without fsync (synchronous=OFF): a test
+// never survives a power loss, and each commit's fsync otherwise makes the
+// package wait on the disk rather than run (#340).
+func testDSN(path string) string { return path + "?_pragma=synchronous(OFF)" }

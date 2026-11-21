@@ -10,6 +10,7 @@ import (
 // the old name (and its numbered forms) reaches the new role, and the old name
 // cannot be registered again.
 func TestRenameRoleKeepsMailTokensAndOldName(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	s.admin.ProxyToken = "proxy-secret"
 	if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES('old/coord','secret-c','now')`); err != nil {
@@ -91,6 +92,7 @@ func TestRenameRoleKeepsMailTokensAndOldName(t *testing.T) {
 // TestRenameRoleRewritesLabelsAndBases checks stored label addresses and
 // base columns follow the rename.
 func TestRenameRoleRewritesLabelsAndBases(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	s.admin.ProxyToken = "proxy-secret"
 	if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES('old/coord','secret-c','now')`); err != nil {

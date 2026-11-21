@@ -39,6 +39,7 @@ func withParent(machine, dir, label, parent string) wire.SlotRequest {
 }
 
 func TestStallOfflineNoticeOncePerTransition(t *testing.T) {
+	t.Parallel()
 	s, clock := presenceServer(t) // lease 30s
 	slotDo(t, s, "register", withParent("box-1", "/work/a", "issue-7", "a"))
 	if got := sweepOnce(t, s); got.Offline != 0 {
@@ -91,6 +92,7 @@ func TestStallOfflineNoticeOncePerTransition(t *testing.T) {
 }
 
 func TestStallReleaseIsNotNoticed(t *testing.T) {
+	t.Parallel()
 	s, clock := presenceServer(t)
 	slotDo(t, s, "register", withParent("m", "/w", "", "a"))
 	slotDo(t, s, "release", ident("m", "/w"))
@@ -107,6 +109,7 @@ func TestStallReleaseIsNotNoticed(t *testing.T) {
 }
 
 func TestStallOfflineWithoutUsableParent(t *testing.T) {
+	t.Parallel()
 	s, clock := presenceServer(t)
 	for i, parent := range []string{"team/worker" /* its own mailbox (-1) */, "", "nobody/here", identity.SystemSender} {
 		slotDo(t, s, "register", withParent("m", "/w"+itoa(int64(i)), "", parent))
@@ -127,6 +130,7 @@ func TestStallOfflineWithoutUsableParent(t *testing.T) {
 }
 
 func TestStallLabelNoticeToSender(t *testing.T) {
+	t.Parallel()
 	s, clock, _ := labelServer(t)
 	s.labelStall = 10 * time.Minute
 	first := sendFrom(t, s, label22, "one", "", 201)
@@ -211,6 +215,7 @@ func TestSystemSenderIsReserved(t *testing.T) {
 }
 
 func TestStallSettings(t *testing.T) {
+	t.Parallel()
 	s := &Server{}
 	if err := configureStall(s, func(string) string { return "" }); err != nil {
 		t.Fatal(err)
@@ -238,6 +243,7 @@ func TestStallSettings(t *testing.T) {
 }
 
 func TestSweeperRunsAndStopsOnShutdown(t *testing.T) {
+	t.Parallel()
 	s, _ := presenceServer(t)
 	s.clock = nil
 	s.presenceCfg.SlotLease = time.Second

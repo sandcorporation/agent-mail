@@ -41,6 +41,7 @@ func messageCount(t *testing.T, s *Server) int {
 }
 
 func TestSendToRevokedRoleIsGone(t *testing.T) {
+	t.Parallel()
 	s, _ := revokedServer(t)
 	setRevoked(t, s, "team/worker", true)
 	before := messageCount(t, s)
@@ -87,6 +88,7 @@ func directivesTo(t *testing.T, s *Server, prefix string) int {
 }
 
 func TestRevokedRolePendingMailLeftOutUntilRestored(t *testing.T) {
+	t.Parallel()
 	s, clock := revokedServer(t)
 	sendMail(t, s, "secret-b", "team/worker", "one")
 	sendMail(t, s, "secret-b", "team/worker-2", "two")
@@ -123,6 +125,7 @@ func revokeNotices(t *testing.T, s *Server, token, role string) []wire.Message {
 }
 
 func TestRevokeTellsEachSenderOnce(t *testing.T) {
+	t.Parallel()
 	s, clock := revokedServer(t)
 	a1 := sendMail(t, s, "secret-a", "team/worker", "first")
 	clock.add(time.Minute)

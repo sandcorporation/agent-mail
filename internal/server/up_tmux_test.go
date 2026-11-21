@@ -59,15 +59,9 @@ func newUpRig(t *testing.T, extraEnv ...string) *upRig {
 	r.tmuxDir = d
 	r.socket = "switchboard-" + instanceFor(filepath.Join(r.dir, upNodeToken))
 	t.Cleanup(func() {
-		// t.Setenv's own cleanup has already restored TMUX_TMPDIR by now
-		// (cleanups run last first), so name the directory explicitly or
-		// the server is left running with its socket removed.
-		kill := exec.Command("tmux", "-L", r.socket, "kill-server")
-		kill.Env = append(os.Environ(), "TMUX_TMPDIR="+d)
-		_ = kill.Run()
+		_ = r.tmux("kill-server").Run()
 		_ = os.RemoveAll(d)
 	})
-	t.Setenv("TMUX_TMPDIR", d)
 
 	// The agent: this test binary as the fake agent, with its transcripts
 	// in the data directory.
@@ -136,6 +130,14 @@ func newUpRig(t *testing.T, extraEnv ...string) *upRig {
 	return r
 }
 
+// tmux runs tmux on the rig's server: the socket directory goes in the
+// command's environment, not the process's, so rigs can run in parallel.
+func (r *upRig) tmux(args ...string) *exec.Cmd {
+	cmd := exec.Command("tmux", append([]string{"-L", r.socket}, args...)...)
+	cmd.Env = append(os.Environ(), "TMUX_TMPDIR="+r.tmuxDir)
+	return cmd
+}
+
 func (r *upRig) base() string { return "http://127.0.0.1:" + r.port }
 
 // start runs up and waits for it to answer.
@@ -189,11 +191,12 @@ func (r *upRig) session(id string) wire.HostedSession {
 
 // panePID is the agent's pid as tmux sees it.
 func (r *upRig) panePID(id string) string {
-	out, _ := exec.Command("tmux", "-L", r.socket, "list-panes", "-t", "=sb-"+id+":", "-F", "#{pane_pid} #{pane_dead}").Output()
+	out, _ := r.tmux("list-panes", "-t", "=sb-"+id+":", "-F", "#{pane_pid} #{pane_dead}").Output()
 	return strings.TrimSpace(string(out))
 }
 
 func TestUpRunsAHostedSessionInTmuxAcrossRestarts(t *testing.T) {
+	t.Parallel()
 	r := newUpRig(t)
 	work := t.TempDir()
 	code, out, errOut := hostCLI(t, filepath.Join(r.dir, upDatabase), "add", "--node", "local", "--base", "team/worker", "--profile", "team-worker", "--dir", work, "--label", "e2e")
@@ -202,13 +205,13 @@ func TestUpRunsAHostedSessionInTmuxAcrossRestarts(t *testing.T) {
 	}
 	id := strings.TrimSpace(out)
 	r.wait("the session running", func() bool { return r.session(id).Runtime.State == "running" })
-	ls, err := exec.Command("tmux", "-L", r.socket, "ls").CombinedOutput()
+	ls, err := r.tmux("ls").CombinedOutput()
 	if err != nil || !strings.Contains(string(ls), "sb-"+id) {
 		t.Fatalf("tmux -L %s ls: %v %s", r.socket, err, ls)
 	}
 	pid := r.panePID(id)
 	if !strings.HasSuffix(pid, " 0") || r.session(id).Runtime.PID == 0 {
-		screen, _ := exec.Command("tmux", "-L", r.socket, "capture-pane", "-p", "-t", "=sb-"+id+":").Output()
+		screen, _ := r.tmux("capture-pane", "-p", "-t", "=sb-"+id+":").Output()
 		t.Fatalf("pane %q, runtime %+v, screen:\n%s", pid, r.session(id).Runtime, screen)
 	}
 	nodes := adminCall(t, r.base(), "GET", "/api/admin/nodes", r.cookie, false, "")
@@ -243,7 +246,7 @@ func TestUpRunsAHostedSessionInTmuxAcrossRestarts(t *testing.T) {
 		t.Fatalf("start = %d %s", got.code, got.body)
 	}
 	r.wait("running again", func() bool { return r.session(id).Runtime.State == "running" })
-	screen, _ := exec.Command("tmux", "-L", r.socket, "capture-pane", "-p", "-S", "-", "-t", "=sb-"+id+":").Output()
+	screen, _ := r.tmux("capture-pane", "-p", "-S", "-", "-t", "=sb-"+id+":").Output()
 	if !strings.Contains(string(screen), "argv --resume") {
 		t.Errorf("relaunch did not resume:\n%s", screen)
 	}
@@ -254,7 +257,7 @@ func TestUpRunsAHostedSessionInTmuxAcrossRestarts(t *testing.T) {
 
 // tmuxScreen is the session's screen and history as tmux renders it.
 func (r *upRig) tmuxScreen(id string) string {
-	out, _ := exec.Command("tmux", "-L", r.socket, "capture-pane", "-p", "-S", "-", "-t", "=sb-"+id+":").Output()
+	out, _ := r.tmux("capture-pane", "-p", "-S", "-", "-t", "=sb-"+id+":").Output()
 	return string(out)
 }
 
@@ -262,6 +265,7 @@ func (r *upRig) tmuxScreen(id string) string {
 // fake agent in tmux: the snapshot carries what it printed before anyone
 // looked and the golden screen of its last draw, then the stream follows.
 func TestUpTerminalViewShowsTheTmuxScreen(t *testing.T) {
+	t.Parallel()
 	r := newUpRig(t)
 	work := t.TempDir()
 	body, _ := json.Marshal(wire.HostedSessionCreate{Node: "local", Base: "team/worker", Profile: "team-worker", Directory: work, Desired: "stopped"})
@@ -287,7 +291,7 @@ func TestUpTerminalViewShowsTheTmuxScreen(t *testing.T) {
 	r.wait("the agent started", func() bool {
 		return r.session(id).Runtime.State == "running" && strings.Contains(r.tmuxScreen(id), "argv")
 	})
-	if err := exec.Command("tmux", "-L", r.socket, "send-keys", "-t", "=sb-"+id+":", "draw full-redraw", "Enter").Run(); err != nil {
+	if err := r.tmux("send-keys", "-t", "=sb-"+id+":", "draw full-redraw", "Enter").Run(); err != nil {
 		t.Fatal(err)
 	}
 	r.wait("the scene drawn", func() bool { return strings.Contains(r.tmuxScreen(id), "list the files ok") })
@@ -316,7 +320,7 @@ func TestUpTerminalViewShowsTheTmuxScreen(t *testing.T) {
 	}
 
 	// The stream follows: a line typed into tmux comes back as output.
-	if err := exec.Command("tmux", "-L", r.socket, "send-keys", "-t", "=sb-"+id+":", "hi there", "Enter").Run(); err != nil {
+	if err := r.tmux("send-keys", "-t", "=sb-"+id+":", "hi there", "Enter").Run(); err != nil {
 		t.Fatal(err)
 	}
 	readUntil(t, c, emu, func([]wire.TerminalMessage) bool { return strings.Contains(emu.Grid(0).Dump(), "echo hi there") })
@@ -326,6 +330,7 @@ func TestUpTerminalViewShowsTheTmuxScreen(t *testing.T) {
 // input socket, resizes its window and finds the attach/input log without
 // the typed text.
 func TestUpTerminalInputTypesIntoTmux(t *testing.T) {
+	t.Parallel()
 	r := newUpRig(t)
 	work := t.TempDir()
 	body, _ := json.Marshal(wire.HostedSessionCreate{Node: "local", Base: "team/worker", Profile: "team-worker", Directory: work})
@@ -360,7 +365,7 @@ func TestUpTerminalInputTypesIntoTmux(t *testing.T) {
 
 	clientSend(t, c, wire.TerminalInput{Type: "resize", Cols: 50, Rows: 12})
 	r.wait("the window resized", func() bool {
-		out, _ := exec.Command("tmux", "-L", r.socket, "display-message", "-p", "-t", "=sb-"+id+":", "#{window_width}x#{window_height}").Output()
+		out, _ := r.tmux("display-message", "-p", "-t", "=sb-"+id+":", "#{window_width}x#{window_height}").Output()
 		return strings.TrimSpace(string(out)) == "50x12"
 	})
 	r.wait("the size stored", func() bool { s := r.session(id); return s.Cols == 50 && s.Rows == 12 })
@@ -391,6 +396,7 @@ func TestUpTerminalInputTypesIntoTmux(t *testing.T) {
 // conversation without a relaunch, a crash relaunches it with --resume of
 // the new id under the same number, and an up restart keeps all of it.
 func TestUpHostedSessionHoldsItsSlotAndFollowsClear(t *testing.T) {
+	t.Parallel()
 	conf := t.TempDir()
 	if err := os.WriteFile(filepath.Join(conf, "team-worker.json"), []byte(`{"role":"team/worker","token":"worker-secret"}`), 0o600); err != nil {
 		t.Fatal(err)
@@ -412,7 +418,7 @@ func TestUpHostedSessionHoldsItsSlotAndFollowsClear(t *testing.T) {
 	r.wait("team/worker-1 online", online(first))
 	pid := r.panePID(id)
 
-	if err := exec.Command("tmux", "-L", r.socket, "send-keys", "-t", "=sb-"+id+":", "clear", "Enter").Run(); err != nil {
+	if err := r.tmux("send-keys", "-t", "=sb-"+id+":", "clear", "Enter").Run(); err != nil {
 		t.Fatal(err)
 	}
 	r.wait("the cleared conversation followed", func() bool {
@@ -425,7 +431,7 @@ func TestUpHostedSessionHoldsItsSlotAndFollowsClear(t *testing.T) {
 	}
 
 	// A crash relaunches into the followed conversation, same number.
-	if err := exec.Command("tmux", "-L", r.socket, "send-keys", "-t", "=sb-"+id+":", "exit 1", "Enter").Run(); err != nil {
+	if err := r.tmux("send-keys", "-t", "=sb-"+id+":", "exit 1", "Enter").Run(); err != nil {
 		t.Fatal(err)
 	}
 	r.wait("relaunched", func() bool { return r.session(id).Runtime.Run >= 2 && r.session(id).Runtime.State == "running" })

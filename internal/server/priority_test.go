@@ -24,6 +24,7 @@ func decodeMessage(t *testing.T, raw []byte) wire.Message {
 }
 
 func TestSendPriorityDefaultsUrgentAndValidation(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	w := call(s, "POST", "/api/messages", "secret-a", map[string]any{"recipient": "b", "subject": "plain", "body": "x"}, "")
 	if w.Code != 201 || !strings.Contains(w.Body.String(), `"priority":"normal"`) {
@@ -85,6 +86,7 @@ func TestSendPriorityDefaultsUrgentAndValidation(t *testing.T) {
 // A new CLI must keep working against a server that predates priority: normal
 // sends carry no priority field, and messages without one read as normal.
 func TestCLIAgainstServerWithoutPriority(t *testing.T) {
+	t.Parallel()
 	var sendBodies []map[string]any
 	old := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "POST" {
@@ -119,6 +121,7 @@ func TestCLIAgainstServerWithoutPriority(t *testing.T) {
 }
 
 func TestReplyPriority(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	orig := decodeMessage(t, call(s, "POST", "/api/messages", "secret-a", map[string]any{"recipient": "b", "subject": "q", "body": "x"}, "").Body.Bytes())
 	w := call(s, "POST", "/api/messages/"+itoa(orig.ID)+"/reply", "secret-b", map[string]any{"subject": "re", "body": "plain reply"}, "")
@@ -135,6 +138,7 @@ func TestReplyPriority(t *testing.T) {
 }
 
 func TestEventsCarryPriorityAndUrgentBody(t *testing.T) {
+	t.Parallel()
 	s, base := eventServer(t)
 	st := openEvents(t, base, "secret-b", "b", nil, "")
 	st.untilReady(t)
@@ -164,8 +168,9 @@ func TestEventsCarryPriorityAndUrgentBody(t *testing.T) {
 const legacySchema = `CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT,sender TEXT NOT NULL,recipient TEXT NOT NULL,subject TEXT NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL,task_id TEXT,thread_id INTEGER,reply_to INTEGER,status TEXT NOT NULL DEFAULT 'pending',idem TEXT, UNIQUE(sender,idem)); CREATE TABLE role_states(role TEXT NOT NULL,message_id INTEGER NOT NULL,status TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(role,message_id)); CREATE TABLE roles(role TEXT PRIMARY KEY, token TEXT NOT NULL, created_at TEXT NOT NULL); INSERT INTO roles VALUES('a','secret-a','now'),('b','secret-b','now'); INSERT INTO messages(sender,recipient,subject,body,created_at,task_id,idem) VALUES('a','b','old mail','kept body','2026-01-01T00:00:00Z','T-9','old-key'); INSERT INTO role_states VALUES('b',1,'acknowledged','2026-01-01T00:00:00Z');`
 
 func TestMigrationAddsPriorityAndKeepsData(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "legacy.db")
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", testDSN(path))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,6 +205,7 @@ func TestMigrationAddsPriorityAndKeepsData(t *testing.T) {
 }
 
 func TestCLIUrgentSendReplyAndMarkers(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	h.configure([]string{"--profile", "a"}, "a")
 	h.configure(nil, "b")

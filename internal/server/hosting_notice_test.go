@@ -103,6 +103,7 @@ func (c *fakeNodeConn) assign() []wire.HostedSession {
 }
 
 func TestHostingNoticesMailOncePerKey(t *testing.T) {
+	t.Parallel()
 	s, base, _ := signedInServer(t, true)
 	token := nodeToken(t, s, "pc")
 	svc := s.hostingService()

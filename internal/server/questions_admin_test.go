@@ -31,6 +31,7 @@ func adminAnswerBody(t *testing.T) string {
 }
 
 func TestAdminQuestionAnswer(t *testing.T) {
+	t.Parallel()
 	s := questionServer(t)
 	s.admin.ProxyToken = "proxy-secret"
 	v := askQuestionAs(t, s, workerToken, "team/worker-2", 201)
@@ -81,6 +82,7 @@ func TestAdminQuestionAnswer(t *testing.T) {
 }
 
 func TestAdminQuestionList(t *testing.T) {
+	t.Parallel()
 	s, clock := permissionServer(t)
 	if _, err := s.db.Exec(`UPDATE question_settings SET can_ask=1 WHERE target='default'`); err != nil {
 		t.Fatal(err)
@@ -126,6 +128,7 @@ func ids(vs []wire.QuestionView) []string {
 }
 
 func TestDashboardQuestionsAndSettings(t *testing.T) {
+	t.Parallel()
 	w := httptest.NewRecorder()
 	dashboard.Page(w, httptest.NewRequest("GET", "/", nil))
 	body := w.Body.String()

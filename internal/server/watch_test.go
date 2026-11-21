@@ -29,6 +29,7 @@ func watchMail(t *testing.T, s *Server, to string) []wire.Message {
 // A batch of watch lines is one urgent mail, once per batch number; only a
 // running watch takes lines.
 func TestWatchLinesMailOncePerBatch(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	w, code := createJob(t, s, "secret-a", map[string]any{"kind": "watch", "command": "tail -f app.log", "label": "app log", "cwd": "/w", "machine": "partner-a"}, "")
 	if code != 201 || w.Kind != wire.JobWatch || w.ExpiresAt.Sub(w.CreatedAt) != wire.DefaultWatchExpiry {
@@ -74,6 +75,7 @@ func TestWatchLinesMailOncePerBatch(t *testing.T) {
 // A running report carries the output tail, so the dashboard shows the last
 // line before the job ends; the job stays running.
 func TestRunningReportUpdatesTheTail(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	j, _ := createJob(t, s, "secret-a", map[string]any{"command": "make", "cwd": "/w", "machine": "partner-a"}, "")
 	path := "/api/jobs/" + itoa(j.ID) + "/report"

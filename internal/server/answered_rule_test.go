@@ -50,6 +50,7 @@ func ruleServer(t *testing.T) (*Server, *fakeClock) {
 
 // A new database starts at the current version with nothing to mark.
 func TestAnsweredRule_NewDatabaseStartsAtCurrentVersion(t *testing.T) {
+	t.Parallel()
 	s, _ := ruleServer(t)
 	lines := startRule(t, s)
 	if v := storedRule(t, s); v != mail.AnsweredRuleVersion {
@@ -69,6 +70,7 @@ func TestAnsweredRule_NewDatabaseStartsAtCurrentVersion(t *testing.T) {
 // directive answered by a reply is closed and the open ones stay open, a
 // mention-answered one included (version 1 never counted a mention).
 func TestAnsweredRule_ExistingDatabaseWithoutVersionIsVersion1(t *testing.T) {
+	t.Parallel()
 	s, clock := ruleServer(t)
 	now := clock.now()
 	open := mailAt(t, s, flowRow{sender: "hq/boss", recipient: "team/worker", subject: "open", at: now.Add(-48 * time.Hour)})
@@ -99,6 +101,7 @@ func looseReplies(d, m mail.FlowMail, base func(string) string) bool {
 }
 
 func TestAnsweredRule_UpgradeMarksDirectivesTheNewRuleOpens(t *testing.T) {
+	t.Parallel()
 	s, clock := ruleServer(t)
 	now := clock.now()
 	if _, err := s.db.Exec(`INSERT INTO answered_rule(id,version,updated_at) VALUES(1,1,'2026-11-01T00:00:00Z')`); err != nil {
@@ -185,6 +188,7 @@ func TestAnsweredRule_UpgradeMarksDirectivesTheNewRuleOpens(t *testing.T) {
 // completed one stays done; after the cut-over a plain reply leaves a new
 // directive open.
 func TestAnsweredRule_Version2ClosesOnlyRepliedDirectives(t *testing.T) {
+	t.Parallel()
 	s, clock := ruleServer(t)
 	now := clock.now()
 	if _, err := s.db.Exec(`INSERT INTO answered_rule(id,version,updated_at) VALUES(1,1,'2026-11-01T00:00:00Z')`); err != nil {
@@ -232,6 +236,7 @@ func TestAnsweredRule_Version2ClosesOnlyRepliedDirectives(t *testing.T) {
 
 // An older build started on a database a newer one settled leaves it as is.
 func TestAnsweredRule_NewerStoredVersionIsKept(t *testing.T) {
+	t.Parallel()
 	s, clock := ruleServer(t)
 	if _, err := s.db.Exec(`INSERT INTO answered_rule(id,version,updated_at) VALUES(1,?,'2026-11-01T00:00:00Z')`, mail.AnsweredRuleVersion+1); err != nil {
 		t.Fatal(err)
@@ -251,6 +256,7 @@ func TestAnsweredRule_NewerStoredVersionIsKept(t *testing.T) {
 // A stored version this build does not know (none in mail.AnsweredRules):
 // every open directive is marked, as before #268.
 func TestAnsweredRule_UnknownStoredVersionMarksEveryOpenDirective(t *testing.T) {
+	t.Parallel()
 	s, clock := ruleServer(t)
 	if _, err := s.db.Exec(`INSERT INTO answered_rule(id,version,updated_at) VALUES(1,1,'2026-11-01T00:00:00Z')`); err != nil {
 		t.Fatal(err)

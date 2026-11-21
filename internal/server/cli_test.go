@@ -117,6 +117,7 @@ func TestLeadingProfileSelectsProfile(t *testing.T) {
 }
 
 func TestMissingProfileIsAnError(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	h.configure(nil, "a") // a usable default must not be used as a fallback
 	for _, tc := range []struct {
@@ -138,6 +139,7 @@ func TestMissingProfileIsAnError(t *testing.T) {
 }
 
 func TestUnknownOptionsAndCommandsAreUsageErrors(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	h.configure(nil, "a")
 	for _, args := range [][]string{
@@ -165,6 +167,7 @@ func TestUnknownOptionsAndCommandsAreUsageErrors(t *testing.T) {
 }
 
 func TestInboxStatusFilter(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	h.configure(nil, "b")
 	for _, subject := range []string{"first", "second"} {
@@ -191,6 +194,7 @@ func TestInboxStatusFilter(t *testing.T) {
 }
 
 func TestWaitCommand(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	h.configure(nil, "b")
 	r := h.run(nil, "wait", "--timeout", "1", "--interval", "1")
@@ -225,6 +229,7 @@ func TestWaitCommand(t *testing.T) {
 }
 
 func TestCommandHelpListsOptions(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	for cmd, want := range map[string][]string{
 		"send":   {"--to ROLE", "--body-file PATH", "--idempotency-key KEY", "--json", "--profile NAME"},

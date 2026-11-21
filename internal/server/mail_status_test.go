@@ -68,6 +68,7 @@ func wantAll(t *testing.T, name string, got map[string]string, want string) {
 // Regression: the sender's read showed messages.status (pending) while outbox
 // showed the recipient's state from role_states.
 func TestSenderAndRecipientSeeOneStatus(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	h.configure([]string{"--profile", "a"}, "a")
 	h.configure([]string{"--profile", "b"}, "b")
@@ -92,6 +93,7 @@ func TestSenderAndRecipientSeeOneStatus(t *testing.T) {
 // Regression: a body line starting with "#123" read like a message header in
 // human output. Body lines are indented; only headers match ^#\d+.
 func TestHumanOutputBodyNeverLooksLikeHeader(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	h.configure([]string{"--profile", "a"}, "a")
 	h.configure([]string{"--profile", "b"}, "b")

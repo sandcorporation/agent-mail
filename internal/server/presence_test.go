@@ -60,6 +60,7 @@ func onlySession(t *testing.T, s *Server, filter string) wire.PresenceView {
 }
 
 func TestPresenceReportAndQuery(t *testing.T) {
+	t.Parallel()
 	s, clock := presenceServer(t)
 	slotDo(t, s, "register", wire.SlotRequest{Machine: "m", Directory: "/a", SessionID: "sess-1", Label: "issue-21", Parent: "team/lead", State: "idle"})
 	clock.add(5 * time.Second)
@@ -116,6 +117,7 @@ func TestPresenceReportAndQuery(t *testing.T) {
 }
 
 func TestPresenceRejectsBadFields(t *testing.T) {
+	t.Parallel()
 	s, _ := presenceServer(t)
 	slotDo(t, s, "register", ident("m", "/a"))
 	for name, body := range map[string]any{
@@ -147,6 +149,7 @@ func TestPresenceRejectsBadFields(t *testing.T) {
 }
 
 func TestPresenceKindStates(t *testing.T) {
+	t.Parallel()
 	s, clock := presenceServer(t)
 	slotDo(t, s, "register", report("m", "/a", "idle", nil, ""))
 	for _, state := range []string{"error:StopFailure", "blocked:permission_prompt", "error:a.b-c_9", "blocked:" + strings.Repeat("K", 64), "busy"} {
@@ -170,6 +173,7 @@ func TestPresenceKindStates(t *testing.T) {
 }
 
 func TestPresenceOfflineAfterMissedHeartbeats(t *testing.T) {
+	t.Parallel()
 	s, clock := presenceServer(t)
 	slotDo(t, s, "register", report("m", "/a", "busy", int64p(500), ""))
 	clock.add(29 * time.Second) // two heartbeats missed, the third not yet
@@ -237,6 +241,7 @@ func TestPresenceOfflineAfterMissedHeartbeats(t *testing.T) {
 }
 
 func TestPresenceRetention(t *testing.T) {
+	t.Parallel()
 	s, clock := presenceServer(t)
 	retain := time.Hour
 	s.presenceCfg.Retain = &retain
@@ -255,6 +260,7 @@ func TestPresenceRetention(t *testing.T) {
 }
 
 func TestPresenceTakeoverMovesPresence(t *testing.T) {
+	t.Parallel()
 	s, _ := presenceServer(t)
 	slotDo(t, s, "register", report("m", "/a", "busy", int64p(7000), ""))
 	slotDo(t, s, "takeover", report("m", "/b", "idle", nil, ""))
@@ -266,6 +272,7 @@ func TestPresenceTakeoverMovesPresence(t *testing.T) {
 }
 
 func TestPresenceAuth(t *testing.T) {
+	t.Parallel()
 	s, _ := presenceServer(t)
 	s.admin.ProxyToken = "proxy-secret"
 	slotDo(t, s, "register", report("m", "/a", "idle", nil, ""))
@@ -302,6 +309,7 @@ func TestPresenceAuth(t *testing.T) {
 }
 
 func TestPresenceSettings(t *testing.T) {
+	t.Parallel()
 	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
 	s := &Server{}
 	if err := presence.Configure(&s.presenceCfg, env(nil)); err != nil || s.presence().LeaseLength() != 3*time.Minute || s.presence().OfflineRetention() != 24*time.Hour {
@@ -327,7 +335,8 @@ func TestPresenceSettings(t *testing.T) {
 const slotsSchemaV20 = `CREATE TABLE slots(base TEXT NOT NULL,number INTEGER NOT NULL,machine TEXT NOT NULL,directory TEXT NOT NULL,session_id TEXT NOT NULL DEFAULT '',label TEXT NOT NULL DEFAULT '',parent TEXT NOT NULL DEFAULT '',registered_at INTEGER NOT NULL,lease_until INTEGER NOT NULL,PRIMARY KEY(base,number),UNIQUE(base,machine,directory));`
 
 func TestPresenceSchemaOnSlotsDatabase(t *testing.T) {
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "slots.db"))
+	t.Parallel()
+	db, err := sql.Open("sqlite", testDSN(filepath.Join(t.TempDir(), "slots.db")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,6 +373,7 @@ func onlyPresence(t *testing.T, s *Server) wire.PresenceView {
 }
 
 func TestStatusCommand(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	h.configure(nil, "b")
 	if out := h.mustRun(nil, "status"); strings.TrimSpace(out) != "no sessions" {
@@ -418,6 +428,7 @@ func TestStatusCommand(t *testing.T) {
 }
 
 func TestPresenceSinceFollowsStateChanges(t *testing.T) {
+	t.Parallel()
 	s, clock := presenceServer(t)
 	start := clock.now()
 	slotDo(t, s, "register", report("m", "/a", "idle", nil, ""))

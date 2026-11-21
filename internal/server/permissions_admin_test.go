@@ -31,6 +31,7 @@ func permissionRow(t *testing.T, s *Server, id string) (decision, note, by strin
 // A dashboard answer and a boss's `permission answer` go through one server
 // function: the same row, the same mail and the same JSON, except who answered.
 func TestAdminPermissionAnswerMatchesBossAnswer(t *testing.T) {
+	t.Parallel()
 	s, _ := permissionServer(t)
 	s.admin.ProxyToken = "proxy-secret"
 	registerWorker(t, s, "/w", "a")
@@ -106,6 +107,7 @@ func TestAdminPermissionAnswerMatchesBossAnswer(t *testing.T) {
 }
 
 func TestAdminPermissionListAndDetail(t *testing.T) {
+	t.Parallel()
 	s, clock := permissionServer(t)
 	s.admin.ProxyToken = "proxy-secret"
 	s.asksCfg.PermissionTTL = time.Minute

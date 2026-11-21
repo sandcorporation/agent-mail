@@ -101,6 +101,7 @@ func questionPollIDs(t *testing.T, s *Server, token, role string) []string {
 // nothing. Send, presence, questions, permissions and metrics behave as
 // before groups.
 func TestNoGroupsKeepsBehaviour(t *testing.T) {
+	t.Parallel()
 	s := groupServer(t)
 	for _, to := range []string{"b", internalWorkerRol, partnerBDevRole, internalBossRole} {
 		if code := sendAs(s, partnerDevToken, partnerDevRole, to); code != 201 {
@@ -224,6 +225,7 @@ func TestGroupAdminAPI(t *testing.T) {
 }
 
 func TestGroupSendScope(t *testing.T) {
+	t.Parallel()
 	s := groupServer(t)
 	putGroup(t, s, "partner-a", "")
 	putGroup(t, s, "partner-b", "")
@@ -260,6 +262,7 @@ func TestGroupSendScope(t *testing.T) {
 }
 
 func TestGroupPresenceScope(t *testing.T) {
+	t.Parallel()
 	s := groupServer(t)
 	putGroup(t, s, "partner-a", "")
 	putGroup(t, s, "partner-b", "")
@@ -290,6 +293,7 @@ func TestGroupPresenceScope(t *testing.T) {
 }
 
 func TestGroupQuestionsGoToGroupBoss(t *testing.T) {
+	t.Parallel()
 	s := groupServer(t)
 	putGroup(t, s, "partner-a", "")
 	putSettings(t, s, "partner-a/*", `{"can_ask":true,"watchers":["sandcorp/boss"]}`)
@@ -343,6 +347,7 @@ func TestGroupQuestionsGoToGroupBoss(t *testing.T) {
 }
 
 func TestGroupPermissionsGoToGroupBoss(t *testing.T) {
+	t.Parallel()
 	s := groupServer(t)
 	putGroup(t, s, "partner-a", "")
 	p := askAs(t, s, partnerDevToken, partnerDevRole, 201)
@@ -381,6 +386,7 @@ func TestGroupPermissionsGoToGroupBoss(t *testing.T) {
 }
 
 func TestGroupBossIsNotGlobal(t *testing.T) {
+	t.Parallel()
 	s := groupServer(t)
 	putGroup(t, s, "partner-a", "")
 	for _, path := range []string{"/api/metrics", "/api/progress"} {

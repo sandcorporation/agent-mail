@@ -66,6 +66,7 @@ func countRows(t *testing.T, s *Server, query string) int {
 // Off (the default): no reminder mail, no remind_state row, however old the
 // read directive.
 func TestRemindOffSendsAndWritesNothing(t *testing.T) {
+	t.Parallel()
 	s, clock := slotsWithRoles(t)
 	d := apiMail(t, s, clock, "hq/boss", "/api/messages", map[string]any{"recipient": "team/worker", "subject": "do X"})
 	readAs(t, s, "team/worker", d.ID)
@@ -90,6 +91,7 @@ func TestRemindOffSendsAndWritesNothing(t *testing.T) {
 // across repeated sweeps and a server restart. Unread and --no-reply
 // directives are never reminded.
 func TestRemindScheduleOnceEach(t *testing.T) {
+	t.Parallel()
 	s, clock := slotsWithRoles(t)
 	remindOn(s)
 	sweepOnce(t, s) // records the enable time
@@ -160,6 +162,7 @@ func TestRemindScheduleOnceEach(t *testing.T) {
 // and only moves the next reminder to a gap after it (#269); new mail that
 // only mentions #id (or shares the task) changes nothing.
 func TestRemindStopsOnReplyOrComplete(t *testing.T) {
+	t.Parallel()
 	s, clock := slotsWithRoles(t)
 	remindOn(s)
 	sweepOnce(t, s)
@@ -206,6 +209,7 @@ func TestRemindStopsOnReplyOrComplete(t *testing.T) {
 // at enabled_at + T and none before; switching off and on keeps the first
 // enable time.
 func TestRemindOlderDirectivesCountFromEnable(t *testing.T) {
+	t.Parallel()
 	s, clock := slotsWithRoles(t)
 	old := apiMail(t, s, clock, "hq/boss", "/api/messages", map[string]any{"recipient": "team/worker", "subject": "old"})
 	older := apiMail(t, s, clock, "hq/boss", "/api/messages", map[string]any{"recipient": "team/worker", "subject": "older"})
@@ -253,6 +257,7 @@ func TestRemindOlderDirectivesCountFromEnable(t *testing.T) {
 
 // Directives to a boss role are not reminded.
 func TestRemindSkipsBossRecipients(t *testing.T) {
+	t.Parallel()
 	s, clock := slotsWithRoles(t)
 	s.bossRoles["team/worker"] = false
 	s.bossRoles["ops/lead"] = true
@@ -269,6 +274,7 @@ func TestRemindSkipsBossRecipients(t *testing.T) {
 }
 
 func TestRemindSettings(t *testing.T) {
+	t.Parallel()
 	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
 	var c presence.Config
 	if err := presence.Configure(&c, env(nil)); err != nil || c.Remind.On {
@@ -291,6 +297,7 @@ func TestRemindSettings(t *testing.T) {
 }
 
 func TestCLINoReply(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	h.configure([]string{"--profile", "a"}, "a")
 	h.configure(nil, "b")

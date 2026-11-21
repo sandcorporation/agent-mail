@@ -32,6 +32,7 @@ func openDirectiveTasks(t *testing.T, s *Server) []string {
 }
 
 func TestProgressDirectivesFollowFlow(t *testing.T) {
+	t.Parallel()
 	s, clock := slotServer(t)
 	s.bossRoles = map[string]bool{"hq/boss": true}
 	at := clock.now().Add(-3 * time.Hour)
@@ -93,6 +94,7 @@ func TestProgressDirectivesFollowFlow(t *testing.T) {
 // The #139 mixed fixture: its one directive (T-3) got a task_id report,
 // which is no reply (#214); a reply in its thread closes it.
 func TestProgressMixedFixtureDirectives(t *testing.T) {
+	t.Parallel()
 	s, clock := slotServer(t)
 	s.bossRoles = map[string]bool{"hq/boss": true}
 	at := clock.now().Add(-time.Hour)

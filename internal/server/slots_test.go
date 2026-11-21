@@ -110,6 +110,7 @@ func inboxSubjects(t *testing.T, s *Server, role string) []string {
 }
 
 func TestSlotConcurrentRegistrationNeverSharesANumber(t *testing.T) {
+	t.Parallel()
 	s, _ := slotServer(t)
 	const n = 24
 	var wg sync.WaitGroup
@@ -155,6 +156,7 @@ func TestSlotConcurrentRegistrationNeverSharesANumber(t *testing.T) {
 }
 
 func TestSlotSameIdentityReclaimsOthersGetNextFree(t *testing.T) {
+	t.Parallel()
 	s, clock := slotServer(t)
 	a := slotDo(t, s, "register", ident("m1", "/a"))
 	b := slotDo(t, s, "register", ident("m1", "/b"))
@@ -199,6 +201,7 @@ func TestSlotSameIdentityReclaimsOthersGetNextFree(t *testing.T) {
 }
 
 func TestSlotUnnumberedAddressIsSlotOne(t *testing.T) {
+	t.Parallel()
 	s, _ := slotServer(t)
 	send := func(to, subject string) {
 		t.Helper()
@@ -263,6 +266,7 @@ func TestSlotUnnumberedAddressIsSlotOne(t *testing.T) {
 }
 
 func TestSlotEventsWakeOnTheSharedMailbox(t *testing.T) {
+	t.Parallel()
 	s, _ := slotServer(t)
 	ts := httptest.NewServer(http.HandlerFunc(s.api))
 	t.Cleanup(ts.Close)
@@ -295,6 +299,7 @@ func TestSlotEventsWakeOnTheSharedMailbox(t *testing.T) {
 }
 
 func TestSlotTakeover(t *testing.T) {
+	t.Parallel()
 	s, clock := slotServer(t)
 	slotDo(t, s, "register", ident("m", "/a")) // 1
 	slotDo(t, s, "register", ident("m", "/b")) // 2
@@ -327,6 +332,7 @@ func TestSlotTakeover(t *testing.T) {
 }
 
 func TestSlotPrefixTokenRules(t *testing.T) {
+	t.Parallel()
 	s, _ := slotServer(t)
 	// A separately registered role whose name ends in -2 keeps its own token.
 	if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES('team/lead','secret-lead','now'),('team/lead-2','secret-lead-two','now')`); err != nil {
@@ -375,6 +381,7 @@ func TestSlotPrefixTokenRules(t *testing.T) {
 }
 
 func TestSlotLeaseExpiryFreesSlotAndKeepsMail(t *testing.T) {
+	t.Parallel()
 	s, clock := slotServer(t)
 	slotDo(t, s, "register", ident("m", "/a"))
 	slotDo(t, s, "register", ident("m", "/b"))
@@ -399,6 +406,7 @@ func TestSlotLeaseExpiryFreesSlotAndKeepsMail(t *testing.T) {
 }
 
 func TestSlotAdminTableIsProxyOnly(t *testing.T) {
+	t.Parallel()
 	s, _ := slotServer(t)
 	s.admin.ProxyToken = "proxy-secret"
 	slotDo(t, s, "register", ident("m", "/a"))
@@ -419,7 +427,8 @@ func TestSlotAdminTableIsProxyOnly(t *testing.T) {
 }
 
 func TestSlotSchemaOnLegacyDatabase(t *testing.T) {
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "legacy.db"))
+	t.Parallel()
+	db, err := sql.Open("sqlite", testDSN(filepath.Join(t.TempDir(), "legacy.db")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,6 +454,7 @@ func TestSlotSchemaOnLegacyDatabase(t *testing.T) {
 }
 
 func TestSlotCommands(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	h.configure(nil, "b")
 	out := h.mustRun(nil, "slot", "register", "--machine", "m", "--directory", "/a", "--label", "issue-1")
