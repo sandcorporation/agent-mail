@@ -146,7 +146,32 @@ func Init(db *sql.DB) error {
 	if e = migrateHostAutos(db); e != nil {
 		return e
 	}
-	return migrateHostAutoStops(db)
+	if e = migrateHostAutoStops(db); e != nil {
+		return e
+	}
+	return migrateHostAutoChecks(db)
+}
+
+// migrateHostAutoChecks adds host_autos.precheck and precheck_timeout_ms
+// (#334): the command a scheduled run's node runs first (” none) and its
+// limit in ms.
+func migrateHostAutoChecks(db *sql.DB) error {
+	adds := []struct{ column, def string }{
+		{"precheck", `TEXT NOT NULL DEFAULT ''`},
+		{"precheck_timeout_ms", `INTEGER NOT NULL DEFAULT 0`},
+	}
+	for _, c := range adds {
+		has, err := HasColumn(db, "host_autos", c.column)
+		if err != nil {
+			return err
+		}
+		if !has {
+			if _, err = db.Exec(`ALTER TABLE host_autos ADD COLUMN ` + c.column + ` ` + c.def); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // migrateRoleCredentials adds role_credentials (#343): extra tokens of a

@@ -44,6 +44,10 @@ type Config struct {
 	Term string
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
+	// AllowChecks lets the host run scheduled runs' prechecks here (#334):
+	// `node --allow-checks` or SWITCHBOARD_HOSTING_ALLOW_CHECKS=on. Off, the
+	// node refuses them.
+	AllowChecks bool
 }
 
 // Host is what Resolve needs from the machine; Machine fills it from the OS.
@@ -92,7 +96,7 @@ func Resolve(h Host) (Config, error) {
 			return Config{}, fmt.Errorf("node: %s=%q is not a session count (1 or more)", from, v)
 		}
 	}
-	return Config{Agent: path, Machine: machine, History: history, Max: max, Environ: h.Environ()}, nil
+	return Config{Agent: path, Machine: machine, History: history, Max: max, Environ: h.Environ(), AllowChecks: config.HostingAllowChecks(h.Getenv)}, nil
 }
 
 // Argv is the command for a record: --session-id on its first launch,

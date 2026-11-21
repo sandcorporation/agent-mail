@@ -198,11 +198,18 @@ const (
 	// (#343), sent before the assign that needs it, only to a node that
 	// asked for credentials (config.NodeCredentialsHeaderName).
 	NodeCredentialType = "credential"
+	// NodeCheckType carries Check: run a scheduled run's precheck in record
+	// ID's directory (#334). The node answers with a check-result frame of
+	// the same Ref.
+	NodeCheckType = "check"
 	// Node to host.
 	NodeHelloType  = "hello"  // Hello: who the node is
 	NodeStateType  = "state"  // States: what the node observes, every record
 	NodeNoticeType = "notice" // Notice: a crash loop or a resume failure
 	NodeEventType  = "event"  // Event: a start, restart, stop, crash, exit or adoption (#252)
+	// NodeCheckResultType carries CheckResult: how a check frame's command
+	// ended (#334).
+	NodeCheckResultType = "check-result"
 )
 
 // Hosted session event kinds (#252).
@@ -298,6 +305,30 @@ type NodeFrame struct {
 	Credential *NodeCredential `json:"credential,omitempty"`
 	// Limit rides on state frames (#190).
 	Limit *NodeLimit `json:"limit,omitempty"`
+	// Check and CheckResult ride on check and check-result frames (#334).
+	Check       *NodeCheck       `json:"check,omitempty"`
+	CheckResult *NodeCheckResult `json:"check_result,omitempty"`
+}
+
+// NodeCheck asks a node to run Command (sh -c, or cmd /c on Windows) in a
+// record's directory with the session's environment minus its credentials,
+// killing it and everything it started after TimeoutMS (#334).
+type NodeCheck struct {
+	Ref       string `json:"ref"`
+	Command   string `json:"command"`
+	TimeoutMS int64  `json:"timeout_ms"`
+}
+
+// NodeCheckResult is how a NodeCheck ended: its exit code, or TimedOut, or
+// Error when it did not run (refused, no such record, failed to start).
+// Output is the end of its stdout, at most CheckOutputMax bytes.
+type NodeCheckResult struct {
+	Ref        string `json:"ref"`
+	ExitCode   *int   `json:"exit_code,omitempty"`
+	TimedOut   bool   `json:"timed_out,omitempty"`
+	DurationMS int64  `json:"duration_ms"`
+	Output     string `json:"output,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
 // NodeCredential is a role credential for one hosted record (#343): the

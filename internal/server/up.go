@@ -107,9 +107,10 @@ func Up(v, dataDir string, port int, nodeName string) (err error) {
 // hostURL with the token in tokenFile, until SIGINT or SIGTERM. With a join
 // code it first exchanges the code for a token and writes tokenFile (user
 // only; an existing file is never replaced). restartSessions stops every
-// session at start so each relaunches with resume. The host is loopback or
+// session at start so each relaunches with resume; allowChecks lets the host
+// run scheduled runs' prechecks here (#334). The host is loopback or
 // inside SWITCHBOARD_HOSTING_REMOTE_ALLOW (checkNodeHost).
-func Node(v, hostURL, tokenFile, joinCode string, restartSessions bool) error {
+func Node(v, hostURL, tokenFile, joinCode string, restartSessions, allowChecks bool) error {
 	allow, _, err := config.HostingRemoteAllow(os.Getenv)
 	if err != nil {
 		return fmt.Errorf("node: %w", err)
@@ -137,6 +138,12 @@ func Node(v, hostURL, tokenFile, joinCode string, restartSessions bool) error {
 	part, err := prepareNode(v, name, abs, hostURL, "")
 	if err != nil {
 		return err
+	}
+	if allowChecks {
+		part.cfg.AllowChecks = true
+	}
+	if part.cfg.AllowChecks {
+		log.Printf("node: prechecks of scheduled runs allowed")
 	}
 	link, err := part.link(token)
 	if err != nil {

@@ -19,6 +19,7 @@ import (
 
 func TestMain(m *testing.M) {
 	fakeagent.MainIfRequested()
+	checkHelperIfRequested()
 	os.Exit(m.Run())
 }
 

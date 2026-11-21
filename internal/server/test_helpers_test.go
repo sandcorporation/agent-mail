@@ -48,8 +48,8 @@ func binaryCommands() cli.Commands {
 		Host:     HostCLI,
 		HostAuto: HostAutoCLI,
 		Up:       func(dir string, port int, node string) error { return Up(version, dir, port, node) },
-		Node: func(host, tokenFile, joinCode string, restartSessions bool) error {
-			return Node(version, host, tokenFile, joinCode, restartSessions)
+		Node: func(host, tokenFile, joinCode string, restartSessions, allowChecks bool) error {
+			return Node(version, host, tokenFile, joinCode, restartSessions, allowChecks)
 		},
 		NodeInvite: NodeInviteCLI,
 	}

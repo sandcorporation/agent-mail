@@ -73,10 +73,15 @@ func (h *Hub) SweepAutos(ctx context.Context) (int, error) {
 		if !fire {
 			continue
 		}
+		n++
+		if a.Check != "" {
+			// A precheck may take minutes; the sweep does not wait for it.
+			h.fireChecked(a, at, manual)
+			continue
+		}
 		if _, err := h.fireAuto(a, at, manual); err != nil {
 			log.Printf("hosting: scheduled run %d: %v", a.ID, err)
 		}
-		n++
 	}
 	return n, nil
 }
@@ -89,6 +94,36 @@ func (h *Hub) RunAuto(id int64) (wire.HostAutoRun, error) {
 		return wire.HostAutoRun{}, err
 	}
 	return h.fireAuto(a, h.svc.clock().UnixMilli(), true)
+}
+
+// fireChecked fires a, which has a precheck, in the background; while an
+// earlier one of a is still checking, the run is recorded busy.
+func (h *Hub) fireChecked(a wire.HostAuto, at int64, manual bool) {
+	h.mu.Lock()
+	if h.checking == nil {
+		h.checking = map[int64]bool{}
+	}
+	busy := h.checking[a.ID]
+	h.checking[a.ID] = true
+	h.mu.Unlock()
+	if busy {
+		run := wire.HostAutoRun{Auto: a.ID, At: h.svc.clock().UnixMilli(), Manual: manual, Result: wire.AutoBusy, Detail: "the previous run's precheck is still running"}
+		if _, err := h.svc.addAutoRun(run); err != nil {
+			log.Printf("hosting: scheduled run %d: %v", a.ID, err)
+		}
+		h.publish("terminals")
+		return
+	}
+	go func() {
+		defer func() {
+			h.mu.Lock()
+			delete(h.checking, a.ID)
+			h.mu.Unlock()
+		}()
+		if _, err := h.fireAuto(a, at, manual); err != nil {
+			log.Printf("hosting: scheduled run %d: %v", a.ID, err)
+		}
+	}()
 }
 
 // fireAuto runs a once and records the result. The session's node must be
@@ -121,7 +156,11 @@ func (h *Hub) fireAuto(a wire.HostAuto, at int64, manual bool) (wire.HostAutoRun
 	} else if held != nil {
 		return finish(wire.AutoBusy, fmt.Sprintf("run %d of scheduled run %d still holds the session", held.ID, held.Auto))
 	}
-	// The precheck (#334) goes here.
+	if a.Check != "" {
+		if result, detail := h.precheck(a, rec, &run); result != "" {
+			return finish(result, detail)
+		}
+	}
 	if rec.Desired != DesiredRunning {
 		var launched wire.HostedSession
 		if a.Resume {
@@ -145,7 +184,7 @@ func (h *Hub) fireAuto(a wire.HostAuto, at int64, manual bool) (wire.HostAutoRun
 	if send == nil {
 		return finish(wire.AutoError, "no mail function")
 	}
-	id, err := send(rec.Base, autoSubject(a), a.Prompt, AutoMailKey(a.ID, at, manual))
+	id, err := send(rec.Base, autoSubject(a), withCheckOutput(a.Prompt, run.Output), AutoMailKey(a.ID, at, manual))
 	if err != nil {
 		return finish(wire.AutoError, "mail: "+err.Error())
 	}

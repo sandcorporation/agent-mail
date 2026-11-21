@@ -247,6 +247,8 @@ var commands = []command{
 			{"--resume", "", "auto add: continue the session's last conversation when the run launches it (default: a new conversation each run)"},
 			{"--notify", "ROLE[,ROLE]", "auto add: roles told about runs that need attention"},
 			{"--max-run", "DURATION", "auto add: stop a session the run launched after this long (default 2h; it also stops when the run's mail is completed)"},
+			{"--check", "CMD", "auto add: shell command the node runs in the session's directory before each run: exit 0 runs (its output follows the prompt), 1 skips, else error (the node needs --allow-checks)"},
+			{"--check-timeout", "DURATION", "auto add: limit of --check, then it is killed with everything it started (default 60s, at most 10m)"},
 			{"--runs", "N", "auto show: newest N runs (default 20, at most 500)"},
 			optJSON,
 		}},
@@ -264,6 +266,7 @@ var commands = []command{
 			{"--join", "CODE", "exchange a code from node invite for this node's token, saved to --token-file"},
 			{"--token-file", "PATH", "node token file (default node.token in the config directory; up writes DIR/node.token)"},
 			{"--restart-sessions", "", "stop every hosted session on this machine at start and relaunch each with resume"},
+			{"--allow-checks", "", "run the prechecks of scheduled runs (host auto add --check) on this machine (default: refuse them; up's own node: SWITCHBOARD_HOSTING_ALLOW_CHECKS=on)"},
 		}},
 	{name: "admin", args: "ACTION NAME", nargs: 2, synopsis: "(ACTION: create | passwd | totp-reset | disable) NAME",
 		summary: "Manage built-in dashboard admins in the server database (DB_PATH; run inside the server container); create and passwd read the password from the terminal or the first line of stdin",
@@ -323,7 +326,7 @@ type UpFunc func(dataDir string, port int, nodeName string) error
 // NodeFunc runs `node`: a node attached to the host at hostURL, until
 // stopped. A non-empty joinCode is first exchanged for the token written to
 // tokenFile.
-type NodeFunc func(hostURL, tokenFile, joinCode string, restartSessions bool) error
+type NodeFunc func(hostURL, tokenFile, joinCode string, restartSessions, allowChecks bool) error
 
 // NodeInviteFunc runs `node invite NAME` against the server's database.
 type NodeInviteFunc func(name string, stdout io.Writer) (int, error)

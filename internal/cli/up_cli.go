@@ -35,14 +35,14 @@ func cliUp(p parsedArgs) (int, error) {
 }
 
 // cliNode checks `node --host URL [--join CODE] [--token-file PATH]
-// [--restart-sessions]` and
+// [--restart-sessions] [--allow-checks]` and
 // `node invite NAME`, and runs the binary's command.
 func cliNode(p parsedArgs, stdout io.Writer) (int, error) {
 	if len(p.pos) > 0 {
 		if p.pos[0] != "invite" || len(p.pos) != 2 {
 			return 0, usagef("node: unknown subcommand %q (only 'invite NAME')", strings.Join(p.pos, " "))
 		}
-		if p.values["--host"] != "" || p.values["--join"] != "" || p.values["--token-file"] != "" || p.bool("--restart-sessions") {
+		if p.values["--host"] != "" || p.values["--join"] != "" || p.values["--token-file"] != "" || p.bool("--restart-sessions") || p.bool("--allow-checks") {
 			return 0, usagef("node invite takes only NAME")
 		}
 		if binary.NodeInvite == nil {
@@ -60,7 +60,7 @@ func cliNode(p parsedArgs, stdout io.Writer) (int, error) {
 	if binary.Node == nil {
 		return 0, usagef("node is not available in this build")
 	}
-	if err := binary.Node(hostURL, tokenFile, p.values["--join"], p.bool("--restart-sessions")); err != nil {
+	if err := binary.Node(hostURL, tokenFile, p.values["--join"], p.bool("--restart-sessions"), p.bool("--allow-checks")); err != nil {
 		return 0, err
 	}
 	return ExitOK, nil

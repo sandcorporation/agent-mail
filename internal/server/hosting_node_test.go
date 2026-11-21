@@ -145,7 +145,15 @@ func eventually(t *testing.T, what string, cond func() bool) {
 // stop is called.
 func attachNode(t *testing.T, base, token string, backend *termtest.Fake) (stop func()) {
 	t.Helper()
-	n, err := node.New(node.Config{Agent: "/opt/agent/claude", Machine: "pc-1", Endpoint: base, NodeToken: token}, backend)
+	return attachNodeWith(t, base, token, backend, node.Config{})
+}
+
+// attachNodeWith is attachNode with cfg's extra settings (AllowChecks,
+// Environ).
+func attachNodeWith(t *testing.T, base, token string, backend *termtest.Fake, cfg node.Config) (stop func()) {
+	t.Helper()
+	cfg.Agent, cfg.Machine, cfg.Endpoint, cfg.NodeToken = "/opt/agent/claude", "pc-1", base, token
+	n, err := node.New(cfg, backend)
 	if err != nil {
 		t.Fatal(err)
 	}

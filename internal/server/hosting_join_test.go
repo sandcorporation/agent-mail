@@ -161,7 +161,7 @@ func TestNodeRefusesAHostOutsideTheRanges(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	for _, host := range []string{"http://192.0.2.10:8090", "https://[2001:db8::1]:8090"} {
-		err := Node("test", host, filepath.Join(dir, "node.token"), "sbj_x", false)
+		err := Node("test", host, filepath.Join(dir, "node.token"), "sbj_x", false, false)
 		if err == nil || !strings.Contains(err.Error(), "is neither loopback nor inside SWITCHBOARD_HOSTING_REMOTE_ALLOW") {
 			t.Errorf("%s: %v", host, err)
 		}
@@ -169,7 +169,7 @@ func TestNodeRefusesAHostOutsideTheRanges(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "node.token")); !os.IsNotExist(err) {
 		t.Error("a refused host wrote a token file")
 	}
-	if err := Node("test", "ftp://127.0.0.1", filepath.Join(dir, "node.token"), "", false); err == nil || !strings.Contains(err.Error(), "not an http") {
+	if err := Node("test", "ftp://127.0.0.1", filepath.Join(dir, "node.token"), "", false, false); err == nil || !strings.Contains(err.Error(), "not an http") {
 		t.Errorf("ftp host: %v", err)
 	}
 }
