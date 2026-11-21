@@ -94,6 +94,9 @@ func (s *Service) SetRevoked(ctx context.Context, role string, revoke bool) (Rol
 			if _, err := tx.Exec(`UPDATE roles SET revoked_at=? WHERE role=?`, stamp, role); err != nil {
 				return err
 			}
+			if err := revokeRoleCredentials(tx, role, now); err != nil {
+				return err
+			}
 			if s.revoked != nil {
 				var err error
 				if after, err = s.revoked(tx, role, stamp, now); err != nil {

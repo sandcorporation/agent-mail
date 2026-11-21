@@ -374,7 +374,7 @@ To attach a node on another machine:
 1. On the host machine: `switchboard node invite pc2` (prints a one-time code).
 2. On the node machine: `switchboard node --host http://100.64.0.10:8091 --join <code>`. <!-- leak-guard:allow -->
 
-`node --host` accepts a loopback host, or a host whose every address is inside `SWITCHBOARD_HOSTING_REMOTE_ALLOW` (read on the node, same default). The node's hosted sessions get that URL as `SWITCHBOARD_ENDPOINT`, so their mail goes through the remote listener.
+`node --host` accepts a loopback host, or a host whose every address is inside `SWITCHBOARD_HOSTING_REMOTE_ALLOW` (read on the node, same default). The node's hosted sessions get that URL as `SWITCHBOARD_ENDPOINT`, so their mail goes through the remote listener. Each session also gets its own credential of its base role over the node channel: the node writes it as the profile `hosted-<record id>.json` in its config directory (user-only) and runs the session with `SWITCHBOARD_PROFILE` naming it, so no profile or role token is copied to the node machine. The credential is refused once the record is removed, the node revoked or the role revoked; the role's own token is unchanged. `up`'s own node keeps the profiles its records name. Step by step, Windows and Linux: [docs/hosting-pc.md, Node on another machine](docs/hosting-pc.md#node-on-another-machine).
 
 ## Tests and limitations
 

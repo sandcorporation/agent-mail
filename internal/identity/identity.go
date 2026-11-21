@@ -102,14 +102,15 @@ func sameSecret(a, b string) bool {
 // keeps its own token. Otherwise "<base>-N" is accepted with the token of
 // <base>. The slot need not be currently leased: the base token can claim any
 // slot anyway, and mail queued for an expired slot must stay readable. A
-// revoked role is refused under every name it covers.
+// revoked role is refused under every name it covers. A live role
+// credential (#343) of the role counts as its token.
 func (s *Service) Authenticate(t, h string) (Principal, bool) {
 	if t == "" || h == "" || !wire.ValidRole(h) || Reserved(h) {
 		return Principal{}, false
 	}
 	h = Resolve(s.db, h) // a renamed role's old name acts as the new one
 	if hash, revoked, ok := roleRecord(s.db, h); ok {
-		if !tokenMatches(hash, t) || revoked {
+		if !(tokenMatches(hash, t) || credentialMatches(s.db, h, t)) || revoked {
 			return Principal{}, false
 		}
 		return Principal{Role: h, Base: h}, true
@@ -119,7 +120,7 @@ func (s *Service) Authenticate(t, h string) (Principal, bool) {
 		return Principal{}, false
 	}
 	hash, revoked, ok := roleRecord(s.db, base)
-	if !ok || !tokenMatches(hash, t) || revoked {
+	if !ok || !(tokenMatches(hash, t) || credentialMatches(s.db, base, t)) || revoked {
 		return Principal{}, false
 	}
 	p := Principal{Role: h, Base: base, Number: n}

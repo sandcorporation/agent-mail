@@ -154,9 +154,13 @@ func (s *Service) JoinNode(code string) (wire.NodeJoined, error) {
 }
 
 // RevokeNode revokes a node's credential: from now on its token is refused.
-// Revoking a revoked node changes nothing. The hub closes its socket.
+// Revoking a revoked node changes nothing. The hub closes its socket. The
+// role credentials issued to the node are revoked with it (#343).
 func (s *Service) RevokeNode(name string) (wire.NodeView, error) {
 	if _, err := s.db.Exec(`UPDATE nodes SET revoked_at=? WHERE name=? AND revoked_at IS NULL`, s.clock().UnixMilli(), name); err != nil {
+		return wire.NodeView{}, err
+	}
+	if err := s.revokeCredentials(func(c LiveCredential) bool { return c.Node == name }); err != nil {
 		return wire.NodeView{}, err
 	}
 	nodes, err := s.Nodes()

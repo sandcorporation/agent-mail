@@ -134,7 +134,19 @@ func Init(db *sql.DB) error {
 	if e = migrateJobs(db); e != nil {
 		return e
 	}
-	return migrateSchedules(db)
+	if e = migrateSchedules(db); e != nil {
+		return e
+	}
+	return migrateRoleCredentials(db)
+}
+
+// migrateRoleCredentials adds role_credentials (#343): extra tokens of a
+// role, kept as hashes like roles.token, each issued for one hosted record
+// on one node. The role's own token is untouched. Times are Unix ms.
+func migrateRoleCredentials(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS role_credentials(id TEXT PRIMARY KEY, role TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, record TEXT NOT NULL DEFAULT '', node TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, revoked_at INTEGER);
+CREATE INDEX IF NOT EXISTS role_credentials_role ON role_credentials(role);`)
+	return err
 }
 
 // migrateQuestionRefusals adds question_refusals (#286): per role, the last

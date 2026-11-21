@@ -14,6 +14,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
+	"github.com/sandcorporation/switchboard/internal/config"
 	"github.com/sandcorporation/switchboard/internal/term"
 	"github.com/sandcorporation/switchboard/internal/wire"
 )
@@ -54,6 +55,10 @@ type Link struct {
 	Host  string // the host's base URL, http://127.0.0.1:8090
 	Token string
 	Hello wire.NodeHello
+	// Profiles, when set, takes role credentials from the host (#343) and
+	// runs each record's session with the profile written for it; nil keeps
+	// the profiles the records name (`switchboard up`'s own node).
+	Profiles *Profiles
 	// Interval is the reconcile period (default ReconcileInterval).
 	Interval time.Duration
 	// Sleep waits between reconnects (nil: a timer); tests inject it.
@@ -200,7 +205,11 @@ func (l *Link) current() wire.NodeFrame {
 // saying hello. Terminals the host attaches stream over it until it ends.
 func (l *Link) session(ctx context.Context, url string) (attached bool, err error) {
 	dctx, cancel := context.WithTimeout(ctx, linkDialTimeout)
-	ws, resp, err := websocket.Dial(dctx, url, &websocket.DialOptions{HTTPHeader: http.Header{"Authorization": {"Bearer " + l.Token}}})
+	header := http.Header{"Authorization": {"Bearer " + l.Token}}
+	if l.Profiles != nil {
+		header.Set(config.HeaderPrefix+config.NodeCredentialsHeaderName, l.Profiles.Header())
+	}
+	ws, resp, err := websocket.Dial(dctx, url, &websocket.DialOptions{HTTPHeader: header})
 	cancel()
 	if err != nil {
 		if resp != nil && resp.StatusCode == http.StatusUnauthorized {
@@ -301,7 +310,18 @@ func (l *Link) receive(ctx context.Context, f wire.NodeFrame, sctx context.Conte
 		if err := l.Node.Resize(sctx, f.ID, f.Cols, f.Rows); err != nil && !errors.Is(err, term.ErrNoSession) {
 			l.Logf("node: resize %s: %v", f.ID, err)
 		}
+	case wire.NodeCredentialType:
+		// Before the assign that names the record: frames keep their order.
+		if l.Profiles == nil || f.Credential == nil {
+			return
+		}
+		if err := l.Profiles.Write(f.ID, *f.Credential); err != nil {
+			l.Logf("node: credential for %s: %v", f.ID, err)
+		}
 	case wire.NodeAssign:
+		if l.Profiles != nil {
+			l.Profiles.apply(f.Sessions)
+		}
 		l.Node.Assign(f.Sessions)
 		l.once.Do(func() { close(l.assigned) })
 		signal(l.kick)
