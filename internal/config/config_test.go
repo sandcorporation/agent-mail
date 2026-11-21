@@ -1,7 +1,9 @@
 package config
 
 import (
+	"net/netip"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -58,5 +60,29 @@ func TestWithoutOwnEnvDropsBothPrefixes(t *testing.T) {
 	got := WithoutOwnEnv(in)
 	if want := []string{"PATH=/bin", "HOME=/h", "SWITCHBOARDX=keep", "DB_PATH=/d"}; !slices.Equal(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestHostingRemoteAllow(t *testing.T) {
+	allow, from, err := HostingRemoteAllow(fakeEnv(nil))
+	if err != nil || from != "SWITCHBOARD_HOSTING_REMOTE_ALLOW" || len(allow) != 2 || allow[0].String() != "100.64.0.0/10" || allow[1].String() != "fd7a:115c:a1e9::/48" { // leak-guard:allow
+		t.Fatalf("default = %v %q %v", allow, from, err)
+	}
+	allow, _, err = HostingRemoteAllow(fakeEnv(map[string]string{"SWITCHBOARD_HOSTING_REMOTE_ALLOW": " 192.0.2.0/24 , 2001:db8::/32 "}))
+	if err != nil || len(allow) != 2 {
+		t.Fatalf("list = %v %v", allow, err)
+	}
+	for _, c := range []struct {
+		addr string
+		want bool
+	}{{"192.0.2.7", true}, {"::ffff:192.0.2.7", true}, {"2001:db8::1", true}, {"198.51.100.1", false}, {"100.64.0.10", false}} { // leak-guard:allow
+		if got := AddrAllowed(netip.MustParseAddr(c.addr), allow); got != c.want {
+			t.Errorf("AddrAllowed(%s) = %v", c.addr, got)
+		}
+	}
+	for _, bad := range []string{"100.64.0.10", "nonsense", " , "} { // leak-guard:allow
+		if _, _, err := HostingRemoteAllow(fakeEnv(map[string]string{"SWITCHBOARD_HOSTING_REMOTE_ALLOW": bad})); err == nil || !strings.Contains(err.Error(), "SWITCHBOARD_HOSTING_REMOTE_ALLOW") {
+			t.Errorf("%q: err %v", bad, err)
+		}
 	}
 }

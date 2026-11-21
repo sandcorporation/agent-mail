@@ -170,6 +170,24 @@ func run(v string, ln net.Listener, setupDir string, attach attachFunc) {
 			fatal(e)
 		}
 	}
+	// The remote listener (#329) serves nodes on other machines.
+	var remote *http.Server
+	if s.hosting {
+		rs, _ := hostingRemote(os.Getenv) // checked by hostingStart
+		if rs.addr != "" {
+			rln, err := net.Listen("tcp", rs.addr)
+			if err != nil {
+				fatal(err)
+			}
+			remote = &http.Server{Handler: s.remoteHandler(rs.allow), ReadHeaderTimeout: 10 * time.Second}
+			log.Printf("switchboard remote listener on %s (node channel and role API; peers in %s)", rs.addr, prefixList(rs.allow))
+			goSafe("remote listener", func() {
+				if err := remote.Serve(rln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+					fatal(err)
+				}
+			})
+		}
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if s.hosting {
@@ -189,6 +207,9 @@ func run(v string, ln net.Listener, setupDir string, attach attachFunc) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(ctx)
+		if remote != nil {
+			_ = remote.Shutdown(ctx)
+		}
 		close(stopped)
 	})
 	log.Printf("switchboard listening on %s", addr)

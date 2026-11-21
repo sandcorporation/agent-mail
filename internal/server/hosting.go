@@ -37,7 +37,8 @@ const (
 // hostingStart reads SWITCHBOARD_HOSTING and, when it is on, refuses an
 // unsafe start: the listen address must be loopback, the admin mode must sign
 // admins in (builtin or oidc), and DB_PATH must name a database other than
-// the container default. The error names every failing condition.
+// the container default; a remote listener (hostingRemote) must be a
+// private-network address. The error names every failing condition.
 func hostingStart(getenv func(string) string) (bool, error) {
 	on, from := config.HostingFrom(getenv)
 	if !on {
@@ -50,6 +51,9 @@ func hostingStart(getenv func(string) string) (bool, error) {
 	}
 	if !loopbackAddr(addr) {
 		failed = append(failed, "LISTEN_ADDR "+addr+" is not a loopback address (127.0.0.0/8, ::1 or localhost)")
+	}
+	if _, err := hostingRemote(getenv); err != nil {
+		failed = append(failed, err.Error())
 	}
 	if mode := getenv(config.EnvPrefix + "ADMIN_AUTH"); !adminauth.SignsIn(mode) {
 		failed = append(failed, config.EnvPrefix+"ADMIN_AUTH must be builtin or oidc (got "+quoteOrUnset(mode)+")")

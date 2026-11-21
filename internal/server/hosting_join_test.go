@@ -152,11 +152,13 @@ func TestJoinRouteAnswers(t *testing.T) {
 	}
 }
 
-func TestNodeRefusesANonLoopbackHost(t *testing.T) {
+// TestNodeRefusesAHostOutsideTheRanges: names are covered with an injected
+// resolver in TestCheckNodeHost.
+func TestNodeRefusesAHostOutsideTheRanges(t *testing.T) {
 	dir := t.TempDir()
-	for _, host := range []string{"http://192.0.2.10:8090", "http://example.invalid:8090", "https://[2001:db8::1]:8090"} {
+	for _, host := range []string{"http://192.0.2.10:8090", "https://[2001:db8::1]:8090"} {
 		err := Node("test", host, filepath.Join(dir, "node.token"), "sbj_x", false)
-		if err == nil || !strings.Contains(err.Error(), "not a loopback address") || !strings.Contains(err.Error(), "access scope") {
+		if err == nil || !strings.Contains(err.Error(), "is neither loopback nor inside SWITCHBOARD_HOSTING_REMOTE_ALLOW") {
 			t.Errorf("%s: %v", host, err)
 		}
 	}
