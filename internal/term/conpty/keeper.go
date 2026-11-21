@@ -2,6 +2,7 @@ package conpty
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -489,6 +490,54 @@ func (k *Keeper) Shutdown(grace time.Duration) {
 		}
 		close(k.done)
 	})
+}
+
+// DefaultIdleLimit is how long a keeper with no sessions and no connection
+// waits before it ends on its own.
+const DefaultIdleLimit = 5 * time.Minute
+
+// idle reports a keeper holding no session (dead ones count until they are
+// forgotten) and no connection.
+func (k *Keeper) idle() bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return len(k.sessions) == 0 && len(k.conns) == 0
+}
+
+// WatchIdle returns true once the keeper has had no sessions and no
+// connections for limit (checked every poll; <= 0: limit/10), after logging
+// one line. It returns false when the keeper is shut down first or ctx
+// ends. Any session or connection restarts the wait.
+func (k *Keeper) WatchIdle(ctx context.Context, limit, poll time.Duration) bool {
+	if poll <= 0 {
+		poll = limit / 10
+	}
+	if poll <= 0 {
+		poll = time.Second
+	}
+	t := time.NewTicker(poll)
+	defer t.Stop()
+	var since time.Time
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-k.done:
+			return false
+		case now := <-t.C:
+			if !k.idle() {
+				since = time.Time{}
+				continue
+			}
+			if since.IsZero() {
+				since = now
+			}
+			if now.Sub(since) >= limit {
+				k.o.Logf("keeper: no sessions and no node attached for %s; exiting", limit)
+				return true
+			}
+		}
+	}
 }
 
 // serveStream subscribes the connection to a session's output: a response,

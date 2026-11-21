@@ -3,6 +3,7 @@
 package conpty
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -58,7 +59,20 @@ func Run(o RunOptions, version string) error {
 	logf("keeper %s: listening on %s", version, PipeName(o.Instance))
 	errc := make(chan error, 1)
 	go func() { errc <- k.Serve(l) }()
+	limit := o.IdleLimit
+	if limit <= 0 {
+		limit = DefaultIdleLimit
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	idle := make(chan bool, 1)
+	go func() { idle <- k.WatchIdle(ctx, limit, 0) }()
 	select {
+	case ok := <-idle:
+		if ok {
+			k.Shutdown(DefaultGrace)
+		}
+		return nil
 	case <-k.Done():
 		logf("keeper: shut down")
 		return nil
