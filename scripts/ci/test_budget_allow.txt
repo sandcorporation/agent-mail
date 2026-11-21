@@ -1,0 +1,2 @@
+# Tests over the single-test budget of scripts/ci/test_budget.sh (30s on Linux, 60s on Windows), allowed until
+# #340 brings them under it. One "<package> <TestName>" per line. Do not add tests here without an issue.

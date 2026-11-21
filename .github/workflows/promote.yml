@@ -1,7 +1,11 @@
 # main push -> checks || image -> production fast-forward. The production branch head is the deployed version.
 # The Jenkins deploy job (Jenkinsfile) watches production only: it does not build or test, it pulls the image for that sha.
 #
-#   check    ci.yml (workflow_call) — the same checks as pull requests. If it fails nothing is promoted.
+#   reuse    scripts/ci/reuse.sh check: when the pull request this push merged has a successful CI run (test and
+#            windows, tests not skipped) on a head with the same git tree, logs "재사용: run R" and check is skipped.
+#            Decided only from GitHub API values and git trees, never from what a pull request run wrote (#339).
+#   check    ci.yml (workflow_call) — the same checks as pull requests, unless reuse found a run. If it fails
+#            nothing is promoted.
 #   image    image.yml (workflow_call), in parallel with check — the deployment image tagged <sha>.
 #   promote  needs check and image. Fast-forwards production to this sha (scripts/ci/promote.sh ff).
 #            If production is already newer (an older run finished late) it skips instead of failing.
@@ -29,8 +33,29 @@ on:
 permissions: {}
 
 jobs:
-  check:
+  reuse:
     if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      reused: ${{ steps.decide.outputs.reused }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Reuse the pull request run on the same tree
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          if bash scripts/ci/reuse.sh check "$SHA"; then echo reused=true >>"$GITHUB_OUTPUT"; else echo reused=false >>"$GITHUB_OUTPUT"; fi
+
+  check:
+    needs: reuse
+    if: github.ref == 'refs/heads/main' && needs.reuse.outputs.reused != 'true'
     uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
@@ -43,8 +68,12 @@ jobs:
       packages: write
 
   promote:
-    if: github.ref == 'refs/heads/main'
-    needs: [check, image]
+    # check is skipped when reuse found a run; anything else that is not success stops the promotion.
+    if: >-
+      always() && github.ref == 'refs/heads/main'
+      && needs.reuse.result == 'success' && needs.image.result == 'success'
+      && (needs.check.result == 'success' || (needs.check.result == 'skipped' && needs.reuse.outputs.reused == 'true'))
+    needs: [reuse, check, image]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

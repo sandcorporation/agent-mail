@@ -192,6 +192,16 @@ The Compose file binds to loopback by default (`127.0.0.1:8097`). For private ne
 
 Nothing deploys until such a job exists. Host-specific values are not in this repository: the deploy node is chosen by its Jenkins label, and secrets plus `MAIL_BIND_ADDRESS` come from the `.env` file in the job workspace on that node (mode `0600`, same `SWITCHBOARD_*` keys as above), or, optionally, from an env file outside the workspace named by the node's `DEPLOY_ENV_FILE` environment variable. The workspace `.env` is the default; note that Jenkins can wipe the workspace when a checkout fails, so keep a copy of it. The first clone into a new workspace also empties it: put the `.env` there after the job's first run (which stops at the check below), then run the job again. The deploy stops before replacing anything if `SWITCHBOARD_TOKENS` or `MAIL_BIND_ADDRESS` is empty. Keep the Compose project name `switchboard` so the existing `switchboard_switchboard_data` volume is reused; moving from a manual deployment only recreates the container. The deploy node needs Docker with Compose and pull access to the GHCR package.
 
+### CI time, reuse and skips
+
+| Run | Tests | Job time limits |
+|---|---|---|
+| Pull request | everything; a pull request that changes only `*.md` and `docs/**` skips the test steps and `test`, `windows` report green (`scripts/ci/docs_only.sh`) | `test` 10 min, `windows` 20 min |
+| Push to `main` (`promote`) | reuses the pull request run when its head has the same git tree and `test`, `windows` ran their tests and passed (log line `재사용: run <id>`); otherwise runs `CI` again (`scripts/ci/reuse.sh check`) | `reuse` 5 min, `CI` as above, `promote` 5 min |
+| Tag `v*` (`Release`) | skipped when the tagged commit has a successful `promote` run (`scripts/ci/reuse.sh release`); the six archives build in parallel | `test` 15 min, each build 10 min, `publish` 5 min |
+
+Reuse is decided only from GitHub API values and git trees, never from files or text a pull request run produced; a fork, a different tree, a failed or docs-only run, or any API error means a full run. `go test` runs with `-timeout 8m` (Linux) and `12m` (Windows), and `scripts/ci/test_budget.sh` fails any single top-level test over 30 s on Linux or 60 s on Windows, except those listed in `scripts/ci/test_budget_allow.txt` with the issue that brings them under budget.
+
 ### Protected administrator dashboard
 
 The dashboard shows all messages, sessions and registered role names, and lets the administrator answer questions and permission requests, edit question settings and revoke or restore roles. The 설정 tab has four views, each a list whose rows open the detail panel (`#settings/<kind>:<id>/<sub>`): 질문 설정 (`#settings`; 추가 in a drawer, edit and 삭제 in the detail), 역할 (`#settings-roles`; 끊기 / 되살리기, each behind a confirm), 노드 (`#settings-nodes`, hosting only; 끊기 behind a confirm) and 다시 알림 (`#settings-reminders`), which shows `GET /api/admin/settings` read-only: `{"version","hosting","reminders":{"on","after","after_seconds","max","since"}}`, `since` being the first sweep with reminders on (`null` before it). The response carries no token, webhook address or other secret. Who may use it is set by `SWITCHBOARD_ADMIN_AUTH`:
