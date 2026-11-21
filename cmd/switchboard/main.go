@@ -27,9 +27,10 @@ func main() {
 		os.Exit(server.Keeper(version, args[1:]))
 	}
 	os.Exit(cli.Run(args, version, cli.Commands{
-		Admin: adminauth.CLI,
-		Host:  server.HostCLI,
-		Up:    func(dir string, port int, node string) error { return server.Up(version, dir, port, node) },
+		Admin:    adminauth.CLI,
+		Host:     server.HostCLI,
+		HostAuto: server.HostAutoCLI,
+		Up:       func(dir string, port int, node string) error { return server.Up(version, dir, port, node) },
 		Node: func(host, tokenFile, joinCode string, restartSessions bool) error {
 			return server.Node(version, host, tokenFile, joinCode, restartSessions)
 		},

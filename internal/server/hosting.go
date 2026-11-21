@@ -153,6 +153,7 @@ func (s *Server) hostingHub() *hosting.Hub {
 		}
 		sort.Strings(bosses)
 		s.nodeHub.SetNotify(s.hostingNotify, bosses)
+		s.nodeHub.SetAutoMail(s.hostingAutoMail)
 		s.nodeHub.SetSlotOf(s.hostingSlotOf)
 	})
 	return s.nodeHub
@@ -209,6 +210,28 @@ func (s *Server) hostingNotify(to []string, subject, body, key string) error {
 	return nil
 }
 
+// hostingAutoMail is the hub's AutoMail: one system mail to role's mailbox,
+// idempotent by key, and the mail's id (the first one's on a repeat).
+func (s *Server) hostingAutoMail(role, subject, body, key string) (int64, error) {
+	var id int64
+	var box string
+	err := store.InTx(context.Background(), s.db, func(tx *sql.Tx) error {
+		var ok bool
+		if box, ok = identity.Mailbox(tx, role); !ok {
+			return fmt.Errorf("%q is not a registered role", role)
+		}
+		if err := mail.InsertSystemMail(tx, box, subject, body, "", "normal", key, s.now()); err != nil {
+			return err
+		}
+		return tx.QueryRow(`SELECT id FROM messages WHERE sender=? AND idem=?`, identity.SystemSender, key).Scan(&id)
+	})
+	if err != nil {
+		return 0, err
+	}
+	s.hub.Publish(box)
+	return id, nil
+}
+
 // hostingService is the hosted-session store over this server's database.
 func (s *Server) hostingService() *hosting.Service {
 	return hosting.New(s.db, s.now, func(base string) bool { return identity.RoleExists(s.db, base) }).WithCredentials(roleCredentials(s.db, s.now))
@@ -237,6 +260,12 @@ func roleCredentials(db *sql.DB, clock func() time.Time) *hosting.RoleCredential
 // SWITCHBOARD_HOSTING=on), so the operations database never gains records.
 func HostCLI(action, id string, add wire.HostedSessionCreate, jsonOut bool, stdout io.Writer) (int, error) {
 	return withInstanceDB("host", func(svc *hosting.Service) error { return svc.RunCLI(action, id, add, jsonOut, stdout) })
+}
+
+// HostAutoCLI is the binary's `host auto` command: the scheduled runs of
+// the hosted sessions in DB_PATH (the same rule as `host`).
+func HostAutoCLI(action, ref string, c wire.HostAutoCreate, runs int, jsonOut bool, stdout io.Writer) (int, error) {
+	return withInstanceDB("host auto", func(svc *hosting.Service) error { return svc.RunAutoCLI(action, ref, c, runs, jsonOut, stdout) })
 }
 
 // NodeInviteCLI is the binary's `node invite NAME`: a one-time code for a new

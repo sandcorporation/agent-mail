@@ -228,19 +228,24 @@ var commands = []command{
 			{"--status", "STATUS", "list: only pending, answered or withdrawn questions"},
 			optJSON, optProfile,
 		}},
-	{name: "host", args: "ACTION [ID]", nargs: 2, optArgs: true, extra: true, synopsis: "(ACTION: add | list | set ID | start ID | stop ID | restart ID | new-conversation ID | remove ID | limit [on|off]) [-- AGENT ARGS...]",
-		summary: "Manage hosted sessions in this instance's database (DB_PATH, not the container default): add a record, list them, change one's permission mode, set one to run or stop, restart one with resume (clears a crash loop), start one in a new conversation, remove one, show or set the subscription limit",
+	{name: "host", args: "ACTION [ID]", nargs: 3, optArgs: true, extra: true, synopsis: "(ACTION: add | list | set ID | start ID | stop ID | restart ID | new-conversation ID | remove ID | limit [on|off] | auto add ID | auto list | auto show AUTO-ID | auto run AUTO-ID | auto pause AUTO-ID | auto resume AUTO-ID | auto rm AUTO-ID) [-- AGENT ARGS...]",
+		summary: "Manage hosted sessions in this instance's database (DB_PATH, not the container default): add a record, list them, change one's permission mode, set one to run or stop, restart one with resume (clears a crash loop), start one in a new conversation, remove one, show or set the subscription limit; auto: scheduled runs of a session (at each cron time in this machine's zone the host launches it when stopped and mails the prompt to its base role)",
 		options: []option{
 			{"--node", "NAME", "add: node the session runs on"},
 			{"--base", "ROLE", "add: base role (must exist)"},
 			{"--profile", "NAME", "add: credential profile on the node (SWITCHBOARD_PROFILE)"},
 			{"--dir", "PATH", "add: absolute working directory on the node"},
-			{"--label", "TEXT", "add: label (SWITCHBOARD_LABEL)"},
+			{"--label", "TEXT", "add: label (SWITCHBOARD_LABEL); auto add: the mail subject (default \"scheduled run ID\")"},
 			{"--parent", "ROLE", "add: parent role (SWITCHBOARD_PARENT)"},
 			{"--restart", "POLICY", "add: always (default), on-failure or never"},
 			{"--class", "CLASS", "add: lead, coordinator, execute (default) or review"},
 			{"--ask-permissions", "", "add: launch the agent in its normal permission mode (default: with its permission-skip arguments)"},
 			{"--skip-permissions", "on|off", "set: launch with (on) or without (off) the agent's permission-skip arguments, from the next launch or restart"},
+			{"--cron", "EXPR", "auto add: five-field cron expression, read in this machine's time zone"},
+			{"--prompt", "TEXT", "auto add: the mail the session gets at each run"},
+			{"--resume", "", "auto add: continue the session's last conversation when the run launches it (default: a new conversation each run)"},
+			{"--notify", "ROLE[,ROLE]", "auto add: roles told about runs that need attention"},
+			{"--runs", "N", "auto show: newest N runs (default 20, at most 500)"},
 			optJSON,
 		}},
 	{name: "up",
@@ -301,6 +306,11 @@ func findCommand(name string) (command, bool) {
 // `host add`; id names the record for start, stop and remove.
 type HostFunc func(action, id string, add wire.HostedSessionCreate, jsonOut bool, stdout io.Writer) (int, error)
 
+// HostAutoFunc runs `host auto ACTION [REF]` against the server's database:
+// REF is the hosted session for add and the scheduled run otherwise; runs is
+// show's --runs.
+type HostAutoFunc func(action, ref string, c wire.HostAutoCreate, runs int, jsonOut bool, stdout io.Writer) (int, error)
+
 // AdminFunc runs `admin ACTION NAME [--json]`. Admin users live in the
 // server's database, which the client never opens, so the binary supplies it.
 type AdminFunc func(action, name string, jsonOut bool, stdin io.Reader, stdout, stderr io.Writer) (int, error)
@@ -321,22 +331,24 @@ type NodeInviteFunc func(name string, stdout io.Writer) (int, error)
 type Commands struct {
 	Admin      AdminFunc
 	Host       HostFunc
+	HostAuto   HostAutoFunc
 	Up         UpFunc
 	Node       NodeFunc
 	NodeInvite NodeInviteFunc
 }
 
 var (
-	version string    // build version, from Run
-	admin   AdminFunc // the admin command, from Run
-	host    HostFunc  // the host command, from Run
-	binary  Commands  // every command the binary supplies, from Run
+	version  string       // build version, from Run
+	admin    AdminFunc    // the admin command, from Run
+	host     HostFunc     // the host command, from Run
+	hostAuto HostAutoFunc // the host auto command, from Run
+	binary   Commands     // every command the binary supplies, from Run
 )
 
 // Run runs the client command in args (the arguments after the program name)
 // and returns the process exit code.
 func Run(args []string, buildVersion string, cmds Commands) int {
-	version, admin, host, binary = buildVersion, cmds.Admin, cmds.Host, cmds
+	version, admin, host, hostAuto, binary = buildVersion, cmds.Admin, cmds.Host, cmds.HostAuto, cmds
 	return runCLI(args)
 }
 
