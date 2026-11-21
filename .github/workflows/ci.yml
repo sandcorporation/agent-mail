@@ -1,5 +1,13 @@
 # Checks for pull requests. On main pushes promote.yml calls this workflow (workflow_call) before promoting.
 # Security: GitHub-hosted runners only, no pull_request_target, no secrets, read-only token.
+#
+# Time and skips (#339):
+#   docs-only PR   a pull request that changes only *.md and docs/** skips every test step (scripts/ci/docs_only.sh);
+#                  test and windows still report, green, under their names (required checks).
+#   timeouts       job test 10 min, windows 20 min (about twice the usual run); go test -timeout 8m / 12m.
+#   single test    30 s on Linux, 60 s on Windows (scripts/ci/test_budget.sh); tests already over the budget are
+#                  listed in scripts/ci/test_budget_allow.txt until #340.
+#   main pushes    promote.yml reuses this workflow's pull request run on the same git tree (scripts/ci/reuse.sh).
 name: CI
 on:
   push:
@@ -20,64 +28,111 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - name: Scope (docs-only pull requests skip the tests)
+        id: scope
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: bash scripts/ci/docs_only.sh scope
       - uses: actions/setup-go@v5
+        if: steps.scope.outputs.docs_only != 'true'
         with:
           go-version-file: go.mod
           cache: true
       - name: Install tmux (terminal backend tests)
+        if: steps.scope.outputs.docs_only != 'true'
         run: sudo apt-get update -q && sudo apt-get install -y -q tmux && tmux -V
       - name: Question source of truth (server e2e)
+        if: steps.scope.outputs.docs_only != 'true'
         run: bash scripts/ci/question_sot.sh
       - name: Answered rule golden (bump mail.AnsweredRuleVersion on change)
+        if: steps.scope.outputs.docs_only != 'true'
         run: bash scripts/ci/answered_golden.sh
       - name: Hosting end to end (up, tmux)
+        if: steps.scope.outputs.docs_only != 'true'
         run: bash scripts/ci/e2e.sh
       - name: tmux backend against real tmux
+        if: steps.scope.outputs.docs_only != 'true'
         env:
           SWITCHBOARD_TEST_TMUX: require
         run: go test -count=1 -v ./internal/term/tmux/
-      - run: go test ./...
+      # promote.yml's reuse and release.yml look for this step name (scripts/ci/reuse.sh).
+      - name: Go tests (all packages)
+        if: steps.scope.outputs.docs_only != 'true'
         env:
           SWITCHBOARD_TEST_TMUX: require
           # The dashboard's Markdown renderer tests run under node (preinstalled on the runner).
           SWITCHBOARD_TEST_NODE: require
+        run: |
+          rc=0; go test -json -timeout 8m ./... >"$RUNNER_TEMP/go-test.json" || rc=$?
+          bash scripts/ci/test_budget.sh 30 "$RUNNER_TEMP/go-test.json" || rc=1
+          exit $rc
       - run: go vet ./...
+        if: steps.scope.outputs.docs_only != 'true'
       - run: go build ./cmd/switchboard
+        if: steps.scope.outputs.docs_only != 'true'
       - run: GOOS=windows go build ./... && GOOS=windows go vet ./...
-      - run: bash scripts/ci/promote_test.sh
+        if: steps.scope.outputs.docs_only != 'true'
+      - name: CI script tests
+        if: steps.scope.outputs.docs_only != 'true'
+        run: |
+          bash scripts/ci/promote_test.sh
+          bash scripts/ci/reuse_test.sh
+          bash scripts/ci/docs_only_test.sh
+          bash scripts/ci/test_budget_test.sh
       - run: bash scripts/go_test.sh
+        if: steps.scope.outputs.docs_only != 'true'
   windows:
     # ConPTY backend and keeper against real Windows. The ConPTY output of
     # each golden scene is uploaded as the conpty-recordings artifact (the
     # source of internal/term/testdata/conpty).
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: Scope (docs-only pull requests skip the tests)
+        id: scope
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: bash scripts/ci/docs_only.sh scope
       - uses: actions/setup-go@v5
+        if: steps.scope.outputs.docs_only != 'true'
         with:
           go-version-file: go.mod
           cache: true
       - name: ConPTY backend and keeper
+        if: steps.scope.outputs.docs_only != 'true'
         shell: bash
         run: go test -count=1 -v ./internal/term/conpty/ -args -conpty.record="$RUNNER_TEMP/conpty"
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && steps.scope.outputs.docs_only != 'true'
         with:
           name: conpty-recordings
           path: ${{ runner.temp }}/conpty
           if-no-files-found: ignore
       - name: Hosting end to end (up, ConPTY keeper)
+        if: steps.scope.outputs.docs_only != 'true'
         shell: bash
         run: bash scripts/ci/e2e.sh
       - name: Question source of truth (server e2e)
+        if: steps.scope.outputs.docs_only != 'true'
         shell: bash
         run: bash scripts/ci/question_sot.sh
       # Every internal package (the server suite included, #206); the
       # TestE2E_ steps ran in e2e.sh above.
+      # promote.yml's reuse looks for this step name (scripts/ci/reuse.sh).
       - name: Server and domain tests
+        if: steps.scope.outputs.docs_only != 'true'
         shell: bash
-        run: go test -count=1 -skip '^TestE2E_' ./internal/...
+        run: |
+          rc=0; go test -json -count=1 -timeout 12m -skip '^TestE2E_' ./internal/... >"$RUNNER_TEMP/go-test.json" || rc=$?
+          bash scripts/ci/test_budget.sh 60 "$RUNNER_TEMP/go-test.json" || rc=1
+          exit $rc
       - run: go build ./...
+        if: steps.scope.outputs.docs_only != 'true'
       - run: go vet ./...
+        if: steps.scope.outputs.docs_only != 'true'

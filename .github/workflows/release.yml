@@ -1,38 +1,97 @@
+# Tag v* -> GitHub release with the CLI archives and checksums.txt.
+#   test     skipped (logged) when the tagged commit has a successful promote run (scripts/ci/reuse.sh release);
+#            otherwise question source of truth, answered golden and go test.
+#   build    the six targets in parallel, one archive each: switchboard_<tag>_<os>_<arch>.zip|tar.gz.
+#   publish  checksums.txt (sha256sum of the archives) and the release.
+# Timeouts are about twice the usual run (#339).
 name: Release
 on:
   push:
     tags: ['v*']
 permissions:
-  contents: write
+  contents: read
 jobs:
-  release:
+  test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reuse the promote run of this commit
+        id: reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          if bash scripts/ci/reuse.sh release "$SHA"; then echo reused=true >>"$GITHUB_OUTPUT"; else echo reused=false >>"$GITHUB_OUTPUT"; fi
+      - uses: actions/setup-go@v5
+        if: steps.reuse.outputs.reused != 'true'
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Question source of truth (server e2e)
+        if: steps.reuse.outputs.reused != 'true'
+        run: bash scripts/ci/question_sot.sh
+      - name: Answered rule golden (bump mail.AnsweredRuleVersion on change)
+        if: steps.reuse.outputs.reused != 'true'
+        run: bash scripts/ci/answered_golden.sh
+      - name: Go tests (all packages)
+        if: steps.reuse.outputs.reused != 'true'
+        run: go test -timeout 8m ./...
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        target: [windows/amd64, windows/arm64, linux/amd64, linux/arm64, darwin/amd64, darwin/arm64]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - name: Question source of truth (server e2e)
-        run: bash scripts/ci/question_sot.sh
-      - name: Answered rule golden (bump mail.AnsweredRuleVersion on change)
-        run: bash scripts/ci/answered_golden.sh
-      - run: go test ./...
-      - name: Build CLI archives
+      - name: Build CLI archive
+        id: archive
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          os=${TARGET%/*}; arch=${TARGET#*/}; ext=""
+          [ "$os" = windows ] && ext=".exe"
+          mkdir -p dist
+          GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${GITHUB_REF_NAME}" -o "dist/switchboard${ext}" ./cmd/switchboard
+          name="switchboard_${GITHUB_REF_NAME}_${os}_${arch}"
+          if [ "$os" = windows ]; then (cd dist && zip -q "$name.zip" switchboard.exe); else tar -C dist -czf "dist/$name.tar.gz" switchboard; fi
+          rm "dist/switchboard${ext}"
+          echo "name=$name" >>"$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.archive.outputs.name }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+  publish:
+    needs: [test, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: switchboard_*
+          path: dist
+          merge-multiple: true
+      - name: Checksums
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p dist
-          # One build per target, archived as switchboard_<tag>_<os>_<arch>.
-          for target in windows/amd64 windows/arm64 linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
-            os=${target%/*}; arch=${target#*/}; ext=""
-            [ "$os" = windows ] && ext=".exe"
-            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${GITHUB_REF_NAME}" -o "dist/switchboard${ext}" ./cmd/switchboard
-            name="switchboard_${GITHUB_REF_NAME}_${os}_${arch}"
-            if [ "$os" = windows ]; then (cd dist && zip -q "$name.zip" switchboard.exe); else tar -C dist -czf "dist/$name.tar.gz" switchboard; fi
-            rm "dist/switchboard${ext}"
-          done
+          test "$(ls dist | wc -l)" = 6
           (cd dist && sha256sum *.zip *.tar.gz > checksums.txt)
+          cat dist/checksums.txt
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
