@@ -615,3 +615,45 @@ func TestDashboardShowsCLIVersion(t *testing.T) {
 		}
 	}
 }
+
+// On narrow screens the detail panel and the drawers cover the page: a wheel
+// or touch scroll over them must not reach the page behind (#331). Wide
+// screens, where the panel sits beside the list, keep the default.
+func TestDashboardNarrowOverlaysKeepScrollInside(t *testing.T) {
+	w := httptest.NewRecorder()
+	Page(w, httptest.NewRequest("GET", "/", nil))
+	body := w.Body.String()
+	const open = "@media (max-width:720px){\n.sc-app-main.has-detail"
+	start := strings.Index(body, open)
+	if start < 0 {
+		t.Fatal("narrow detail rules missing")
+	}
+	end := strings.Index(body[start:], "\n}\n")
+	if end < 0 {
+		t.Fatal("narrow detail rules not closed")
+	}
+	narrow := body[start : start+end]
+	for _, want := range []string{
+		".detail{position:fixed;inset:0;",
+		// The overlay keeps its own scroll at its ends and when it has none.
+		".detail,.sc-drawer,.sc-drawer-body{overscroll-behavior:contain}",
+		// The page behind is locked while an overlay is open; closing it
+		// lifts the lock and keeps the page's scroll position.
+		":root:has(.detail:not([hidden])),:root:has(dialog.sc-drawer[open]){overflow:hidden}",
+	} {
+		if !strings.Contains(narrow, want) {
+			t.Errorf("narrow rules lack %q", want)
+		}
+	}
+	rest := body[:start] + body[start+end:]
+	for _, bad := range []string{"overscroll-behavior:contain}", ":root:has("} {
+		if strings.Contains(rest, bad) {
+			t.Errorf("%q outside the narrow rules changes wide screens", bad)
+		}
+	}
+	// Every drawer is a dialog of the class the lock names.
+	if d, c := strings.Count(body, "<dialog "), strings.Count(body, `<dialog id="`); d == 0 || d != strings.Count(body, `class="sc-drawer"`) || c != d {
+		t.Errorf("drawers: %d dialogs, %d of class sc-drawer", d, strings.Count(body, `class="sc-drawer"`))
+	}
+
+}
