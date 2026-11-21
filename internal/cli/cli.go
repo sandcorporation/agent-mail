@@ -111,6 +111,7 @@ var commands = []command{
 		options: []option{
 			{"--q", "TEXT", "only messages whose subject, body or task contain TEXT"},
 			{"--status", "STATUS", "only messages in STATUS: pending, read, acknowledged or complete (completed also accepted)"},
+			{"--of", "ROLE", "boss roles only: list another role's or slot's inbox read-only (states unchanged; the view is recorded)"},
 			optJSON, optProfile,
 		}},
 	{name: "outbox", summary: "List messages sent by the active role (newest 100)",
@@ -145,7 +146,7 @@ var commands = []command{
 			{"--idem", "KEY", "start: retry-safe key; starting again with the same key returns the first watch"},
 			optJSON, optProfile,
 		}},
-	{name: "read", args: "ID", nargs: 1, summary: "Read a message (marks it read)", options: []option{optJSON, optProfile}},
+	{name: "read", args: "ID", nargs: 1, summary: "Read a message (marks it read; a boss role may open another role's mail, which leaves its state unchanged and is recorded)", options: []option{optJSON, optProfile}},
 	{name: "reply", args: "ID", nargs: 1, synopsis: "[--complete] (--body TEXT | --body-file PATH | stdin)", summary: "Reply to a message; reply --complete also marks it complete",
 		options: []option{
 			{"--complete", "", "the reply is the final word on ID: also mark ID complete (one transaction). Without it a directive stays open"},
@@ -542,7 +543,7 @@ func dispatch(args []string) (int, error) {
 		}
 		req, _ := http.NewRequest(method, u, nil)
 		if p.bool("--json") {
-			return doRequest(c, req, true)
+			return doRequestWith(c, req, true, foreignNote(c.Role))
 		}
 		return doRequestWith(c, req, false, readNote(c.Role))
 	case "close":
@@ -1005,12 +1006,31 @@ func ReadNote(id int64) string {
 	return fmt.Sprintf("reply %d --complete answers and completes; complete %d ends it without an answer", id, id)
 }
 
+// foreign reports whether m is another mailbox's mail (a boss view).
+func foreign(m wire.Message, role string) bool {
+	return m.ID != 0 && m.Recipient != role && m.Sender != role
+}
+
+// foreignNote is readNote for --json: only the other-mailbox line.
+func foreignNote(role string) func([]byte) {
+	return func(b []byte) {
+		var m wire.Message
+		if json.Unmarshal(b, &m) == nil && foreign(m, role) {
+			fmt.Fprintln(os.Stderr, otherMailboxNote)
+		}
+	}
+}
+
 // readNote returns a hook for the read response: ReadNote on stderr when
 // role received the mail, it is not complete and it is no answer to an
 // open directive (that one has DirectiveOpenNote).
 func readNote(role string) func([]byte) {
 	return func(b []byte) {
 		var m wire.Message
+		if json.Unmarshal(b, &m) == nil && foreign(m, role) {
+			fmt.Fprintln(os.Stderr, otherMailboxNote)
+			return
+		}
 		if json.Unmarshal(b, &m) != nil || m.ID == 0 || m.Recipient != role || m.Status == "complete" || m.Status == "completed" {
 			return
 		}
@@ -1084,8 +1104,17 @@ func withPriority(p parsedArgs, req map[string]any) map[string]any {
 
 func cliList(c Config, box string, p parsedArgs) (int, error) {
 	req, _ := http.NewRequest("GET", listURL(c, box, p.values["--q"], p.values["--status"]), nil)
+	if of := p.values["--of"]; of != "" && box == "inbox" {
+		q := req.URL.Query()
+		q.Set("of", of)
+		req.URL.RawQuery = q.Encode()
+		fmt.Fprintln(os.Stderr, otherMailboxNote)
+	}
 	return doRequest(c, req, p.bool("--json"))
 }
+
+// otherMailboxNote heads a read-only view of another mailbox.
+const otherMailboxNote = "다른 메일함 보기(상태 안 바뀜)"
 
 func inputBody(p parsedArgs) (string, error) {
 	if f := p.values["--body-file"]; f != "" {

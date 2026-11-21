@@ -369,6 +369,14 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		case "POST":
 			s.mail().Send(w, r, who)
 		case "GET":
+			if of := strings.TrimSpace(r.URL.Query().Get("of")); of != "" {
+				if !s.ids().IsGlobalBoss(who) {
+					http.Error(w, "viewing another mailbox is for boss roles only", 403)
+					return
+				}
+				s.mail().ListOf(w, r, who, of)
+				return
+			}
 			s.mail().List(w, r, role)
 		default:
 			http.Error(w, "method not allowed", 405)
@@ -392,6 +400,9 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		id, e := wire.ParseID(parts[1])
 		if e != nil {
 			http.Error(w, "invalid id", 400)
+			return
+		}
+		if len(parts) == 2 && r.Method == "GET" && s.ids().IsGlobalBoss(who) && s.mail().ViewForeign(w, who, id) {
 			return
 		}
 		if box, other := s.mail().OtherSlotMailbox(who, id); other {
