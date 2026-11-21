@@ -83,6 +83,7 @@ func registerWorker(t *testing.T, s *Server, dir, parent string) {
 }
 
 func TestPermissionParentIsToldButCannotAnswer(t *testing.T) {
+	t.Parallel()
 	s, _ := permissionServer(t)
 	registerWorker(t, s, "/w", "a")
 	wakeParent, stopParent := s.hub.Subscribe("a")
@@ -146,6 +147,7 @@ func TestPermissionParentIsToldButCannotAnswer(t *testing.T) {
 }
 
 func TestPermissionBossParentGetsTheAnswerMail(t *testing.T) {
+	t.Parallel()
 	s, _ := permissionServer(t)
 	s.bossRoles["a"] = true
 	registerWorker(t, s, "/w", "a")
@@ -159,6 +161,7 @@ func TestPermissionBossParentGetsTheAnswerMail(t *testing.T) {
 }
 
 func TestPermissionBossAnswers(t *testing.T) {
+	t.Parallel()
 	s, _ := permissionServer(t)
 	registerWorker(t, s, "/w", "a")
 	v := askAs(t, s, workerToken, "team/worker-1", 201)
@@ -187,6 +190,7 @@ func TestPermissionBossAnswers(t *testing.T) {
 }
 
 func TestPermissionRejectsOtherAnswerers(t *testing.T) {
+	t.Parallel()
 	s, _ := permissionServer(t)
 	registerWorker(t, s, "/w", "a")
 	registerWorker(t, s, "/w2", "a")
@@ -214,6 +218,7 @@ func TestPermissionRejectsOtherAnswerers(t *testing.T) {
 }
 
 func TestPermissionSameBaseParentIsIgnored(t *testing.T) {
+	t.Parallel()
 	s, _ := permissionServer(t)
 	registerWorker(t, s, "/w", "team/worker-2") // a sibling as parent
 	registerWorker(t, s, "/w2", "team/worker")  // itself, unnumbered
@@ -255,6 +260,7 @@ func TestPermissionSameBaseParentIsIgnored(t *testing.T) {
 }
 
 func TestPermissionParentIsFixedAtRequestTime(t *testing.T) {
+	t.Parallel()
 	s, _ := permissionServer(t)
 	registerWorker(t, s, "/w", "a")
 	v := askAs(t, s, workerToken, "team/worker-1", 201)
@@ -274,6 +280,7 @@ func TestPermissionParentIsFixedAtRequestTime(t *testing.T) {
 }
 
 func TestPermissionExpires(t *testing.T) {
+	t.Parallel()
 	s, clock := permissionServer(t)
 	s.asksCfg.PermissionTTL = time.Minute
 	registerWorker(t, s, "/w", "a")
@@ -297,6 +304,7 @@ func TestPermissionExpires(t *testing.T) {
 }
 
 func TestPermissionRequestValidation(t *testing.T) {
+	t.Parallel()
 	s, _ := permissionServer(t)
 	for _, body := range []map[string]string{
 		{"summary": "x"},
@@ -322,7 +330,8 @@ func TestPermissionRequestValidation(t *testing.T) {
 }
 
 func TestPermissionSchemaOnLegacyDatabase(t *testing.T) {
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "legacy.db"))
+	t.Parallel()
+	db, err := sql.Open("sqlite", testDSN(filepath.Join(t.TempDir(), "legacy.db")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -345,6 +354,7 @@ func TestPermissionSchemaOnLegacyDatabase(t *testing.T) {
 }
 
 func TestPermissionCommand(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarnessWith(t, func(s *Server) { s.bossRoles = map[string]bool{"a": true} })
 	h.configure([]string{"--profile", "worker"}, "b")
 	h.configure([]string{"--profile", "boss"}, "a")
@@ -384,6 +394,7 @@ func TestPermissionCommand(t *testing.T) {
 }
 
 func TestPermissionConcurrentAnswersAndSweepsActOnce(t *testing.T) {
+	t.Parallel()
 	s, clock := permissionServer(t)
 	registerWorker(t, s, "/w", "a")
 	v := askAs(t, s, workerToken, "team/worker-1", 201)
@@ -431,6 +442,7 @@ func TestPermissionConcurrentAnswersAndSweepsActOnce(t *testing.T) {
 }
 
 func TestGlobalRoleOptionActsAsNumberedRole(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarnessWith(t, func(s *Server) {
 		if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES('team/worker',?,'now')`, workerToken); err != nil {
 			t.Fatal(err)

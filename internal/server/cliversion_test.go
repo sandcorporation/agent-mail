@@ -82,6 +82,7 @@ func cliMail(t *testing.T, s *Server) []string {
 }
 
 func TestHeartbeatRecordsCLIVersion(t *testing.T) {
+	t.Parallel()
 	s, _ := cliServer(t)
 	slotDoVersion(t, s, "register", "v0.26.0", ident("machine-a", "/w"))
 	if v := adminPresence(t, s)["team/worker-1"]; v.CLIVersion != "v0.26.0" || v.CLI != wire.CLICurrent {
@@ -110,6 +111,7 @@ func TestHeartbeatRecordsCLIVersion(t *testing.T) {
 }
 
 func TestCLIBehindInProgressWaitList(t *testing.T) {
+	t.Parallel()
 	s, _ := cliServer(t)
 	slotDoVersion(t, s, "register", "v0.26.1", ident("machine-a", "/a"))
 	slotDoVersion(t, s, "register", "v0.16.0", ident("machine-b", "/b1"))
@@ -132,6 +134,7 @@ func TestCLIBehindInProgressWaitList(t *testing.T) {
 }
 
 func TestCLIBehindMailOncePerDayPerMachine(t *testing.T) {
+	t.Parallel()
 	s, clock := cliServer(t)
 	slotDoVersion(t, s, "register", "v0.16.0", ident("machine-a", "/a"))
 	slotDoVersion(t, s, "register", "", ident("machine-b", "/b"))
@@ -164,6 +167,7 @@ func TestCLIBehindMailOncePerDayPerMachine(t *testing.T) {
 }
 
 func TestCLIMailNoneWhenCurrent(t *testing.T) {
+	t.Parallel()
 	s, clock := cliServer(t)
 	slotDoVersion(t, s, "register", "v0.26.0", ident("machine-a", "/a"))
 	slotDoVersion(t, s, "register", "v1.0.0", ident("machine-b", "/b"))
@@ -183,6 +187,7 @@ func TestCLIMailNoneWhenCurrent(t *testing.T) {
 }
 
 func TestCLIMinSetting(t *testing.T) {
+	t.Parallel()
 	var logged []string
 	logf := func(f string, a ...any) { logged = append(logged, f) }
 	for _, c := range []struct{ env, server, want string }{
@@ -217,6 +222,7 @@ func TestCLIMinSetting(t *testing.T) {
 // A development server has no minimum: nothing is behind, not even a CLI
 // without the header.
 func TestCLIBehindNoneWithoutMinimum(t *testing.T) {
+	t.Parallel()
 	s, _ := alertServer(t)
 	s.admin.ProxyToken = "proxy-secret"
 	configureCLIMin(s, func(string) string { return "" }, "dev", t.Logf)

@@ -14,6 +14,7 @@ import (
 // schedule add, list, show and rm through the real CLI: the cron is recorded
 // with the machine's zone, --in becomes a once schedule.
 func TestScheduleCLI(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	h.configure(nil, "a")
 	tz := []string{"TZ=Asia/Seoul"}

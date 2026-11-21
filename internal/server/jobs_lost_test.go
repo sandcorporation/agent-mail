@@ -36,6 +36,7 @@ func reportJob(t *testing.T, s *Server, token string, id int64, q map[string]any
 // makes that job lost with one urgent mail; jobs it lists, jobs younger than
 // the grace, other machines' and other roles' jobs stay.
 func TestJobLostWhenTheMachineReportsInWithoutIt(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
 	s.clock = func() time.Time { return now }
@@ -87,6 +88,7 @@ func TestJobLostWhenTheMachineReportsInWithoutIt(t *testing.T) {
 // with one mail; a runner that reports again takes it back, and its end is
 // recorded and told.
 func TestJobLostWhenItsRunnerStaysSilent(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
 	s.clock = func() time.Time { return now }

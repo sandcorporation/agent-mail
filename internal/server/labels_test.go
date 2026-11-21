@@ -92,6 +92,7 @@ func heldCount(t *testing.T, s *Server) int {
 }
 
 func TestLabelMailIsHeldUntilTheLabelConnects(t *testing.T) {
+	t.Parallel()
 	s, _, base := labelServer(t)
 	slotDo(t, s, "register", ident("m", "/plain")) // team/worker-1, no label
 
@@ -162,6 +163,7 @@ func TestLabelMailIsHeldUntilTheLabelConnects(t *testing.T) {
 }
 
 func TestLabelMailReachesStreamOfTheSharedMailbox(t *testing.T) {
+	t.Parallel()
 	s, _, base := labelServer(t)
 	sendFrom(t, s, label22, "early", "", 201)
 	st := openEvents(t, base, workerToken, "team/worker-1", nil, "")
@@ -178,6 +180,7 @@ func TestLabelMailReachesStreamOfTheSharedMailbox(t *testing.T) {
 }
 
 func TestLabelMailGoesStraightToAnActiveSession(t *testing.T) {
+	t.Parallel()
 	s, clock, _ := labelServer(t)
 	slotDo(t, s, "register", ident("m", "/a"))                // -1, no label
 	slotDo(t, s, "register", labeled("m", "/b", "22"))        // -2
@@ -207,6 +210,7 @@ func TestLabelMailGoesStraightToAnActiveSession(t *testing.T) {
 }
 
 func TestLabelAddedByHeartbeatOrTakeoverCollectsHeldMail(t *testing.T) {
+	t.Parallel()
 	s, _, _ := labelServer(t)
 	slotDo(t, s, "register", ident("m", "/a")) // -1
 	slotDo(t, s, "register", ident("m", "/b")) // -2
@@ -230,6 +234,7 @@ func TestLabelAddedByHeartbeatOrTakeoverCollectsHeldMail(t *testing.T) {
 }
 
 func TestLabelConcurrentRegistrationsDeliverToOneSession(t *testing.T) {
+	t.Parallel()
 	s, _, _ := labelServer(t)
 	for i := 0; i < 3; i++ {
 		sendFrom(t, s, label22, "held-"+itoa(int64(i)), "", 201)
@@ -270,6 +275,7 @@ func TestLabelConcurrentRegistrationsDeliverToOneSession(t *testing.T) {
 }
 
 func TestLabelSendsRacingARegistrationAreNeverLeftHeld(t *testing.T) {
+	t.Parallel()
 	s, _, _ := labelServer(t)
 	const n = 20
 	var wg sync.WaitGroup
@@ -292,6 +298,7 @@ func TestLabelSendsRacingARegistrationAreNeverLeftHeld(t *testing.T) {
 }
 
 func TestLabelAddressRules(t *testing.T) {
+	t.Parallel()
 	s, _, _ := labelServer(t)
 	for _, to := range []string{
 		"label:", "label:22", "label:/22", "label:team/worker/", "label:team/worker/a b",
@@ -331,6 +338,7 @@ func TestLabelAddressRules(t *testing.T) {
 }
 
 func TestLabelIsScopedToTheBase(t *testing.T) {
+	t.Parallel()
 	s, _, _ := labelServer(t)
 	sendFrom(t, s, label22, "for worker", "", 201)
 	// Another base registers the same label: it gets nothing.
@@ -361,7 +369,8 @@ func TestLabelIsScopedToTheBase(t *testing.T) {
 }
 
 func TestLabelSchemaOnLegacyDatabase(t *testing.T) {
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "legacy.db"))
+	t.Parallel()
+	db, err := sql.Open("sqlite", testDSN(filepath.Join(t.TempDir(), "legacy.db")))
 	if err != nil {
 		t.Fatal(err)
 	}

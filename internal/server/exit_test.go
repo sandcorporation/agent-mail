@@ -11,6 +11,7 @@ import (
 // TestExitPathsLeaveALine runs each exit path in a child process (this test
 // binary) and checks the line it leaves on stderr and its exit code (#257).
 func TestExitPathsLeaveALine(t *testing.T) {
+	t.Parallel()
 	if kind := os.Getenv("SB_EXIT_KIND"); kind != "" {
 		switch kind {
 		case "fatal":

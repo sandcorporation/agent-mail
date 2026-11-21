@@ -78,6 +78,7 @@ func getStatus(t *testing.T, c *http.Client, url string) int {
 }
 
 func TestSetupCreatesFirstAdminAfterTOTPAndCloses(t *testing.T) {
+	t.Parallel()
 	s, srv, dir, now := setupServer(t)
 	jar, _ := cookiejar.New(nil)
 	c := &http.Client{Jar: jar}
@@ -150,6 +151,7 @@ func TestSetupCreatesFirstAdminAfterTOTPAndCloses(t *testing.T) {
 }
 
 func TestSetupRefusesNonLoopback(t *testing.T) {
+	t.Parallel()
 	s, srv, dir, _ := setupServer(t)
 	code := setupCode(t, dir)
 	// A peer that is not loopback (as behind a port forward).
@@ -197,6 +199,7 @@ func TestSetupRefusesNonLoopback(t *testing.T) {
 }
 
 func TestSetupWrongCodesReplaceTheCode(t *testing.T) {
+	t.Parallel()
 	_, srv, dir, _ := setupServer(t)
 	c := &http.Client{}
 	first := setupCode(t, dir)
@@ -218,6 +221,7 @@ func TestSetupWrongCodesReplaceTheCode(t *testing.T) {
 }
 
 func TestSetupClosesOnceAnAdminExists(t *testing.T) {
+	t.Parallel()
 	s, srv, dir, _ := setupServer(t)
 	c := &http.Client{}
 	// `admin create` from the CLI while the page is open.
@@ -248,6 +252,7 @@ func TestSetupClosesOnceAnAdminExists(t *testing.T) {
 // builtin admin login, hosting on and no admin; neither does up in the oidc
 // mode.
 func TestSetupNeverOutsideUpBuiltin(t *testing.T) {
+	t.Parallel()
 	s, _, _ := builtinServer(t)
 	if _, err := s.db.Exec(`DELETE FROM admin_users`); err != nil {
 		t.Fatal(err)

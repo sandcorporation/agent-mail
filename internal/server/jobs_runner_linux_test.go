@@ -58,6 +58,7 @@ func descendants(pid int) []int {
 // A Monitor that ends kills the waiting client's whole process tree: the
 // runner is not in it, so the job keeps running and ends exited.
 func TestJobSurvivesATerminatedClientTree(t *testing.T) {
+	t.Parallel()
 	h := jobHarness(t)
 	ready := filepath.Join(t.TempDir(), "ready")
 	cmd := exec.Command(os.Args[0], "-test.run=^TestCLIHelperProcess$")
@@ -99,6 +100,7 @@ func noEscape(t *testing.T) []string {
 }
 
 func TestJobPingRunnerFailsInAScopeWithNoWayOut(t *testing.T) {
+	t.Parallel()
 	h := jobHarness(t)
 	o := h.ping(noEscape(t))
 	if o.OK || o.Exit != cli.ExitPingRunner || !failed(o, "runner") {
@@ -107,6 +109,7 @@ func TestJobPingRunnerFailsInAScopeWithNoWayOut(t *testing.T) {
 }
 
 func TestJobRunInAScopeWithNoWayOutIsNotHandedOver(t *testing.T) {
+	t.Parallel()
 	h := jobHarness(t)
 	for _, args := range [][]string{{"job", "run", "--", "true"}, {"watch", "start", "--", "true"}} {
 		r := h.run(noEscape(t), args...)
@@ -134,6 +137,7 @@ func userManager(t *testing.T) {
 // A terminal host stops the terminal's scope when it closes: the runner,
 // started as a unit of its own, lives on and the job ends exited.
 func TestJobRunnerSurvivesItsCallersScopeStop(t *testing.T) {
+	t.Parallel()
 	userManager(t)
 	h := jobHarness(t)
 	ready := filepath.Join(t.TempDir(), "ready")

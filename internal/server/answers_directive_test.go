@@ -26,6 +26,7 @@ func readJSON(t *testing.T, h *cliHarness, id string) wire.Message {
 // The recipient never does, and neither does the sender once it is done or
 // closed (#275).
 func TestReadShowsAnsweredDirectiveOpenToSender(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	h.configure([]string{"--profile", "a"}, "a")
 	h.configure([]string{"--profile", "b"}, "b")
@@ -94,6 +95,7 @@ func TestReadShowsAnsweredDirectiveOpenToSender(t *testing.T) {
 // that) still answers the root directive: the walk goes up the reply chain to
 // the nearest directive.
 func TestAnswerToFollowUpNamesRootDirective(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	d := sendMail(t, s, "secret-a", "b", "build")
 	r1 := replyAs(t, s, "secret-b", d)
@@ -126,6 +128,7 @@ func replyAs(t *testing.T, s *Server, token string, id int64) int64 {
 // The event stream, the long poll and watch carry answers_directive for the
 // directive's sender (#275).
 func TestEventsCarryAnsweredDirective(t *testing.T) {
+	t.Parallel()
 	s, base := eventServer(t)
 	d := sendMail(t, s, "secret-a", "b", "build")
 	st := openEvents(t, base, "secret-a", "a", nil, "")
@@ -164,6 +167,7 @@ func TestEventsCarryAnsweredDirective(t *testing.T) {
 // The report count: 진행 중 rests on open_directives > 0 out of directives,
 // the linked threads that still exist (#275).
 func TestReportCountsOpenDirectives(t *testing.T) {
+	t.Parallel()
 	s := reportServer(t)
 	open := directive(t, s, "build it")
 	done := directive(t, s, "ship it")

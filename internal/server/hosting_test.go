@@ -89,6 +89,7 @@ func signedInServer(t *testing.T, hosting bool) (*Server, string, *http.Cookie) 
 }
 
 func TestHostingOffRoutesAre404LikeUnknownRoutes(t *testing.T) {
+	t.Parallel()
 	base, cookie := signedIn(t, false)
 	role := map[string]string{"Authorization": "Bearer secret-a", "X-Switchboard-Role": "a"}
 	for _, p := range hostingPaths {
@@ -133,6 +134,7 @@ var hostingServed = map[string]bool{
 }
 
 func TestHostingOnStubsStayBehindAdminSignIn(t *testing.T) {
+	t.Parallel()
 	base, cookie := signedIn(t, true)
 	for _, p := range hostingPaths {
 		if strings.HasPrefix(p.path, "/api/node/") {
@@ -155,6 +157,7 @@ func TestHostingOnStubsStayBehindAdminSignIn(t *testing.T) {
 }
 
 func TestAdminBootstrapReportsHosting(t *testing.T) {
+	t.Parallel()
 	for _, on := range []bool{false, true} {
 		base, cookie := signedIn(t, on)
 		got := send(t, base, "GET", "/api/admin/me", cookie, nil)
@@ -173,6 +176,7 @@ func TestAdminBootstrapReportsHosting(t *testing.T) {
 }
 
 func TestHostingStartRefusals(t *testing.T) {
+	t.Parallel()
 	ok := map[string]string{"SWITCHBOARD_HOSTING": "on", "LISTEN_ADDR": "127.0.0.1:8090", "SWITCHBOARD_ADMIN_AUTH": "builtin", "DB_PATH": "/home/me/switchboard-pc/mail.db"}
 	with := func(k, v string) map[string]string {
 		m := map[string]string{}
@@ -243,6 +247,7 @@ func serverProcess(t *testing.T, env ...string) *exec.Cmd {
 }
 
 func TestHostingRefusedStartExitsNonZero(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "pc.db")
 	out, err := serverProcess(t, "SWITCHBOARD_HOSTING=on", "LISTEN_ADDR=:0", "SWITCHBOARD_ADMIN_AUTH=builtin", "DB_PATH="+db).CombinedOutput()
 	if err == nil || !strings.Contains(string(out), "LISTEN_ADDR :0 is not a loopback address") {
@@ -254,6 +259,7 @@ func TestHostingRefusedStartExitsNonZero(t *testing.T) {
 }
 
 func TestHostingPermittedStartServes(t *testing.T) {
+	t.Parallel()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

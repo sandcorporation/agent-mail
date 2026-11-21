@@ -71,6 +71,7 @@ func liveWrite(t *testing.T, srv *httptest.Server, method, path, body string, h 
 var asA = map[string]string{"Authorization": "Bearer secret-a", "X-Switchboard-Role": "a"}
 
 func TestLiveSocketAuthAndOrigin(t *testing.T) {
+	t.Parallel()
 	s, srv := liveServer(t)
 	for _, c := range []struct {
 		name string
@@ -98,6 +99,7 @@ func TestLiveSocketAuthAndOrigin(t *testing.T) {
 }
 
 func TestLiveSocketPushesChangesAndResumes(t *testing.T) {
+	t.Parallel()
 	s, srv := liveServer(t)
 	c, _, err := liveDial(t, srv, "", adminHeaders(srv.URL))
 	if err != nil {
@@ -147,6 +149,7 @@ func TestLiveSocketPushesChangesAndResumes(t *testing.T) {
 }
 
 func TestLiveKindsPerRoute(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		path  string
 		admin bool

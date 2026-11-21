@@ -46,6 +46,7 @@ func wantCanAskOff(t *testing.T, body map[string]any, askVia string) {
 }
 
 func TestCanAskRefusalNamesWhoToAsk(t *testing.T) {
+	t.Parallel()
 	s := groupServer(t)
 	putGroup(t, s, "partner-a", "")
 	putSettings(t, s, "default", `{"can_ask":false}`)
@@ -71,6 +72,7 @@ func TestCanAskRefusalNamesWhoToAsk(t *testing.T) {
 // ask_via is the first role SWITCHBOARD_BOSS_ROLES lists, not the first
 // in sorted order.
 func TestCanAskRefusalFollowsBossRolesOrder(t *testing.T) {
+	t.Parallel()
 	s := groupServer(t)
 	putSettings(t, s, "default", `{"can_ask":false}`)
 	if err := configureStall(s, fakeEnv(map[string]string{"SWITCHBOARD_BOSS_ROLES": "team/boss, hq/boss"})); err != nil {
@@ -80,6 +82,7 @@ func TestCanAskRefusalFollowsBossRolesOrder(t *testing.T) {
 }
 
 func TestQuestionForbiddenHasCode(t *testing.T) {
+	t.Parallel()
 	s := questionServer(t)
 	v := askQuestionAs(t, s, workerToken, "team/worker", 201)
 	w := callAs(s, "POST", "/api/questions/"+v.ID+"/withdraw", "secret-a", "a", nil)
@@ -243,6 +246,7 @@ func TestCanAskRefusalIsLoggedMailedAndShown(t *testing.T) {
 
 // Without ask_via the refusal is only logged.
 func TestCanAskRefusalWithoutAskViaOnlyLogs(t *testing.T) {
+	t.Parallel()
 	s := groupServer(t)
 	s.bossRoles = map[string]bool{}
 	putSettings(t, s, "default", `{"can_ask":false}`)

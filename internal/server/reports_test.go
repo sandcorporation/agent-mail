@@ -106,6 +106,7 @@ func reportList(t *testing.T, s *Server) []wire.Report {
 }
 
 func TestReportNonBossForbidden(t *testing.T) {
+	t.Parallel()
 	s := reportServer(t)
 	code, _, raw := postReport(s, reportWorkerToken, reportWorkerRole, map[string]any{"title": "t", "body": "b"}, "")
 	if code != 403 {
@@ -120,6 +121,7 @@ func TestReportNonBossForbidden(t *testing.T) {
 }
 
 func TestReportValidation(t *testing.T) {
+	t.Parallel()
 	s := reportServer(t)
 	for _, body := range []map[string]any{
 		{"body": "b"},
@@ -135,6 +137,7 @@ func TestReportValidation(t *testing.T) {
 }
 
 func TestReportIdempotent(t *testing.T) {
+	t.Parallel()
 	s := reportServer(t)
 	body := func() map[string]any { return map[string]any{"title": "Weekly", "body": "all done"} }
 	code, first, raw := postReport(s, reportBossToken, reportBossRole, body(), "k1")
@@ -159,6 +162,7 @@ func TestReportIdempotent(t *testing.T) {
 }
 
 func TestReportWithoutMailIsDone(t *testing.T) {
+	t.Parallel()
 	s := reportServer(t)
 	rp := mustReport(t, s, map[string]any{"title": "Alone", "request": "tidy up", "body": "done by myself"})
 	if rp.Status != wire.ReportDone || len(rp.Mail) != 0 || rp.Author != reportBossRole || rp.Request != "tidy up" {
@@ -171,6 +175,7 @@ func TestReportWithoutMailIsDone(t *testing.T) {
 }
 
 func TestReportStatusFollowsAnsweredRule(t *testing.T) {
+	t.Parallel()
 	s := reportServer(t)
 	answered := directive(t, s, "build it")
 	completed := directive(t, s, "ship it")
@@ -215,6 +220,7 @@ func TestReportStatusFollowsAnsweredRule(t *testing.T) {
 }
 
 func TestReportLinkResolvesReplyToRoot(t *testing.T) {
+	t.Parallel()
 	s := reportServer(t)
 	root := directive(t, s, "root")
 	reply := workerReply(t, s, root, "first")
@@ -229,6 +235,7 @@ func TestReportLinkResolvesReplyToRoot(t *testing.T) {
 }
 
 func TestReportBodyMentionIsNotALink(t *testing.T) {
+	t.Parallel()
 	s := reportServer(t)
 	open := directive(t, s, "still open")
 	rp := mustReport(t, s, map[string]any{"title": "R", "body": "see #" + itoa(open) + " and issue #12"})
@@ -238,6 +245,7 @@ func TestReportBodyMentionIsNotALink(t *testing.T) {
 }
 
 func TestReportUnknownMailFailsWholeCall(t *testing.T) {
+	t.Parallel()
 	s := reportServer(t)
 	ok := directive(t, s, "real")
 	code, _, raw := postReport(s, reportBossToken, reportBossRole, map[string]any{"title": "R", "body": "b", "mail": []int64{ok, 9998, 9999}}, "")
@@ -254,6 +262,7 @@ func TestReportUnknownMailFailsWholeCall(t *testing.T) {
 
 // A group's boss role may report, but only on mail its group can see.
 func TestReportGroupBossScope(t *testing.T) {
+	t.Parallel()
 	s := groupServer(t)
 	putGroup(t, s, "partner-a", `{"boss_role":"`+partnerBossRole+`"}`)
 	putGroup(t, s, "partner-b", "")
@@ -279,6 +288,7 @@ func TestReportGroupBossScope(t *testing.T) {
 }
 
 func TestReportLiveKinds(t *testing.T) {
+	t.Parallel()
 	if got := liveKinds("reports", false); !slices.Equal(got, []string{"reports"}) {
 		t.Fatalf("POST /api/reports: %v", got)
 	}
@@ -297,6 +307,7 @@ func TestReportLiveKinds(t *testing.T) {
 }
 
 func TestReportCLI(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarnessWith(t, func(s *Server) { s.bossRoles = map[string]bool{"a": true} })
 	h.configure(nil, "a")
 	for _, subject := range []string{"one", "two", "three"} {

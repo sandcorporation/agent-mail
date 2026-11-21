@@ -102,6 +102,7 @@ func loginBody(name, pw, code string) string {
 }
 
 func TestAdminDefaultDeny(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	if err := adminauth.Configure(&s.admin, fakeEnv(nil)); err != nil {
 		t.Fatal(err)
@@ -134,6 +135,7 @@ func TestAdminDefaultDeny(t *testing.T) {
 // set behaves as before #74: the page is served, the proxy header admits,
 // and writes keep the dashboard guard.
 func TestAdminTransitionRule(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	s.admin.ProxyToken = "proxy-secret"
 	if err := adminauth.Configure(&s.admin, fakeEnv(map[string]string{"AGENT_MAIL_ADMIN_PROXY_TOKEN": "proxy-secret"})); err != nil {
@@ -178,6 +180,7 @@ func TestAdminTransitionRule(t *testing.T) {
 }
 
 func TestAdminAuthModeConfig(t *testing.T) {
+	t.Parallel()
 	for v, ok := range map[string]bool{"builtin": true, "oidc": false, "proxy": false, "Builtin": false} {
 		err := adminauth.Configure(&adminauth.Config{}, fakeEnv(map[string]string{"SWITCHBOARD_ADMIN_AUTH": v}))
 		if (err == nil) != ok {
@@ -196,6 +199,7 @@ func TestAdminAuthModeConfig(t *testing.T) {
 }
 
 func TestBuiltinLoginSessionAndLogout(t *testing.T) {
+	t.Parallel()
 	s, secret, now := builtinServer(t)
 	w := doAuth(s, authReq{method: "POST", path: "/auth/login", body: loginBody("alice", "correct horse battery", codeAt(t, secret, *now, 0))})
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"user":"alice","mode":"builtin"`) {
@@ -254,6 +258,7 @@ func TestBuiltinLoginSessionAndLogout(t *testing.T) {
 }
 
 func TestInsecureCookieFlag(t *testing.T) {
+	t.Parallel()
 	s, secret, now := builtinServer(t)
 	if err := adminauth.Configure(&s.admin, fakeEnv(map[string]string{"SWITCHBOARD_ADMIN_AUTH": "builtin", "SWITCHBOARD_INSECURE_COOKIE": "1"})); err != nil {
 		t.Fatal(err)
@@ -265,6 +270,7 @@ func TestInsecureCookieFlag(t *testing.T) {
 }
 
 func TestBuiltinLoginFailuresReadTheSame(t *testing.T) {
+	t.Parallel()
 	s, secret, now := builtinServer(t)
 	good := codeAt(t, secret, *now, 0)
 	cases := map[string]string{
@@ -312,6 +318,7 @@ func TestBuiltinLoginFailuresReadTheSame(t *testing.T) {
 }
 
 func TestBuiltinLoginRateLimit(t *testing.T) {
+	t.Parallel()
 	s, secret, now := builtinServer(t)
 	login := func(name, pw, ip string) int {
 		return doAuth(s, authReq{method: "POST", path: "/auth/login", body: loginBody(name, pw, codeAt(t, secret, *now, 0)), ip: ip}).Code
@@ -445,6 +452,7 @@ func TestAdminCLI(t *testing.T) {
 // TestAdminCommandNeedsNoClientConfig: admin runs without a profile or
 // endpoint, and its usage errors go through the usual CLI path.
 func TestAdminCommandNeedsNoClientConfig(t *testing.T) {
+	t.Parallel()
 	if code := cli.Run([]string{"admin", "create"}, version, binaryCommands()); code != cli.ExitUsage {
 		t.Fatalf("missing name: %v", code)
 	}

@@ -23,6 +23,7 @@ import (
 // cookiejar changed it in 1.26, #251), so the test asserts the header and
 // only the sign-in with the setting end to end.
 func TestOIDCOverLoopbackHTTPWithSecretFile(t *testing.T) {
+	t.Parallel()
 	p := newFakeIdP(t)
 	secretFile := filepath.Join(t.TempDir(), "oidc-client-secret")
 	if err := os.WriteFile(secretFile, []byte(p.clientSecret+"\n"), 0o600); err != nil {

@@ -43,7 +43,9 @@ envs=()
 for name in GOOS GOARCH CGO_ENABLED $(compgen -e | grep '^SWITCHBOARD_TEST_' || true); do
   envs+=(-e "$name")
 done
-exec docker run --rm \
+# --init: a PID 1 that reaps orphans, as on a host; without it a detached
+# process that exits (a job runner) stays a zombie and looks alive.
+exec docker run --rm --init \
   -u "$(id -u):$(id -g)" \
   -v "$top:$top" -w "$PWD" \
   -v "$cache/build:/gocache/build" -v "$cache/mod:/gocache/mod" \

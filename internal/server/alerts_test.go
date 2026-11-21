@@ -35,6 +35,7 @@ func alertSubjects(t *testing.T, s *Server, token, role string) []string {
 }
 
 func TestAlertsEachKindOncePerDay(t *testing.T) {
+	t.Parallel()
 	s, clock := alertServer(t)
 	sendMail(t, s, "secret-b", "team/worker", "please look")
 	slotDo(t, s, "register", report("m", "/e", "error:StopFailure", nil, ""))
@@ -114,6 +115,7 @@ func TestAlertsEachKindOncePerDay(t *testing.T) {
 }
 
 func TestAlertsZeroDisablesKind(t *testing.T) {
+	t.Parallel()
 	s, clock := alertServer(t)
 	s.alerts = &insight.Thresholds{Pending: 0, Error: 0, Blocked: time.Minute}
 	sendMail(t, s, "secret-b", "team/worker", "old")
@@ -130,6 +132,7 @@ func TestAlertsZeroDisablesKind(t *testing.T) {
 }
 
 func TestAlertsOfflineSessionDoesNotAlert(t *testing.T) {
+	t.Parallel()
 	s, clock := alertServer(t)
 	s.presenceCfg.SlotLease = 5 * time.Minute
 	slotDo(t, s, "register", report("m", "/e", "error:StopFailure", nil, ""))
@@ -140,6 +143,7 @@ func TestAlertsOfflineSessionDoesNotAlert(t *testing.T) {
 }
 
 func TestAlertsSkipBossOwnPending(t *testing.T) {
+	t.Parallel()
 	s, clock := alertServer(t)
 	s.bossRoles = map[string]bool{"a": true, "b": true}
 	sendMail(t, s, "secret-b", "a", "to boss a")
@@ -158,6 +162,7 @@ func TestAlertsSkipBossOwnPending(t *testing.T) {
 }
 
 func TestAlertsNoBossNoRecord(t *testing.T) {
+	t.Parallel()
 	s, clock := alertServer(t)
 	s.bossRoles = map[string]bool{}
 	sendMail(t, s, "secret-b", "team/worker", "old")
@@ -172,6 +177,7 @@ func TestAlertsNoBossNoRecord(t *testing.T) {
 }
 
 func TestAlertsPrunedAfter30Days(t *testing.T) {
+	t.Parallel()
 	s, _ := alertServer(t)
 	if _, err := s.db.Exec(`INSERT INTO alerts VALUES('pending','x','2026-10-17',0),('pending','y','2026-10-18',0)`); err != nil {
 		t.Fatal(err)

@@ -404,6 +404,7 @@ func (tm *e2eTerm) line(s string) {
 // steps share one up process and run in order; the first failure stops the
 // rest.
 func TestE2E_HostingUp(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("end to end: not in -short")
 	}

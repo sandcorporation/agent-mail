@@ -63,6 +63,7 @@ func TestCloseDirectiveBySender(t *testing.T) {
 // POST /api/admin/messages/{id}/close closes any sender's directive, behind
 // the dashboard write guard.
 func TestAdminCloseDirective(t *testing.T) {
+	t.Parallel()
 	s, clock := slotsWithRoles(t)
 	s.admin.ProxyToken = "proxy-secret"
 	d := apiMail(t, s, clock, "hq/boss", "/api/messages", map[string]any{"recipient": "team/worker", "subject": "a"})
@@ -97,6 +98,7 @@ func TestAdminCloseDirective(t *testing.T) {
 // A closed directive gets no further reminder nor sender notice: the
 // reminder sweep reads the same no_reply flag as progress.
 func TestRemindStopsOnClose(t *testing.T) {
+	t.Parallel()
 	s, clock := slotsWithRoles(t)
 	remindOn(s)
 	sweepOnce(t, s)
@@ -127,6 +129,7 @@ func TestRemindStopsOnClose(t *testing.T) {
 }
 
 func TestCLIClose(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	h.configure([]string{"--profile", "a"}, "a")
 	h.configure(nil, "b")

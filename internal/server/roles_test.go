@@ -16,7 +16,7 @@ import (
 // run of the migration already hashed.
 func legacyRolesDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "legacy.db"))
+	db, err := sql.Open("sqlite", testDSN(filepath.Join(t.TempDir(), "legacy.db")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,6 +56,7 @@ func tableExists(db *sql.DB, name string) bool {
 }
 
 func TestRoleTokenMigrationHashesBacksUpAndKeepsClients(t *testing.T) {
+	t.Parallel()
 	db := legacyRolesDB(t)
 	// Every start runs the migration; the second run must change nothing.
 	for run := 0; run < 2; run++ {
@@ -100,6 +101,7 @@ func TestRoleTokenMigrationHashesBacksUpAndKeepsClients(t *testing.T) {
 }
 
 func TestRoleTokenMigrationRollsBackOnFailure(t *testing.T) {
+	t.Parallel()
 	db := legacyRolesDB(t)
 	// The last role's update fails after the backup and the first hash.
 	if _, err := db.Exec(`CREATE TRIGGER fail_b BEFORE UPDATE ON roles WHEN NEW.role='b' BEGIN SELECT RAISE(ABORT,'injected'); END`); err != nil {
@@ -228,6 +230,7 @@ func TestRevokeRefusesRoleAndSlotsUntilRestored(t *testing.T) {
 }
 
 func TestRoleHashesNeverLeaveTheServer(t *testing.T) {
+	t.Parallel()
 	s, _ := slotServer(t)
 	s.admin.ProxyToken = "proxy-secret"
 	slotDo(t, s, "register", ident("m", "/one"))

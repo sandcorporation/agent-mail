@@ -19,6 +19,7 @@ import (
 )
 
 func TestHostingRemoteListenRefusals(t *testing.T) {
+	t.Parallel()
 	ok := map[string]string{"SWITCHBOARD_HOSTING": "on", "LISTEN_ADDR": "127.0.0.1:8090", "SWITCHBOARD_ADMIN_AUTH": "builtin", "DB_PATH": "/home/me/switchboard-pc/mail.db"}
 	with := func(kv ...string) map[string]string {
 		m := map[string]string{}
@@ -119,6 +120,7 @@ func roleCall(t *testing.T, base, method, path, token, role string, body any, ex
 }
 
 func TestHostingRemoteListenerServesNodesAndRolesOnly(t *testing.T) {
+	t.Parallel()
 	s, _, cookie := signedInServer(t, true)
 	remote := remoteServer(t, s, "100.64.0.10:40000") // leak-guard:allow
 
@@ -178,6 +180,7 @@ func TestHostingRemoteListenerServesNodesAndRolesOnly(t *testing.T) {
 }
 
 func TestHostingRemoteListenerRefusesPeersOutsideTheRange(t *testing.T) {
+	t.Parallel()
 	s, _, _ := signedInServer(t, true)
 	if got := roleCall(t, remoteServer(t, s, "[fd7a:115c:a1e9::11]:40000"), "GET", "/api/messages", "secret-b", "b", nil, nil); got.code != http.StatusOK {
 		t.Errorf("ipv6 peer in range = %d %s", got.code, got.body)
@@ -195,6 +198,7 @@ func TestHostingRemoteListenerRefusesPeersOutsideTheRange(t *testing.T) {
 // TestCheckNodeHost: a node attaches to a loopback host or to a host whose
 // every address is inside the allowed ranges.
 func TestCheckNodeHost(t *testing.T) {
+	t.Parallel()
 	allow := []netip.Prefix{netip.MustParsePrefix("100.64.0.0/10"), netip.MustParsePrefix("fd7a:115c:a1e9::/48")} // leak-guard:allow
 	names := map[string][]string{
 		"pc.example":      {"100.64.0.10", "fd7a:115c:a1e9::10"}, // leak-guard:allow

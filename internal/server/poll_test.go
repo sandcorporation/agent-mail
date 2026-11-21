@@ -85,6 +85,7 @@ func pollServer(t *testing.T, max time.Duration) (*Server, string) {
 }
 
 func TestPollAnswersAtOnceWithPendingAndResumesByCursor(t *testing.T) {
+	t.Parallel()
 	s, base := eventServer(t)
 	first := sendMail(t, s, "secret-a", "b", "one")
 	sendMail(t, s, "secret-a", "c", "not-for-b")
@@ -127,6 +128,7 @@ func TestPollAnswersAtOnceWithPendingAndResumesByCursor(t *testing.T) {
 }
 
 func TestPollWaitsForNewMailThenTimesOut(t *testing.T) {
+	t.Parallel()
 	s, base := eventServer(t)
 	old := sendMail(t, s, "secret-a", "b", "old")
 	done := make(chan pollResult, 1)
@@ -159,6 +161,7 @@ func TestPollWaitsForNewMailThenTimesOut(t *testing.T) {
 }
 
 func TestPollCapsWait(t *testing.T) {
+	t.Parallel()
 	s, base := pollServer(t, time.Second)
 	// A request above the cap (and an absurd one, and the default) waits only up to the cap.
 	for _, q := range []string{"?timeout=600", "?timeout=99999999999999", ""} {
@@ -171,6 +174,7 @@ func TestPollCapsWait(t *testing.T) {
 }
 
 func TestPollEndsOnDisconnectAndShutdown(t *testing.T) {
+	t.Parallel()
 	s, base := pollServer(t, time.Hour)
 	// Client disconnect releases the subscription.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -205,6 +209,7 @@ func TestPollEndsOnDisconnectAndShutdown(t *testing.T) {
 }
 
 func TestPollRejectsBadCredentialsCursorAndTimeout(t *testing.T) {
+	t.Parallel()
 	_, base := eventServer(t)
 	if r := poll(t, context.Background(), base, "wrong", "b", "", nil); r.status != 401 {
 		t.Fatalf("bad token=%d", r.status)
@@ -223,6 +228,7 @@ func TestPollRejectsBadCredentialsCursorAndTimeout(t *testing.T) {
 }
 
 func TestPollUrgentEventCarriesBody(t *testing.T) {
+	t.Parallel()
 	s, base := eventServer(t)
 	if w := call(s, "POST", "/api/messages", "secret-a", map[string]any{"recipient": "b", "subject": "fire", "body": "now", "priority": "urgent"}, ""); w.Code != 201 {
 		t.Fatal(w.Body)
@@ -234,6 +240,7 @@ func TestPollUrgentEventCarriesBody(t *testing.T) {
 }
 
 func TestEventsCommand(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarnessWith(t, func(s *Server) { s.mailCfg.PollMax = 2 * time.Second })
 	h.configure(nil, "b")
 	r := h.run(nil, "events", "--timeout", "0")

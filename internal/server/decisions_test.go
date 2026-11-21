@@ -93,6 +93,7 @@ func seedDecisions(t *testing.T, s *Server, clock *fakeClock) (q1, q2, q3 wire.Q
 }
 
 func TestDecisionFilters(t *testing.T) {
+	t.Parallel()
 	s, clock := decisionServer(t)
 	q1, q2, q3 := seedDecisions(t, s, clock)
 	all := adminDecisions(t, s, "")
@@ -139,6 +140,7 @@ func TestDecisionFilters(t *testing.T) {
 }
 
 func TestDecisionExportNDJSON(t *testing.T) {
+	t.Parallel()
 	s, clock := decisionServer(t)
 	_, q2, q3 := seedDecisions(t, s, clock)
 	w := adminRequest(s, "GET", "/api/admin/decisions?from=2026-11-18&to=2026-11-19&format=ndjson", "", nil)
@@ -171,6 +173,7 @@ func TestDecisionExportNDJSON(t *testing.T) {
 }
 
 func TestDecisionRoleEndpointVisibility(t *testing.T) {
+	t.Parallel()
 	s, clock := decisionServer(t)
 	q1, q2, q3 := seedDecisions(t, s, clock)
 	get := func(token, role, query string) []string {
@@ -203,6 +206,7 @@ func TestDecisionRoleEndpointVisibility(t *testing.T) {
 }
 
 func TestRelatedDecisions(t *testing.T) {
+	t.Parallel()
 	s, clock := decisionServer(t)
 	// team/* has its own settings row, so team bases fill from each other;
 	// a watches team questions.
@@ -262,6 +266,7 @@ func TestRelatedDecisions(t *testing.T) {
 }
 
 func TestDashboardDecisionsView(t *testing.T) {
+	t.Parallel()
 	w := httptest.NewRecorder()
 	dashboard.Page(w, httptest.NewRequest("GET", "/", nil))
 	body := w.Body.String()

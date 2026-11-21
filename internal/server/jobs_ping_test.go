@@ -47,6 +47,7 @@ func failed(o pingOut, check string) bool {
 }
 
 func TestJobPingWithoutAProfileIsAConfigFailure(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	o := h.ping(nil, "--profile", "nobody")
 	if o.OK || o.Exit != cli.ExitPingConfig || !failed(o, "config") {
@@ -56,6 +57,7 @@ func TestJobPingWithoutAProfileIsAConfigFailure(t *testing.T) {
 
 // A server that does not answer: ping gives up within its 1 s limit.
 func TestJobPingSilentServerIsAServerFailureWithinASecond(t *testing.T) {
+	t.Parallel()
 	release := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
 	t.Cleanup(srv.Close)
@@ -74,6 +76,7 @@ func TestJobPingSilentServerIsAServerFailureWithinASecond(t *testing.T) {
 }
 
 func TestJobPingRefusedTokenIsATokenFailure(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	bad := filepath.Join(h.dir, "bad.token")
 	if err := os.WriteFile(bad, []byte("not-the-token\n"), 0o600); err != nil {
@@ -91,6 +94,7 @@ func TestJobPingRefusedTokenIsATokenFailure(t *testing.T) {
 }
 
 func TestJobPingTextNamesEachCheck(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	r := h.run(nil, "--profile", "nobody", "job", "ping")
 	if r.code != cli.ExitPingConfig || !strings.Contains(r.stderr, "config: ") || !strings.Contains(r.stdout, "data ok") {

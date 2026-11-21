@@ -73,6 +73,7 @@ func decisionsHarness(t *testing.T) (*cliHarness, *fakeDecisionsAPI) {
 }
 
 func TestDecisionsCommandParameters(t *testing.T) {
+	t.Parallel()
 	h, api := decisionsHarness(t)
 	h.mustRun(nil, "decisions")
 	r := api.last(t)
@@ -97,6 +98,7 @@ func TestDecisionsCommandParameters(t *testing.T) {
 }
 
 func TestDecisionsCommandText(t *testing.T) {
+	t.Parallel()
 	h, _ := decisionsHarness(t)
 	out := h.mustRun([]string{"TZ=Asia/Seoul"}, "decisions")
 	// The CLI prints local time; Go reads TZ only on Unix, so on Windows
@@ -120,6 +122,7 @@ func TestDecisionsCommandText(t *testing.T) {
 }
 
 func TestDecisionsCommandPassthrough(t *testing.T) {
+	t.Parallel()
 	h, api := decisionsHarness(t)
 	if out := h.mustRun(nil, "decisions", "--json"); out != decisionsJSON {
 		t.Fatalf("--json: %q", out)
@@ -134,8 +137,11 @@ func TestDecisionsCommandPassthrough(t *testing.T) {
 }
 
 func TestDecisionsCommandForbidden(t *testing.T) {
+	t.Parallel()
 	h, api := decisionsHarness(t)
+	api.mu.Lock()
 	api.status = http.StatusForbidden
+	api.mu.Unlock()
 	for _, args := range [][]string{{"decisions"}, {"decisions", "--json"}, {"decisions", "--ndjson"}} {
 		res := h.run(nil, args...)
 		if res.code == 0 || !strings.Contains(res.stderr, "403") || res.stdout != "" {

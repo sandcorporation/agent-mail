@@ -51,6 +51,7 @@ func sameIDs(got, want []int64) bool {
 // The metrics count it as an answer (mail.Answers); the progress view does
 // not (mail.Replies, #214), so every directive here stays open.
 func TestProgressAnsweredByMention(t *testing.T) {
+	t.Parallel()
 	s, clock := slotServer(t)
 	s.bossRoles = map[string]bool{"hq/boss": true, "hq/chief": true}
 	at := clock.now().Add(-time.Hour)
@@ -124,6 +125,7 @@ func apiMail(t *testing.T, s *Server, clock *fakeClock, as, path string, body ma
 
 // (d) The recipient completing a directive closes it; reading does not.
 func TestProgressDirectiveClosedByComplete(t *testing.T) {
+	t.Parallel()
 	s, clock := slotsWithRoles(t)
 	done := apiMail(t, s, clock, "hq/boss", "/api/messages", map[string]any{"recipient": "team/worker", "subject": "finish"}).ID
 	read := apiMail(t, s, clock, "hq/boss", "/api/messages", map[string]any{"recipient": "team/worker", "subject": "look"}).ID
@@ -144,6 +146,7 @@ func TestProgressDirectiveClosedByComplete(t *testing.T) {
 
 // (e) A reply is not a directive unless sent with directive; a send is.
 func TestProgressRepliesAreNotDirectives(t *testing.T) {
+	t.Parallel()
 	s, clock := slotsWithRoles(t)
 	report := apiMail(t, s, clock, "team/worker", "/api/messages", map[string]any{"recipient": "hq/boss", "subject": "report"}).ID
 	ack := apiMail(t, s, clock, "hq/boss", fmt.Sprintf("/api/messages/%d/reply", report), map[string]any{"subject": "ok", "body": "thanks"})
@@ -169,6 +172,7 @@ func TestProgressRepliesAreNotDirectives(t *testing.T) {
 }
 
 func TestCLIReplyDirective(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	h.configure([]string{"--profile", "a"}, "a")
 	h.configure(nil, "b")
@@ -189,6 +193,7 @@ func TestCLIReplyDirective(t *testing.T) {
 // task_id; every boss mail a directive) 15 stay open; under #138's rule 5;
 // under the strict reply rule (#214) 11.
 func TestProgressMixedFixture(t *testing.T) {
+	t.Parallel()
 	s, clock := slotServer(t)
 	s.bossRoles = map[string]bool{"hq/boss": true}
 	at := clock.now().Add(-2 * time.Hour)

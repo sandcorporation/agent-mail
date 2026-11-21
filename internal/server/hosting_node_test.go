@@ -37,6 +37,7 @@ func nodeToken(t *testing.T, s *Server, name string) string {
 }
 
 func TestNodeTokenIsStoredHashedInAPrivateFile(t *testing.T) {
+	t.Parallel()
 	s, _, _ := signedInServer(t, true)
 	path := filepath.Join(t.TempDir(), "data", "node.token")
 	ensure := func() (string, error) {
@@ -72,6 +73,7 @@ func TestNodeTokenIsStoredHashedInAPrivateFile(t *testing.T) {
 }
 
 func TestNodeTokenIsRefusedOutsideTheNodeChannel(t *testing.T) {
+	t.Parallel()
 	s, base, _ := signedInServer(t, true)
 	token := nodeToken(t, s, "pc")
 	bearer := map[string]string{"Authorization": "Bearer " + token}
@@ -167,6 +169,7 @@ func launchArgs(f *termtest.Fake) []string {
 }
 
 func TestNodeChannelAssignsReportsAndGoesOffline(t *testing.T) {
+	t.Parallel()
 	s, base, cookie := signedInServer(t, true)
 	token := nodeToken(t, s, "pc")
 	got := adminCall(t, base, "POST", "/api/admin/terminals", cookie, true, newRecord)
@@ -266,6 +269,7 @@ func TestNodeChannelAssignsReportsAndGoesOffline(t *testing.T) {
 }
 
 func TestTerminalsLiveKind(t *testing.T) {
+	t.Parallel()
 	for _, path := range []string{"terminals", "terminals/hs_x", "terminals/hs_x/restart", "nodes"} {
 		if got := liveKinds(path, true); !slices.Equal(got, []string{"terminals"}) {
 			t.Errorf("liveKinds(%q) = %v", path, got)
@@ -280,6 +284,7 @@ func TestTerminalsLiveKind(t *testing.T) {
 // with node.ErrRevoked, leaves its hosted terminals as they are, and the
 // `node` command maps that to cli.ExitNodeRevoked (#203).
 func TestRevokedNodeStopsRetrying(t *testing.T) {
+	t.Parallel()
 	s, base, cookie := signedInServer(t, true)
 	token := nodeToken(t, s, "pc")
 	got := adminCall(t, base, "POST", "/api/admin/terminals", cookie, true, newRecord)
@@ -345,6 +350,7 @@ func TestRevokedNodeStopsRetrying(t *testing.T) {
 // start → crash → automatic restart → stop of a hosted session reach the
 // host as four events, served newest first on its events route (#252).
 func TestHostedSessionHistoryOverTheNodeChannel(t *testing.T) {
+	t.Parallel()
 	s, base, cookie := signedInServer(t, true)
 	token := nodeToken(t, s, "pc")
 	got := adminCall(t, base, "POST", "/api/admin/terminals", cookie, true, newRecord)

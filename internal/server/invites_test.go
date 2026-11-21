@@ -46,6 +46,7 @@ func mustJoin(t *testing.T, s *Server, code, role, credential string) {
 }
 
 func TestInviteJoinSendWithinGroup(t *testing.T) {
+	t.Parallel()
 	s := groupServer(t)
 	inv := inviteAs(t, s, bossToken, internalBossRole, map[string]string{"prefix": "partner-c"}, 201)
 	if !inv.GroupCreated || len(inv.Code) != 32 || strings.Count(inv.Code, "-") != 6 {
@@ -84,6 +85,7 @@ func TestInviteJoinSendWithinGroup(t *testing.T) {
 // Creating a group over roles that are already there would restrict them:
 // the invite is refused and nothing changes.
 func TestInviteRefusesGroupOverExistingRoles(t *testing.T) {
+	t.Parallel()
 	s := groupServer(t)
 	for _, prefix := range []string{"sandcorp", "team", "partner-a"} {
 		w := callAs(s, "POST", "/api/invites", bossToken, internalBossRole, map[string]string{"prefix": prefix})
@@ -112,6 +114,7 @@ func TestInviteRefusesGroupOverExistingRoles(t *testing.T) {
 }
 
 func TestInviteOnlyGlobalBoss(t *testing.T) {
+	t.Parallel()
 	s := groupServer(t)
 	putGroup(t, s, "partner-a", `{}`)
 	inviteAs(t, s, workerToken, internalWorkerRol, map[string]string{"prefix": "partner-c"}, 403)
@@ -130,6 +133,7 @@ func TestInviteOnlyGlobalBoss(t *testing.T) {
 }
 
 func TestJoinWrongPrefixAndRole(t *testing.T) {
+	t.Parallel()
 	s := groupServer(t)
 	inv := inviteAs(t, s, bossToken, internalBossRole, map[string]string{"prefix": "partner-c"}, 201)
 	for role, want := range map[string]int{"partner-d/dev": 403, "partner-c": 403, "team/x": 403, "": 400} {
@@ -150,6 +154,7 @@ func TestJoinWrongPrefixAndRole(t *testing.T) {
 }
 
 func TestJoinReuseExpiryAndCancel(t *testing.T) {
+	t.Parallel()
 	s := groupServer(t)
 	clock := &fakeClock{t: time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)}
 	s.clock = clock.now
@@ -187,6 +192,7 @@ func TestJoinReuseExpiryAndCancel(t *testing.T) {
 }
 
 func TestAdminInvites(t *testing.T) {
+	t.Parallel()
 	s := groupServer(t)
 	w := adminWrite(s, "POST", "/api/admin/invites", `{"prefix":"partner-c","ttl":"24h"}`)
 	if w.Code != 201 {
@@ -224,6 +230,7 @@ func TestAdminInvites(t *testing.T) {
 // The real CLI: a global boss invites, the collaborator joins into an empty
 // config dir, and the new profile works with the other commands.
 func TestCLIInviteJoin(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarnessWith(t, func(s *Server) {
 		if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES('sandcorp/boss',?,'now')`, bossToken); err != nil {
 			t.Fatal(err)

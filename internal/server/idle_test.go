@@ -47,6 +47,7 @@ func viewsOf(t *testing.T, s *Server, clock *fakeClock, report, id int64) direct
 // unanswered (open everywhere), a plain reply with the session idle (still
 // open everywhere, and a 멈춤 row) and reply --done (closed everywhere).
 func TestDirectiveViewsAgree(t *testing.T) {
+	t.Parallel()
 	s, clock := slotsWithRoles(t)
 	s.admin.ProxyToken = "proxy-secret"
 	slotDo(t, s, "register", ident("m", "/a"))
@@ -99,6 +100,7 @@ func stalledIDs(t *testing.T, s *Server) []int64 {
 }
 
 func TestIdleOpenShowsInWaitAndTellsSender(t *testing.T) {
+	t.Parallel()
 	s, clock := slotsWithRoles(t)
 	slotDo(t, s, "register", ident("m", "/a"))
 	workerSession(t, s, "busy")
@@ -194,6 +196,7 @@ func idleKeys(t *testing.T, s *Server) []string {
 // Only the recipient's newest open directive counts, replied to or not, a
 // closed one never, and SWITCHBOARD_REMIND_IDLE=0 turns the check off.
 func TestIdleOpenNewestDirectiveOnly(t *testing.T) {
+	t.Parallel()
 	s, clock := slotsWithRoles(t)
 	slotDo(t, s, "register", ident("m", "/a"))
 	workerSession(t, s, "busy")

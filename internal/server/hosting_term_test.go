@@ -192,6 +192,7 @@ func screenDump(g term.Grid) string {
 }
 
 func TestTerminalTicketAndSocketRefusals(t *testing.T) {
+	t.Parallel()
 	r := newTermRig(t, hosting.Admin{})
 	path := "/api/admin/terminals/" + r.id + "/ticket"
 	if got := adminCall(t, r.base, "POST", path, nil, true, `{"mode":"view"}`); got.code != http.StatusUnauthorized {
@@ -263,6 +264,7 @@ func TestTerminalTicketAndSocketRefusals(t *testing.T) {
 }
 
 func TestTerminalSocketSnapshotThenStream(t *testing.T) {
+	t.Parallel()
 	r := newTermRig(t, hosting.Admin{})
 	sc, golden := scene(t, "full-redraw")
 	// Printed while nobody watched: no stream is open, so nothing crosses
@@ -337,6 +339,7 @@ func TestTerminalSocketSnapshotThenStream(t *testing.T) {
 }
 
 func TestTerminalSocketClosesOnSignOut(t *testing.T) {
+	t.Parallel()
 	r := newTermRig(t, hosting.Admin{Recheck: 50 * time.Millisecond})
 	c, _ := r.open(t)
 	if w := doAuth(r.s, authReq{method: "POST", path: "/auth/logout", cookie: r.cookie}); w.Code != http.StatusOK && w.Code != http.StatusNoContent {
@@ -357,6 +360,7 @@ func TestTerminalSocketClosesOnSignOut(t *testing.T) {
 }
 
 func TestTerminalSlowViewerIsDroppedAndReconnects(t *testing.T) {
+	t.Parallel()
 	r := newTermRig(t, hosting.Admin{Queue: 4})
 	slow, _ := r.open(t)
 	eventually(t, "the node streaming", func() bool { return r.fake.Streams(r.name()) == 1 })
@@ -394,6 +398,7 @@ func TestTerminalSlowViewerIsDroppedAndReconnects(t *testing.T) {
 }
 
 func TestTerminalAssetsServedOnlyWithHosting(t *testing.T) {
+	t.Parallel()
 	for _, on := range []bool{false, true} {
 		base, cookie := signedIn(t, on)
 		me := send(t, base, "GET", "/api/admin/me", cookie, nil)

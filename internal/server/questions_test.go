@@ -42,6 +42,7 @@ func putSettings(t *testing.T, s *Server, target, body string) asks.QuestionSett
 }
 
 func TestQuestionSettingsMigrationCreatesDefaultIdempotently(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	s.admin.ProxyToken = "proxy-secret"
 	putSettings(t, s, "default", `{"can_ask":true,"watchers":["a"],"discord":true}`)
@@ -59,6 +60,7 @@ func TestQuestionSettingsMigrationCreatesDefaultIdempotently(t *testing.T) {
 }
 
 func TestQuestionSettingsDefaultRowIsFalse(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	v, err := s.asks().ResolveQuestionSettings("svc/coordinator-2")
 	if err != nil || v.Target != "default" || v.CanAsk || v.Discord || v.Watchers == nil || len(v.Watchers) != 0 || v.UpdatedAt == "" {
@@ -67,6 +69,7 @@ func TestQuestionSettingsDefaultRowIsFalse(t *testing.T) {
 }
 
 func TestQuestionSettingsPrecedence(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	s.admin.ProxyToken = "proxy-secret"
 	putSettings(t, s, "svc/*", `{"can_ask":true}`)
@@ -95,6 +98,7 @@ func TestQuestionSettingsPrecedence(t *testing.T) {
 }
 
 func TestQuestionSettingsAdminAPI(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	s.admin.ProxyToken = "proxy-secret"
 	v := putSettings(t, s, "svc/coordinator", `{"can_ask":true,"watchers":["team/boss","team/boss"],"discord":false}`)
@@ -144,6 +148,7 @@ func TestQuestionSettingsAdminAPI(t *testing.T) {
 }
 
 func TestAdminWriteGuard(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	s.admin.ProxyToken = "proxy-secret"
 	path := "/api/admin/question-settings/svc/x"

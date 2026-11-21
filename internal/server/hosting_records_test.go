@@ -42,6 +42,7 @@ func adminCall(t *testing.T, base, method, path string, cookie *http.Cookie, gua
 const newRecord = `{"node":"pc","base":"a","profile":"team-a","directory":"/work/app","label":"42","args":["--model","opus"]}`
 
 func TestHostingRecordsThroughAdminAPI(t *testing.T) {
+	t.Parallel()
 	s, base, cookie := signedInServer(t, true)
 	if got := adminCall(t, base, "POST", "/api/admin/terminals", cookie, true, newRecord); got.code != http.StatusBadRequest || !strings.Contains(got.body, "node: no node named pc") {
 		t.Fatalf("create on an unregistered node = %d %s", got.code, got.body)
@@ -125,6 +126,7 @@ func TestHostingRecordsThroughAdminAPI(t *testing.T) {
 // With hosting off a create is answered as an unknown route and stores
 // nothing.
 func TestHostingOffStoresNoRecords(t *testing.T) {
+	t.Parallel()
 	s, secret, now := builtinServer(t)
 	c := sessionFrom(t, doAuth(s, authReq{method: "POST", path: "/auth/login", body: loginBody("alice", "correct horse battery", codeAt(t, secret, *now, 0))}))
 	srv := httptest.NewServer(s.handler())
@@ -164,6 +166,7 @@ func binaryCLI(t *testing.T, dbPath string, args ...string) (int, string, string
 }
 
 func TestHostCLIManagesRecords(t *testing.T) {
+	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "pc.db")
 	db, err := store.Open(dbPath)
 	if err != nil {
@@ -276,6 +279,7 @@ func TestHostCLIManagesRecords(t *testing.T) {
 }
 
 func TestHostCLIRefusesTheContainerDatabase(t *testing.T) {
+	t.Parallel()
 	for _, path := range []string{"", "/data/mail.db"} {
 		code, _, stderr := hostCLI(t, path, "list")
 		if code != 1 || !strings.Contains(stderr, "name this instance's own database") {

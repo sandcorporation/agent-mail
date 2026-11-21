@@ -34,6 +34,7 @@ func serviceNamed(t *testing.T, r wire.ProgressReport, name string) wire.Service
 }
 
 func TestProgressGroupsByServiceAndSortsByActivity(t *testing.T) {
+	t.Parallel()
 	s, clock := slotServer(t)
 	now := clock.now()
 	slotDo(t, s, "register", report("m", "/w/a", "busy", nil, ""))
@@ -74,6 +75,7 @@ func TestProgressGroupsByServiceAndSortsByActivity(t *testing.T) {
 }
 
 func TestProgressSessionSinceIsCurrentState(t *testing.T) {
+	t.Parallel()
 	s, clock := slotServer(t)
 	slotDo(t, s, "register", report("m", "/a", "idle", nil, ""))
 	clock.add(20 * time.Second)
@@ -88,6 +90,7 @@ func TestProgressSessionSinceIsCurrentState(t *testing.T) {
 }
 
 func TestProgressLastReportOnlyToBoss(t *testing.T) {
+	t.Parallel()
 	s, clock := slotServer(t)
 	s.bossRoles = map[string]bool{"hq/boss": true}
 	now := clock.now()
@@ -105,6 +108,7 @@ func TestProgressLastReportOnlyToBoss(t *testing.T) {
 }
 
 func TestProgressOpenDirectives(t *testing.T) {
+	t.Parallel()
 	s, clock := slotServer(t)
 	s.bossRoles = map[string]bool{"hq/boss": true}
 	s.alerts = &insight.Thresholds{Pending: 2 * time.Hour}
@@ -135,6 +139,7 @@ func TestProgressOpenDirectives(t *testing.T) {
 }
 
 func TestProgressAPI(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	s.admin.ProxyToken = "proxy-secret"
 	if w := call(s, "GET", "/api/progress", "secret-a", nil, ""); w.Code != 403 {
@@ -182,6 +187,7 @@ func TestProgressAPI(t *testing.T) {
 }
 
 func TestAdminMessagesTaskAndIDFilter(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	s.admin.ProxyToken = "proxy-secret"
 	now := time.Now()
@@ -208,6 +214,7 @@ func TestAdminMessagesTaskAndIDFilter(t *testing.T) {
 }
 
 func TestProgressDirectivesIgnoreSystemMail(t *testing.T) {
+	t.Parallel()
 	s, clock := slotServer(t)
 	now := clock.now()
 	// System mail (old name and numbered form) is never a directive.

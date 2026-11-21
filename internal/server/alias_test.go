@@ -25,6 +25,7 @@ func fakeEnv(m map[string]string) func(string) string {
 }
 
 func TestServerConfigReadsBothEnvNames(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	if err := configureStall(s, fakeEnv(map[string]string{"SWITCHBOARD_BOSS_ROLES": "hq/boss"})); err != nil || !s.bossRoles["hq/boss"] {
 		t.Fatalf("new name: %v %v", err, s.bossRoles)
@@ -95,6 +96,7 @@ func TestHeadersAcceptBothNamesAndCountOld(t *testing.T) {
 }
 
 func TestDashboardWriteAcceptsBothHeaders(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	s.admin.ProxyToken = "proxy-secret"
 	for _, h := range []string{"X-Switchboard-Dashboard", config.LegacyHeaderPrefix + "Dashboard"} {
@@ -122,6 +124,7 @@ func adminRequestWith(s *Server, method, path, body string, headers map[string]s
 // and by the new variable, and with the profile saved only in the old
 // <config>/<config.LegacyConfigDir>/ directory (copied once into <config>/switchboard/).
 func TestCLIProfileOldAndNewEnv(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarness(t)
 	h.mustRun(nil, "--profile", "pa", "config", "set", "--endpoint", h.url, "--role", "a", "--token-file", h.tokens["a"])
 	h.mustRun(nil, "--profile", "pa", "send", "--to", "b", "--subject", "alias-sent", "--body", "x")

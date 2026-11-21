@@ -92,6 +92,7 @@ func markRead(t *testing.T, s *Server, role string, id int64) {
 // A fire while the owner is attached is one normal mail with the prompt;
 // a repeated sweep at the same time sends nothing more.
 func TestScheduleAttachedFire(t *testing.T) {
+	t.Parallel()
 	c := newScheduleClock(t)
 	sc, code, body := createSchedule(t, c.s, "secret-a", map[string]any{"kind": "cron", "cron": "*/10 * * * *", "tz": "Asia/Seoul", "prompt": "check the build", "label": "build"}, "")
 	if code != 201 {
@@ -134,6 +135,7 @@ func TestScheduleAttachedFire(t *testing.T) {
 // Three fires with nobody attached are recorded; the attach brings one mail
 // with the prompt and the count.
 func TestScheduleMissedFiresMergeOnAttach(t *testing.T) {
+	t.Parallel()
 	c := newScheduleClock(t)
 	sc, _, _ := createSchedule(t, c.s, "secret-a", map[string]any{"kind": "cron", "cron": "0 * * * *", "tz": "UTC", "prompt": "hourly look", "label": "hourly"}, "")
 	for h := 1; h <= 3; h++ {
@@ -169,6 +171,7 @@ func TestScheduleMissedFiresMergeOnAttach(t *testing.T) {
 // The schedule lives in the table: a new server on the same database fires
 // the next one and never the same fire twice.
 func TestScheduleSurvivesServerRestart(t *testing.T) {
+	t.Parallel()
 	c := newScheduleClock(t)
 	sc, _, _ := createSchedule(t, c.s, "secret-a", map[string]any{"kind": "cron", "cron": "*/30 * * * *", "tz": "UTC", "prompt": "half hour"}, "")
 	c.attach("a", 24*time.Hour)
@@ -197,6 +200,7 @@ func TestScheduleSurvivesServerRestart(t *testing.T) {
 // A once schedule ends after its fire is delivered; missed, it waits for the
 // attach.
 func TestScheduleOnce(t *testing.T) {
+	t.Parallel()
 	c := newScheduleClock(t)
 	at := c.now.Add(15 * time.Minute)
 	sc, code, body := createSchedule(t, c.s, "secret-a", map[string]any{"kind": "once", "at": at, "prompt": "wake up", "label": "wake"}, "")
@@ -236,6 +240,7 @@ func TestScheduleOnce(t *testing.T) {
 // With no session attached the schedule expires: one mail that carries the
 // missed fires. While attached the expiry moves forward instead.
 func TestScheduleExpiryAndAutoExtension(t *testing.T) {
+	t.Parallel()
 	c := newScheduleClock(t)
 	lone, _, _ := createSchedule(t, c.s, "secret-b", map[string]any{"kind": "cron", "cron": "0 * * * *", "tz": "UTC", "prompt": "b hourly", "label": "bh", "expires_in": 7200}, "")
 	kept, _, _ := createSchedule(t, c.s, "secret-a", map[string]any{"kind": "cron", "cron": "0 * * * *", "tz": "UTC", "prompt": "a hourly", "expires_in": 7200}, "")
@@ -259,6 +264,7 @@ func TestScheduleExpiryAndAutoExtension(t *testing.T) {
 // A no_extend schedule expires at its time although a session is attached,
 // with the expiry mail; one without the flag is extended.
 func TestScheduleNoExtendExpiresWhileAttached(t *testing.T) {
+	t.Parallel()
 	c := newScheduleClock(t)
 	fixed, _, _ := createSchedule(t, c.s, "secret-a", map[string]any{"kind": "cron", "cron": "0 * * * *", "tz": "UTC", "prompt": "fixed", "label": "fx", "expires_in": 7200, "no_extend": true}, "")
 	moving, _, _ := createSchedule(t, c.s, "secret-a", map[string]any{"kind": "cron", "cron": "0 * * * *", "tz": "UTC", "prompt": "moving", "label": "mv", "expires_in": 7200}, "")
@@ -287,6 +293,7 @@ func TestScheduleNoExtendExpiresWhileAttached(t *testing.T) {
 }
 
 func TestScheduleAPI(t *testing.T) {
+	t.Parallel()
 	c := newScheduleClock(t)
 	for _, bad := range []map[string]any{
 		{"kind": "cron", "cron": "* * * *", "tz": "UTC", "prompt": "x"},
@@ -332,6 +339,7 @@ func TestScheduleAPI(t *testing.T) {
 }
 
 func TestAdminSchedulesListAndRemove(t *testing.T) {
+	t.Parallel()
 	c := newScheduleClock(t)
 	c.s.admin.ProxyToken = "proxy-secret"
 	sc, _, _ := createSchedule(t, c.s, "secret-a", map[string]any{"kind": "cron", "cron": "0 * * * *", "tz": "UTC", "prompt": "secret prompt", "label": "hourly"}, "")

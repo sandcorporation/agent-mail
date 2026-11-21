@@ -175,6 +175,7 @@ func hostedSlotServer(t *testing.T) (*Server, string, *fakeClock) {
 // and a lapsed lease with the process alive shows "offline (process alive)"
 // without the node touching the process.
 func TestHostedSessionShowsItsSlotAndKeepsItsNumber(t *testing.T) {
+	t.Parallel()
 	s, url, clock := hostedSlotServer(t)
 	r := newHostedRig(t, s, url, clock, "team/worker", workerToken, "/work/app")
 	if h := r.listed(); h.Slot != nil || h.Presence != wire.PresenceProcessAlive {
@@ -234,6 +235,7 @@ func TestHostedSessionShowsItsSlotAndKeepsItsNumber(t *testing.T) {
 // plugin's session-marked directory "<dir> #<8 hex>" is the same folder.
 // A slot the previous process left behind is never followed.
 func TestHostedSessionFollowsTheConversation(t *testing.T) {
+	t.Parallel()
 	s, url, clock := hostedSlotServer(t)
 	r := newHostedRig(t, s, url, clock, "team/worker", workerToken, "/work/app")
 	first := r.record().AgentSessionID

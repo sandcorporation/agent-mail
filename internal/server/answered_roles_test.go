@@ -15,6 +15,7 @@ import (
 // sandcorp/worker-1 and sandcorp/worker has a role row, and every session
 // name the worker may send as, must close the directive.
 func TestProgressAnsweredWithSlotLikeRoleNames(t *testing.T) {
+	t.Parallel()
 	type combo struct {
 		name      string
 		roles     []string // registered besides sandcorp/boss
@@ -116,6 +117,7 @@ func TestProgressAnsweredWithSlotLikeRoleNames(t *testing.T) {
 // the metrics; for progress only 363 (a thread reply), since 355 got task
 // reports only (#214).
 func TestProgressReplicaOfProductionCases(t *testing.T) {
+	t.Parallel()
 	s, _ := slotServer(t)
 	s.bossRoles = map[string]bool{"sandcorp/boss": true}
 	if _, err := seedRoles(s.db, `INSERT INTO roles(role,token,created_at) VALUES('sandcorp/boss','x','now'),('sandcorp/worker-1','y','now')`); err != nil {

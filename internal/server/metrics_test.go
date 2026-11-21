@@ -61,6 +61,7 @@ func i64(p *int64) any {
 }
 
 func TestMetricsFirstReplyMatchesThreadAndTask(t *testing.T) {
+	t.Parallel()
 	s, clock := slotServer(t)
 	now := clock.now()
 	t0 := now.Add(-48 * time.Hour)
@@ -115,6 +116,7 @@ func anyStr(v any) string {
 }
 
 func TestMetricsPendingAgeExcludesSystemMail(t *testing.T) {
+	t.Parallel()
 	s, clock := slotServer(t)
 	now := clock.now()
 	mailAt(t, s, flowRow{sender: "a", recipient: "b", at: now.Add(-3 * time.Hour), status: "pending"})
@@ -140,6 +142,7 @@ func TestMetricsPendingAgeExcludesSystemMail(t *testing.T) {
 }
 
 func TestMetricsRoundTrips(t *testing.T) {
+	t.Parallel()
 	s, clock := slotServer(t)
 	t0 := clock.now().Add(-time.Hour)
 	thread := func(subject string, senders ...string) int64 {
@@ -203,6 +206,7 @@ func presenceLogRows(t *testing.T, s *Server) []logRow {
 }
 
 func TestPresenceLogOpensAndClosesRows(t *testing.T) {
+	t.Parallel()
 	s, clock := presenceServer(t) // lease 30s
 	t0 := clock.now()
 	at := func(d time.Duration) time.Time { return t0.Add(d) }
@@ -249,6 +253,7 @@ func TestPresenceLogOpensAndClosesRows(t *testing.T) {
 }
 
 func TestPresenceLogPrunedAfter60Days(t *testing.T) {
+	t.Parallel()
 	s, clock := presenceServer(t)
 	slotDo(t, s, "register", report("m", "/a", "busy", nil, ""))
 	slotDo(t, s, "heartbeat", report("m", "/a", "idle", nil, ""))
@@ -274,6 +279,7 @@ func TestPresenceLogPrunedAfter60Days(t *testing.T) {
 }
 
 func TestMetricsSessionStatesClippedToWindow(t *testing.T) {
+	t.Parallel()
 	s, clock := presenceServer(t)
 	now := clock.now()
 	day := 24 * time.Hour
@@ -314,6 +320,7 @@ func TestMetricsSessionStatesClippedToWindow(t *testing.T) {
 }
 
 func TestMetricsAPI(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	s.admin.ProxyToken = "proxy-secret"
 	s.alerts = &insight.Thresholds{Pending: time.Hour, Error: 0, Blocked: 90 * time.Second}
@@ -365,6 +372,7 @@ func TestMetricsAPI(t *testing.T) {
 }
 
 func TestMetricsCommand(t *testing.T) {
+	t.Parallel()
 	h := newCLIHarnessWith(t, func(s *Server) { s.bossRoles = map[string]bool{"b": true} })
 	now := time.Now()
 	r := mailAt(t, h.s, flowRow{sender: "a", recipient: "b", at: now.Add(-time.Hour)})

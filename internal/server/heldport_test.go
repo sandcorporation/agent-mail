@@ -61,6 +61,7 @@ func docPortCheck(t *testing.T) (shell string, script func(port string) []string
 }
 
 func TestE2E_HostingDocPortCheckRefusesABoundPort(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
 		t.Skip("the doc covers Linux and Windows")
 	}
@@ -83,6 +84,7 @@ func TestE2E_HostingDocPortCheckRefusesABoundPort(t *testing.T) {
 }
 
 func TestE2E_UpOnABoundPortExitsAtOnce(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("end to end: not in -short")
 	}

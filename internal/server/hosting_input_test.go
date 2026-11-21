@@ -148,6 +148,7 @@ func dbContains(t *testing.T, s *Server, needle string) []string {
 }
 
 func TestTerminalInputReachesTheSession(t *testing.T) {
+	t.Parallel()
 	r := newTermRig(t, hosting.Admin{})
 	r.fake.SetResponder(func(_ string, b []byte) []byte {
 		if bytes.HasPrefix(b, []byte("echo ")) {
@@ -191,6 +192,7 @@ func TestTerminalInputReachesTheSession(t *testing.T) {
 }
 
 func TestTerminalResizeLastWriterWins(t *testing.T) {
+	t.Parallel()
 	r := newTermRig(t, hosting.Admin{})
 	a, emuA := r.openMode(t, hosting.ModeInput)
 	b, _ := r.openMode(t, hosting.ModeInput)
@@ -254,6 +256,7 @@ func TestTerminalResizeLastWriterWins(t *testing.T) {
 }
 
 func TestTerminalAuditLogKeepsNoContent(t *testing.T) {
+	t.Parallel()
 	r := newTermRig(t, hosting.Admin{})
 	const secret = "s3cret-typed-text"
 	c, _ := r.openMode(t, hosting.ModeInput)
@@ -297,6 +300,7 @@ func TestTerminalAuditLogKeepsNoContent(t *testing.T) {
 }
 
 func TestSweepPrunesTerminalLog(t *testing.T) {
+	t.Parallel()
 	s := testServer(t)
 	now := time.Now()
 	for i, age := range []time.Duration{31 * 24 * time.Hour, 29 * 24 * time.Hour} {
