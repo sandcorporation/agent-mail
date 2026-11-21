@@ -27,7 +27,8 @@ type Message struct {
 	Directive      bool       `json:"directive,omitempty"`       // a reply that carries new work (reply --directive); plain sends are directives anyway
 	NoReply        bool       `json:"no_reply,omitempty"`        // needs no answer (send/reply --no-reply): never an open directive
 	NoSession      bool       `json:"no_session,omitempty"`      // set on the send response only: no session of the recipient role is attached (#300)
-	Done           bool       `json:"done,omitempty"`            // reply --done: the reply is the final report and marks the replied-to mail done (#269)
+	Done           bool       `json:"done,omitempty"`            // reply --complete (--done): the reply is the final word and marks the replied-to mail complete (#269, #327)
+	Complete       []int64    `json:"complete,omitempty"`        // send --complete: mail the sender received to mark complete with the send (#327); request only
 	DirectiveState string     `json:"directive_state,omitempty"` // reply response: the replied-to directive's state, open or done (#269)
 	IdempotencyKey string     `json:"-"`
 	// AnswersDirective: this mail answers a directive the reader sent, and
@@ -68,4 +69,7 @@ func ParseID(x string) (int64, error) { return strconv.ParseInt(x, 10, 64) }
 type Closed struct {
 	ID     int64 `json:"id"`
 	Closed bool  `json:"closed"`
+	// Completed is the answer closed by its ID (close <answer ID>, #327):
+	// the caller's copy of it is complete too.
+	Completed int64 `json:"completed,omitempty"`
 }

@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -147,7 +148,8 @@ func (s *Service) noSession(m *wire.Message) bool {
 }
 
 // send stores the message in the request body. inTx, when set, runs in the
-// insert's transaction (reply --done marks the replied-to mail done there).
+// insert's transaction (reply --complete marks the replied-to mail complete
+// there; send --complete, the body's complete IDs, also run there).
 // respond, when set, fills the response, also for an idempotent retry.
 func (s *Service) send(w http.ResponseWriter, r *http.Request, p identity.Principal, inTx func(tx *sql.Tx, now time.Time) error, respond func(*wire.Message)) {
 	role := p.Role
@@ -202,6 +204,33 @@ func (s *Service) send(w http.ResponseWriter, r *http.Request, p identity.Princi
 			return
 		}
 		m.Recipient = box
+	}
+	// send --complete (#327): every ID must be mail the sender received;
+	// otherwise nothing is stored.
+	complete := m.Complete
+	m.Complete = nil
+	for _, id := range complete {
+		got, err := s.Get(id)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("complete: no message %d", id), 404)
+			return
+		}
+		if got.Recipient != role {
+			http.Error(w, fmt.Sprintf("complete: message %d was not sent to %s", id, role), 400)
+			return
+		}
+	}
+	if len(complete) > 0 {
+		then := inTx
+		inTx = func(tx *sql.Tx, now time.Time) error {
+			if err := markComplete(tx, role, complete, now); err != nil {
+				return err
+			}
+			if then == nil {
+				return nil
+			}
+			return then(tx, now)
+		}
 	}
 	key := r.Header.Get("Idempotency-Key")
 	if key == "" {
@@ -262,6 +291,16 @@ func (s *Service) send(w http.ResponseWriter, r *http.Request, p identity.Princi
 	}
 	w.WriteHeader(201)
 	writeJSON(w, m)
+}
+
+// markComplete marks each of ids complete for role in tx.
+func markComplete(tx *sql.Tx, role string, ids []int64, now time.Time) error {
+	for _, id := range ids {
+		if _, err := tx.Exec(`INSERT INTO role_states(role,message_id,status,updated_at) VALUES(?,?,'complete',?) ON CONFLICT(role,message_id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at`, role, id, now.Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // refuseRevoked answers 410 when base is a revoked role: no session can
@@ -441,10 +480,10 @@ func (s *Service) Reply(w http.ResponseWriter, r *http.Request, p identity.Princ
 	r.Body = io.NopCloser(bytes.NewReader(b))
 	var inTx func(*sql.Tx, time.Time) error
 	if done {
-		// reply --done: the reply and the done mark commit together (#269).
+		// reply --complete (--done): the reply and the complete mark commit
+		// together (#269), for any mail, directive or not (#327).
 		inTx = func(tx *sql.Tx, now time.Time) error {
-			_, err := tx.Exec(`INSERT INTO role_states(role,message_id,status,updated_at) VALUES(?,?,'complete',?) ON CONFLICT(role,message_id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at`, orig.Recipient, id, now.Format(time.RFC3339Nano))
-			return err
+			return markComplete(tx, orig.Recipient, []int64{id}, now)
 		}
 	}
 	var respond func(*wire.Message)

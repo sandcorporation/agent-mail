@@ -96,14 +96,15 @@ var commands = []command{
 			{"--token-file", "PATH", "file holding the role credential"},
 			optProfile,
 		}},
-	{name: "send", synopsis: "--to ROLE --subject TEXT (--body TEXT | --body-file PATH | stdin)",
+	{name: "send", synopsis: "--to ROLE --subject TEXT [--complete ID[,ID...]]... (--body TEXT | --body-file PATH | stdin)",
 		summary: "Send a message to a registered role",
 		options: []option{
 			{"--to", "ROLE", "recipient role, or label:BASE/LABEL for the session of BASE carrying LABEL"},
 			optSubject, optBody, optBodyF,
 			{"--task", "ID", "task identifier to attach"},
 			optUrgent, optNoReply,
-			{"--idempotency-key", "KEY", "retry-safe key; resending with the same key returns the first message"},
+			{"--complete", "ID[,ID...]", "mail you received to mark complete with this send (repeatable; one transaction, refused unless every ID is yours)"},
+			{"--idempotency-key", "KEY", "retry-safe key; resending with the same key returns the first message and marks nothing twice"},
 			optJSON, optProfile,
 		}},
 	{name: "inbox", summary: "List messages for the active role (newest 100)",
@@ -145,9 +146,10 @@ var commands = []command{
 			optJSON, optProfile,
 		}},
 	{name: "read", args: "ID", nargs: 1, summary: "Read a message (marks it read)", options: []option{optJSON, optProfile}},
-	{name: "reply", args: "ID", nargs: 1, synopsis: "[--done] (--body TEXT | --body-file PATH | stdin)", summary: "Reply to a message; reply --done with the final report closes the directive",
+	{name: "reply", args: "ID", nargs: 1, synopsis: "[--complete] (--body TEXT | --body-file PATH | stdin)", summary: "Reply to a message; reply --complete also marks it complete",
 		options: []option{
-			{"--done", "", "the reply is the final report: also mark the directive done (one transaction). Without it the directive stays open"},
+			{"--complete", "", "the reply is the final word on ID: also mark ID complete (one transaction). Without it a directive stays open"},
+			{"--done", "", "older name of --complete"},
 			optSubject, optBody, optBodyF,
 			{"--to", "ROLE", "send the reply to ROLE instead of the original sender"},
 			optUrgent,
@@ -158,7 +160,7 @@ var commands = []command{
 		}},
 	{name: "ack", args: "ID", nargs: 1, summary: "Acknowledge a message", options: []option{optJSON, optProfile}},
 	{name: "complete", args: "ID", nargs: 1, summary: "Mark a message complete", options: []option{optJSON, optProfile}},
-	{name: "close", args: "ID", nargs: 1, summary: "Close a directive you sent: it needs no answer (no longer open, never reminded)", options: []option{optJSON, optProfile}},
+	{name: "close", args: "ID", nargs: 1, summary: "Close a directive you sent: it needs no answer (no longer open, never reminded); given an answer's ID, close the directive it answers and complete the answer", options: []option{optJSON, optProfile}},
 	{name: "slots", summary: "List the leased numbered slots under the active role's base",
 		options: []option{optJSON, optProfile}},
 	{name: "slot", args: "ACTION", nargs: 1, synopsis: "(ACTION: register | heartbeat | takeover | release)",
@@ -192,7 +194,7 @@ var commands = []command{
 		options: []option{
 			{"--title", "TEXT", "report title (one line)"},
 			{"--request", "TEXT", "what was asked (one line)"},
-			{"--mail", "ID[,ID...]", "link mail by ID (repeatable); a reply links its thread's directive; #N in the body is never a link"},
+			{"--mail", "ID[,ID...]", "link mail by ID (repeatable); a reply links its thread's directive; mail you received is also marked complete; #N in the body is never a link"},
 			{"--body", "TEXT", "report body (Markdown)"},
 			{"--body-file", "PATH", "read the report body from a file (stdin is used when neither is given)"},
 			{"--idem", "KEY", "retry-safe key; posting again with the same key returns the first report"},
@@ -523,9 +525,14 @@ func dispatch(args []string) (int, error) {
 		method, u := "GET", endpoint(c, "/api/messages/"+p.pos[0])
 		if name != "read" {
 			method, u = "POST", u+"/"+name
+			req, _ := http.NewRequest(method, u, nil)
+			return doRequest(c, req, p.bool("--json"))
 		}
 		req, _ := http.NewRequest(method, u, nil)
-		return doRequest(c, req, p.bool("--json"))
+		if p.bool("--json") {
+			return doRequest(c, req, true)
+		}
+		return doRequestWith(c, req, false, readNote(c.Role))
 	case "close":
 		if p.bool("--json") {
 			req, _ := http.NewRequest("POST", endpoint(c, "/api/messages/"+p.pos[0]+"/close"), nil)
@@ -539,7 +546,11 @@ func dispatch(args []string) (int, error) {
 		if e = json.Unmarshal(b, &out); e != nil {
 			return 0, fmt.Errorf("unexpected response from server: %v", e)
 		}
-		fmt.Printf("#%d closed\n", out.ID)
+		if out.Completed != 0 {
+			fmt.Printf("#%d closed; #%d complete\n", out.ID, out.Completed)
+		} else {
+			fmt.Printf("#%d closed\n", out.ID)
+		}
 		return ExitOK, nil
 	case "reply":
 		body, e := inputBody(p)
@@ -551,7 +562,7 @@ func dispatch(args []string) (int, error) {
 			// Omitted otherwise, like priority, so older servers accept the request.
 			msg["directive"] = true
 		}
-		if p.bool("--done") {
+		if p.bool("--complete") || p.bool("--done") {
 			msg["done"] = true
 		}
 		b, _ := json.Marshal(msg)
@@ -925,6 +936,26 @@ func cliRegister(p parsedArgs) (int, error) {
 	return ExitOK, nil
 }
 
+// idList parses message IDs from the values of a repeatable option, each
+// of which may list IDs separated by commas ("#" prefixes allowed).
+func idList(name string, values []string) ([]int64, error) {
+	var ids []int64
+	for _, v := range values {
+		for _, f := range strings.Split(v, ",") {
+			f = strings.TrimPrefix(strings.TrimSpace(f), "#")
+			if f == "" {
+				continue
+			}
+			id, err := strconv.ParseInt(f, 10, 64)
+			if err != nil || id <= 0 {
+				return nil, usagef("%s takes message IDs, got %q", name, f)
+			}
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}
+
 // cliReply sends a reply and prints it like doRequest. A reply that leaves
 // its directive open (no --done) adds one line on stderr saying so (#269).
 func cliReply(c Config, req *http.Request, id string, jsonMode bool) (int, error) {
@@ -945,15 +976,37 @@ func cliReply(c Config, req *http.Request, id string, jsonMode bool) (int, error
 	return printResponse(b, jsonMode), nil
 }
 
-// DirectiveOpenNote is the line read prints under the header of an answer
-// to a directive the reader sent that is still open (#275).
-func DirectiveOpenNote(id int64) string {
-	return fmt.Sprintf("directive #%d is still open: close %d when it is done, or reply to ask for more", id, id)
+// DirectiveOpenNote is the line read prints under the header of answer, an
+// answer to directive (which the reader sent) while it is still open (#275).
+func DirectiveOpenNote(directive, answer int64) string {
+	return fmt.Sprintf("directive #%d still open: close %d closes it and completes #%d", directive, answer, answer)
 }
 
 // ReplyOpenNote is the stderr line of a reply that leaves its directive open.
 func ReplyOpenNote(id string) string {
-	return "directive #" + id + " stays open; reply " + id + " --done (or complete " + id + ") closes it"
+	return "directive #" + id + " stays open: complete " + id + " ends it (or next time reply " + id + " --complete)"
+}
+
+// ReadNote is the stderr line of read for its recipient while the mail is
+// not complete (#327).
+func ReadNote(id int64) string {
+	return fmt.Sprintf("reply %d --complete answers and completes; complete %d ends it without an answer", id, id)
+}
+
+// readNote returns a hook for the read response: ReadNote on stderr when
+// role received the mail, it is not complete and it is no answer to an
+// open directive (that one has DirectiveOpenNote).
+func readNote(role string) func([]byte) {
+	return func(b []byte) {
+		var m wire.Message
+		if json.Unmarshal(b, &m) != nil || m.ID == 0 || m.Recipient != role || m.Status == "complete" || m.Status == "completed" {
+			return
+		}
+		if m.AnswersDirective != nil && m.AnswersDirective.State == wire.DirectiveOpen {
+			return
+		}
+		fmt.Fprintln(os.Stderr, ReadNote(m.ID))
+	}
 }
 
 func endpoint(c Config, path string) string { return strings.TrimRight(c.Endpoint, "/") + path }
@@ -963,7 +1016,16 @@ func cliSend(c Config, p parsedArgs) (int, error) {
 	if e != nil {
 		return 0, e
 	}
-	b, _ := json.Marshal(withPriority(p, map[string]any{"recipient": p.values["--to"], "subject": p.values["--subject"], "body": body, "task_id": p.values["--task"]}))
+	msg := withPriority(p, map[string]any{"recipient": p.values["--to"], "subject": p.values["--subject"], "body": body, "task_id": p.values["--task"]})
+	ids, e := idList("--complete", p.multi["--complete"])
+	if e != nil {
+		return 0, e
+	}
+	if len(ids) > 0 {
+		// Omitted otherwise, so older servers accept the request unchanged.
+		msg["complete"] = ids
+	}
+	b, _ := json.Marshal(msg)
 	req, _ := http.NewRequest("POST", endpoint(c, "/api/messages"), bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
 	if key := p.values["--idempotency-key"]; key != "" {
@@ -1097,8 +1159,10 @@ func prettyTo(w io.Writer, v any) {
 		body, _ := x["body"].(string)
 		fmt.Fprintf(w, "#%v %s%v\n%v → %v · %s\n", x["id"], mark, x["subject"], x["sender"], x["recipient"], x["status"])
 		if ref, ok := x["answers_directive"].(map[string]any); ok && ref["state"] == wire.DirectiveOpen {
-			if id, ok := ref["id"].(float64); ok {
-				fmt.Fprintln(w, DirectiveOpenNote(int64(id)))
+			id, _ := ref["id"].(float64)
+			answer, _ := x["id"].(float64)
+			if id != 0 && answer != 0 {
+				fmt.Fprintln(w, DirectiveOpenNote(int64(id), int64(answer)))
 			}
 		}
 		fmt.Fprintf(w, "%s\n", indentBody(body))

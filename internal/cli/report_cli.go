@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 
 	"github.com/sandcorporation/switchboard/internal/wire"
@@ -40,19 +39,11 @@ func reportRequest(p parsedArgs) (wire.ReportRequest, error) {
 	if strings.TrimSpace(q.Title) == "" {
 		return q, usagef("report needs --title")
 	}
-	for _, v := range p.multi["--mail"] {
-		for _, f := range strings.Split(v, ",") {
-			f = strings.TrimPrefix(strings.TrimSpace(f), "#")
-			if f == "" {
-				continue
-			}
-			id, err := strconv.ParseInt(f, 10, 64)
-			if err != nil || id <= 0 {
-				return q, usagef("--mail takes message IDs, got %q", f)
-			}
-			q.Mail = append(q.Mail, id)
-		}
+	ids, err := idList("--mail", p.multi["--mail"])
+	if err != nil {
+		return q, err
 	}
+	q.Mail = ids
 	body, err := inputBody(p)
 	if err != nil {
 		return q, err

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -68,7 +69,7 @@ func (s *Service) API(w http.ResponseWriter, r *http.Request, p identity.Princip
 			return
 		}
 	}
-	roots, bad, err := s.resolve(p, q.Mail)
+	roots, received, bad, err := s.resolve(p, q.Mail)
 	if err != nil {
 		http.Error(w, "query failed", http.StatusInternalServerError)
 		return
@@ -78,9 +79,10 @@ func (s *Service) API(w http.ResponseWriter, r *http.Request, p identity.Princip
 		return
 	}
 	var id int64
+	now := s.now().UTC().Format(time.RFC3339Nano)
 	err = store.InTx(r.Context(), s.db, func(tx *sql.Tx) error {
 		res, err := tx.Exec(`INSERT INTO reports(author,title,request,body,created_at,idem) VALUES(?,?,?,?,?,?)`,
-			p.Role, q.Title, q.Request, q.Body, s.now().UTC().Format(time.RFC3339Nano), nullable(key))
+			p.Role, q.Title, q.Request, q.Body, now, nullable(key))
 		if err != nil {
 			return err
 		}
@@ -89,6 +91,12 @@ func (s *Service) API(w http.ResponseWriter, r *http.Request, p identity.Princip
 		}
 		for _, m := range roots {
 			if _, err = tx.Exec(`INSERT OR IGNORE INTO report_mail(report_id,message_id) VALUES(?,?)`, id, m); err != nil {
+				return err
+			}
+		}
+		// report --mail completes the linked mail the reporter received (#327).
+		for _, m := range received {
+			if _, err = tx.Exec(`INSERT INTO role_states(role,message_id,status,updated_at) VALUES(?,?,'complete',?) ON CONFLICT(role,message_id) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at`, p.Role, m, now); err != nil {
 				return err
 			}
 		}
@@ -139,8 +147,9 @@ func (s *Service) writeReport(w http.ResponseWriter, code int, id int64) {
 
 // resolve maps each mail ID to its thread's root, in the order given and
 // without repeats. An ID that does not exist or whose sender and recipient
-// are both outside p's view is bad.
-func (s *Service) resolve(p identity.Principal, ids []int64) (roots, bad []int64, err error) {
+// are both outside p's view is bad. received lists the IDs p's mailbox
+// received, without repeats.
+func (s *Service) resolve(p identity.Principal, ids []int64) (roots, received, bad []int64, err error) {
 	seen := map[int64]bool{}
 	for _, id := range ids {
 		var sender, recipient string
@@ -151,7 +160,10 @@ func (s *Service) resolve(p identity.Principal, ids []int64) (roots, bad []int64
 			continue
 		}
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
+		}
+		if recipient == p.Role && !slices.Contains(received, id) {
+			received = append(received, id)
 		}
 		root := id
 		if thread != 0 {
@@ -162,7 +174,7 @@ func (s *Service) resolve(p identity.Principal, ids []int64) (roots, bad []int64
 			roots = append(roots, root)
 		}
 	}
-	return roots, bad, nil
+	return roots, received, bad, nil
 }
 
 // AdminAPI serves GET /api/admin/reports (rest "") and

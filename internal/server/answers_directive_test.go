@@ -35,7 +35,7 @@ func TestReadShowsAnsweredDirectiveOpenToSender(t *testing.T) {
 	h.configure(nil, "a")
 	text := h.mustRun(nil, "read", "2")
 	lines := strings.Split(text, "\n")
-	if len(lines) < 3 || lines[2] != cli.DirectiveOpenNote(1) || lines[2] != "directive #1 is still open: close 1 when it is done, or reply to ask for more" {
+	if len(lines) < 3 || lines[2] != cli.DirectiveOpenNote(1, 2) || lines[2] != "directive #1 still open: close 2 closes it and completes #2" {
 		t.Fatalf("sender read:\n%s", text)
 	}
 	if m := readJSON(t, h, "2"); m.AnswersDirective == nil || *m.AnswersDirective != (wire.DirectiveRef{ID: 1, State: "open"}) {
