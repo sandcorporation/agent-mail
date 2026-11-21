@@ -9,18 +9,22 @@ import (
 	"github.com/sandcorporation/switchboard/internal/identity"
 	"github.com/sandcorporation/switchboard/internal/mail"
 	"github.com/sandcorporation/switchboard/internal/store"
+	"github.com/sandcorporation/switchboard/internal/wire"
 )
 
 // Mail to a role with no attached session (#300).
 //
 // The pending alert (insight) fires only past its age threshold and does not
-// look at presence. This sweep tells each sender sooner: a role has pending
-// non-system mail, no live slot of its base (any number), none went offline
-// in the last NoSessionGrace (a session restart), and the sender's oldest
-// pending mail to it is NoSessionGrace old. A role that never had a session
-// gets the same notice. The notice is one system mail per sender and stretch
-// (idem no-session:<base>:<oldest pending id>), so a second sweep sends
-// nothing; once that mail is read or the role is attached, the stretch ends.
+// look at presence. This sweep tells each sender sooner: a mailbox has
+// pending non-system mail, no live session reads it (the slot of that number,
+// #354; before, any slot of its base), its session did not go offline in the
+// last NoSessionGrace (a session restart), and the sender's oldest pending
+// mail to it is NoSessionGrace old. A mailbox that never had a session gets
+// the same notice. The notice is one system mail per sender and stretch
+// (idem no-session:<mailbox>:<oldest pending id>), so a second sweep sends
+// nothing; once that mail is read or the mailbox is attached, the stretch
+// ends. Mail held for an ended session (mail.HandOffUnread) is not pending:
+// its sender was told when it was held.
 
 // NoSessionGrace is how long a role must stay without a session (and its
 // mail wait) before the sender is told.
@@ -41,7 +45,7 @@ func (s *Service) SweepNoSession(ctx context.Context, base func(string) string) 
 	if err != nil {
 		return 0, err
 	}
-	type key struct{ base, sender string }
+	type key struct{ box, sender string }
 	type group struct {
 		oldest noSessionMail
 		count  int
@@ -70,7 +74,7 @@ func (s *Service) SweepNoSession(ctx context.Context, base func(string) string) 
 	groups := map[key]*group{}
 	var order []key
 	for _, x := range all {
-		k := key{base(x.recipient), x.sender}
+		k := key{x.recipient, x.sender}
 		g := groups[k]
 		if g == nil {
 			g = &group{oldest: x.m}
@@ -86,26 +90,33 @@ func (s *Service) SweepNoSession(ctx context.Context, base func(string) string) 
 		if now.Sub(g.oldest.created) < NoSessionGrace {
 			continue
 		}
-		busy, seen := attached[k.base]
+		busy, seen := attached[k.box]
 		if !seen {
-			if busy, err = s.attachedRecently(ctx, k.base, now); err != nil {
+			b := base(k.box)
+			number := 1
+			if b != k.box {
+				if _, n, ok := wire.SplitSlot(k.box); ok {
+					number = n
+				}
+			}
+			if busy, err = s.attachedRecently(ctx, b, number, now); err != nil {
 				return sent, err
 			}
-			attached[k.base] = busy
+			attached[k.box] = busy
 		}
 		if busy {
 			continue
 		}
-		subject := fmt.Sprintf("[미수신] %s 붙은 세션 없음 — #%d", k.base, g.oldest.id)
+		subject := fmt.Sprintf("[미수신] %s 붙은 세션 없음 — #%d", k.box, g.oldest.id)
 		if g.count > 1 {
 			subject += fmt.Sprintf(" 외 %d통", g.count-1)
 		}
-		body := fmt.Sprintf("%s 앞으로 보낸 메일 %d통이 아직 읽히지 않았고, 그 역할에 붙은 세션이 없습니다(가장 오래된 것 #%d, %s 전). 세션이 프로필과 함께 시작됐는지 `switchboard status` 로 확인하세요. 메일은 받는 쪽 편지함에 남아 있습니다.",
-			k.base, g.count, g.oldest.id, shortDuration(now.Sub(g.oldest.created).Truncate(time.Minute)))
+		body := fmt.Sprintf("%s 앞으로 보낸 메일 %d통이 아직 읽히지 않았고, 그 메일함을 읽는 세션이 없습니다(가장 오래된 것 #%d, %s 전). 세션이 프로필과 함께 시작됐는지 `switchboard status` 로 확인하세요. 메일은 받는 쪽 편지함에 남아 있습니다.",
+			k.box, g.count, g.oldest.id, shortDuration(now.Sub(g.oldest.created).Truncate(time.Minute)))
 		var stored bool
 		err = store.InTx(ctx, s.db, func(tx *sql.Tx) error {
 			var e error
-			stored, e = mail.InsertSystemMailOnce(tx, k.sender, subject, body, g.oldest.task, "normal", fmt.Sprintf("no-session:%s:%d", k.base, g.oldest.id), now)
+			stored, e = mail.InsertSystemMailOnce(tx, k.sender, subject, body, g.oldest.task, "normal", fmt.Sprintf("no-session:%s:%d", k.box, g.oldest.id), now)
 			return e
 		})
 		if err != nil {
@@ -119,16 +130,16 @@ func (s *Service) SweepNoSession(ctx context.Context, base func(string) string) 
 	return sent, nil
 }
 
-// attachedRecently reports whether a live slot of base exists, or one went
-// offline within NoSessionGrace of now (the log's offline rows are the gaps,
-// not sessions).
-func (s *Service) attachedRecently(ctx context.Context, base string, now time.Time) (bool, error) {
+// attachedRecently reports whether slot number of base is live, or its
+// session went offline within NoSessionGrace of now (the log's offline rows
+// are the gaps, not sessions).
+func (s *Service) attachedRecently(ctx context.Context, base string, number int, now time.Time) (bool, error) {
 	var n int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM slots WHERE base=? AND lease_until>?`, base, ms(now)).Scan(&n); err != nil || n > 0 {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM slots WHERE base=? AND number=? AND lease_until>?`, base, number, ms(now)).Scan(&n); err != nil || n > 0 {
 		return n > 0, err
 	}
 	var last sql.NullInt64
-	if err := s.db.QueryRowContext(ctx, `SELECT MAX(COALESCE(ended_at,?)) FROM presence_log WHERE base=? AND state<>'offline'`, ms(now), base).Scan(&last); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT MAX(COALESCE(ended_at,?)) FROM presence_log WHERE base=? AND number=? AND state<>'offline'`, ms(now), base, number).Scan(&last); err != nil {
 		return false, err
 	}
 	return last.Valid && now.Sub(fromMS(last.Int64)) < NoSessionGrace, nil

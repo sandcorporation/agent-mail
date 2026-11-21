@@ -380,7 +380,9 @@ func TestSlotPrefixTokenRules(t *testing.T) {
 	}
 }
 
-func TestSlotLeaseExpiryFreesSlotAndKeepsMail(t *testing.T) {
+// The number is freed, but the ended session's unread mail is held for it,
+// not handed to the next holder of the number (#354).
+func TestSlotLeaseExpiryFreesSlotAndHoldsMail(t *testing.T) {
 	t.Parallel()
 	s, clock := slotServer(t)
 	slotDo(t, s, "register", ident("m", "/a"))
@@ -396,8 +398,8 @@ func TestSlotLeaseExpiryFreesSlotAndKeepsMail(t *testing.T) {
 	if c.Number != 2 || c.Reclaimed {
 		t.Fatalf("expired number reused: %+v", c)
 	}
-	if got := strings.Join(inboxSubjects(t, s, "team/worker-2"), ","); got != "queued" {
-		t.Fatalf("mail for the freed slot: %s", got)
+	if got := strings.Join(inboxSubjects(t, s, "team/worker-2"), ","); got != "" {
+		t.Fatalf("mail for the freed slot reached the next holder: %s", got)
 	}
 	// /b's row is gone, so its heartbeat asks it to register again.
 	if w := callAs(s, "POST", "/api/slots/heartbeat", workerToken, "team/worker-2", ident("m", "/b")); w.Code != 404 {

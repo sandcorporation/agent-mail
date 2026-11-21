@@ -984,8 +984,14 @@ func cliReply(c Config, req *http.Request, id string, jsonMode bool) (int, error
 		return 0, fmt.Errorf("server returned %s: %s", resp.Status, string(b))
 	}
 	var out wire.Message
-	if json.Unmarshal(b, &out) == nil && out.DirectiveState == "open" {
-		fmt.Fprintln(os.Stderr, ReplyOpenNote(id))
+	if json.Unmarshal(b, &out) == nil {
+		out.NoSession = false // a reply prints only the #354 lines
+		for _, line := range RecipientNotes(out.Recipient, out) {
+			fmt.Fprintln(os.Stderr, line)
+		}
+		if out.DirectiveState == "open" {
+			fmt.Fprintln(os.Stderr, ReplyOpenNote(id))
+		}
 	}
 	return printResponse(b, jsonMode), nil
 }
@@ -1067,15 +1073,41 @@ func cliSend(c Config, p parsedArgs) (int, error) {
 	return doRequestWith(c, req, p.bool("--json"), noSessionNote(p.values["--to"]))
 }
 
-// noSessionNote returns a hook for the send response: one line on stderr when
-// the server says no session of the recipient role is attached (#300).
+// noSessionNote returns a hook for the send response: the lines of
+// RecipientNotes on stderr (#300, #354).
 func noSessionNote(to string) func([]byte) {
 	return func(b []byte) {
 		var m wire.Message
-		if json.Unmarshal(b, &m) == nil && m.NoSession {
-			fmt.Fprintf(os.Stderr, "no session of %s is attached; the mail waits in its inbox\n", to)
+		if json.Unmarshal(b, &m) != nil {
+			return
+		}
+		for _, line := range RecipientNotes(to, m) {
+			fmt.Fprintln(os.Stderr, line)
 		}
 	}
+}
+
+// RecipientNotes are the lines a send or reply prints about the receiving
+// mailbox: nothing when a session reads it; that its last session ended and
+// the mail is held for it; the live numbered slots when slot 1 of a base is
+// empty; else, from servers before #354 too, that no session of the role is
+// attached.
+func RecipientNotes(to string, m wire.Message) []string {
+	st := m.RecipientState
+	if st != nil && st.Live {
+		return nil
+	}
+	var out []string
+	if st != nil && st.Held {
+		out = append(out, fmt.Sprintf("받는 세션 없음: %s, 마지막 세션 %d분 전 끝남. 붙잡아 둠", st.Mailbox, st.EndedS/60))
+	}
+	if st != nil && len(st.LiveSlots) > 0 {
+		out = append(out, fmt.Sprintf("%s 이 살아 있음. 그 슬롯 이름으로 보내라", strings.Join(st.LiveSlots, ", ")))
+	}
+	if len(out) == 0 && m.NoSession {
+		out = append(out, fmt.Sprintf("no session of %s is attached; the mail waits in its inbox", to))
+	}
+	return out
 }
 
 func listURL(c Config, box, q, status string) string {

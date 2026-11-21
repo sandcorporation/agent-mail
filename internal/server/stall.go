@@ -29,7 +29,17 @@ import (
 const (
 	defaultSweepInterval = 30 * time.Second
 	defaultLabelStall    = 10 * time.Minute
+	defaultHandoffTTL    = 7 * 24 * time.Hour
 )
+
+// handoffExpireAfter is how long mail held for an ended session waits
+// before it is ended (mail.Service.ExpireHandoffs, #354).
+func (s *Server) handoffExpireAfter() time.Duration {
+	if s.handoffTTL > 0 {
+		return s.handoffTTL
+	}
+	return defaultHandoffTTL
+}
 
 func (s *Server) sweepInterval() time.Duration {
 	if s.sweepEvery > 0 {
@@ -55,6 +65,7 @@ func configureStall(s *Server, getenv func(string) string) error {
 	}{
 		{"SWEEP_INTERVAL", &s.sweepEvery, time.Second, "30s"},
 		{"LABEL_STALL", &s.labelStall, time.Second, "10m"},
+		{"HANDOFF_EXPIRE", &s.handoffTTL, time.Minute, "168h"},
 		{"PERMISSION_TTL", &s.asksCfg.PermissionTTL, time.Second, "10m"},
 	} {
 		v, from := config.EnvAliasFrom(getenv, d.name)
@@ -119,6 +130,8 @@ type sweepResult struct {
 	Remind  int
 	// NoSession counts the [미수신] notices (#300).
 	NoSession int
+	// Handoffs counts the held mail a sweep ended (#354).
+	Handoffs int
 	// Extended counts the jobs whose expiry moved forward (#291).
 	Extended int
 	// Schedules counts the schedules a sweep changed: a fire, a delivery,
@@ -143,6 +156,9 @@ func (s *Server) sweep(ctx context.Context) (sweepResult, error) {
 		return out, err
 	}
 	if out.Label, err = s.mail().SweepLabels(ctx, s.labelStallAfter()); err != nil {
+		return out, err
+	}
+	if out.Handoffs, err = s.mail().ExpireHandoffs(ctx, s.handoffExpireAfter()); err != nil {
 		return out, err
 	}
 	if out.Alerts, err = s.insight().SweepAlerts(ctx); err != nil {
@@ -190,7 +206,7 @@ func (s *Server) publishSweep(res sweepResult) {
 	if res.Alerts > 0 {
 		kinds = append(kinds, "mail", "metrics")
 	}
-	if res.Remind > 0 || res.NoSession > 0 {
+	if res.Remind > 0 || res.NoSession > 0 || res.Handoffs > 0 {
 		kinds = append(kinds, "mail")
 	}
 	if res.Extended > 0 {
