@@ -54,6 +54,8 @@ type Hub struct {
 	admin   Admin
 	notify  Notify
 	bosses  []string
+	// autoMail is the mail of scheduled runs (autorun.go).
+	autoMail AutoMail
 	// nodeLimit is the last usage limit each node reported; limited and
 	// limitKnown are the subscription limit as last published (#190).
 	nodeLimit  map[string]wire.NodeLimit
@@ -543,6 +545,10 @@ func sameRuntime(a, b wire.HostedRuntime) bool {
 // after which the nodes get their new lists at once. It reports false for a
 // path it does not serve.
 func (h *Hub) AdminTerminalsAPI(w http.ResponseWriter, r *http.Request, rest string) bool {
+	if id, sub, ok := strings.Cut(rest, "/autos"); ok && (sub == "" || strings.HasPrefix(sub, "/")) {
+		h.autosAPI(w, r, id, sub)
+		return true
+	}
 	if rest == "" && r.Method == http.MethodGet {
 		out, err := h.List()
 		if err != nil {

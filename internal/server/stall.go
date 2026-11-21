@@ -128,6 +128,8 @@ type sweepResult struct {
 	Lost int
 	// CLIBehind counts the [옛 판] mails sent, one per machine (#308).
 	CLIBehind int
+	// Autos counts the scheduled runs of hosted sessions handled (#333).
+	Autos int
 }
 
 // sweep sends every due stall notice and metrics alert once and prunes old
@@ -164,6 +166,11 @@ func (s *Server) sweep(ctx context.Context) (sweepResult, error) {
 	if out.Schedules, err = s.jobs().SweepSchedules(ctx, insight.NewBaseResolver(s.db).Of, s.presence().Attached); err != nil {
 		return out, err
 	}
+	if s.hosting {
+		if out.Autos, err = s.hostingHub().SweepAutos(ctx); err != nil {
+			return out, err
+		}
+	}
 	if _, err = presence.PruneLog(s.db, s.now()); err != nil {
 		return out, err
 	}
@@ -194,6 +201,9 @@ func (s *Server) publishSweep(res sweepResult) {
 	}
 	if res.Schedules > 0 {
 		kinds = append(kinds, "jobs", "mail")
+	}
+	if res.Autos > 0 {
+		kinds = append(kinds, "terminals", "mail")
 	}
 	s.live.Publish(kinds...)
 }

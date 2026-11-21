@@ -44,9 +44,10 @@ type discordPayload struct {
 // binaryCommands are the commands cmd/switchboard hands the client.
 func binaryCommands() cli.Commands {
 	return cli.Commands{
-		Admin: adminauth.CLI,
-		Host:  HostCLI,
-		Up:    func(dir string, port int, node string) error { return Up(version, dir, port, node) },
+		Admin:    adminauth.CLI,
+		Host:     HostCLI,
+		HostAuto: HostAutoCLI,
+		Up:       func(dir string, port int, node string) error { return Up(version, dir, port, node) },
 		Node: func(host, tokenFile, joinCode string, restartSessions bool) error {
 			return Node(version, host, tokenFile, joinCode, restartSessions)
 		},

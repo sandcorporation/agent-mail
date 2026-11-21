@@ -517,6 +517,9 @@ func (s *Service) Delete(id string) (wire.HostedSession, error) {
 	if _, err = s.db.Exec(`DELETE FROM hosted_events WHERE session=?`, id); err != nil {
 		return h, err
 	}
+	if err = s.deleteAutosOf(id); err != nil {
+		return h, err
+	}
 	return h, s.revokeCredentials(func(c LiveCredential) bool { return c.Record == id })
 }
 

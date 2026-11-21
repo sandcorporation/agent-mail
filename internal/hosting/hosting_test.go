@@ -290,10 +290,10 @@ func TestNodesListsTheRegistry(t *testing.T) {
 	}
 }
 
-// TestImportsStayInsideTheRule: hosting imports only config, store and wire
-// of the internal packages (ARCHITECTURE.md, "Package map").
+// TestImportsStayInsideTheRule: hosting imports only config, cron, store and
+// wire of the internal packages (ARCHITECTURE.md, "Package map").
 func TestImportsStayInsideTheRule(t *testing.T) {
-	allowed := map[string]bool{"config": true, "store": true, "wire": true}
+	allowed := map[string]bool{"config": true, "cron": true, "store": true, "wire": true}
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)

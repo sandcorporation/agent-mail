@@ -137,7 +137,10 @@ func Init(db *sql.DB) error {
 	if e = migrateSchedules(db); e != nil {
 		return e
 	}
-	return migrateRoleCredentials(db)
+	if e = migrateRoleCredentials(db); e != nil {
+		return e
+	}
+	return migrateHostAutos(db)
 }
 
 // migrateRoleCredentials adds role_credentials (#343): extra tokens of a
@@ -146,6 +149,19 @@ func Init(db *sql.DB) error {
 func migrateRoleCredentials(db *sql.DB) error {
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS role_credentials(id TEXT PRIMARY KEY, role TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, record TEXT NOT NULL DEFAULT '', node TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, revoked_at INTEGER);
 CREATE INDEX IF NOT EXISTS role_credentials_role ON role_credentials(role);`)
+	return err
+}
+
+// migrateHostAutos adds host_autos and host_auto_runs (#333): scheduled runs
+// of a hosted session (cron read in tz, the host's zone at creation;
+// next_fire_at is the next time not yet handled, run_requested_at a manual
+// run not yet handled; notify is a JSON list of roles) and their history,
+// the newest 500 per run, dropped with it. Times are Unix ms.
+func migrateHostAutos(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS host_autos(id INTEGER PRIMARY KEY AUTOINCREMENT, session TEXT NOT NULL, cron TEXT NOT NULL, tz TEXT NOT NULL, prompt TEXT NOT NULL, label TEXT NOT NULL DEFAULT '', resume INTEGER NOT NULL DEFAULT 0, notify TEXT NOT NULL DEFAULT '[]', state TEXT NOT NULL DEFAULT 'active', next_fire_at INTEGER, run_requested_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS host_autos_session ON host_autos(session);
+CREATE TABLE IF NOT EXISTS host_auto_runs(id INTEGER PRIMARY KEY AUTOINCREMENT, auto INTEGER NOT NULL, at INTEGER NOT NULL, result TEXT NOT NULL, manual INTEGER NOT NULL DEFAULT 0, exit_code INTEGER, duration_ms INTEGER, output TEXT NOT NULL DEFAULT '', mail_id INTEGER, launched INTEGER NOT NULL DEFAULT 0, agent_session_id TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '');
+CREATE INDEX IF NOT EXISTS host_auto_runs_auto ON host_auto_runs(auto, id);`)
 	return err
 }
 
