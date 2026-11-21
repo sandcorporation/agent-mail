@@ -8,6 +8,8 @@ package config
 // are set. Old-name use is counted so the removal can wait until it is zero.
 
 import (
+	"fmt"
+	"net/netip"
 	"os"
 	"sort"
 	"strings"
@@ -132,6 +134,57 @@ func EnvFrom(getenv func(string) string, name string) (value, from string) {
 // DefaultHostingMax is the running-session cap per node when
 // SWITCHBOARD_HOSTING_MAX is unset (#190).
 const DefaultHostingMax = 4
+
+// Remote nodes (#329): a hosting host may open a second listener on a
+// private-network address for nodes on other machines, and both sides accept
+// only addresses inside the allowed ranges.
+const (
+	// HostingRemoteListenName is the host's second listener (IP:port, unset:
+	// none). It serves the node channel and the role API only.
+	HostingRemoteListenName = "HOSTING_REMOTE_LISTEN"
+	// HostingRemoteAllowName lists the CIDR ranges (comma-separated) the
+	// remote listener's address and peers, and a node's --host, must be in.
+	HostingRemoteAllowName = "HOSTING_REMOTE_ALLOW"
+	// DefaultHostingRemoteAllow is the Tailscale address ranges.
+	DefaultHostingRemoteAllow = "100.64.0.0/10,fd7a:115c:a1e9::/48" // leak-guard:allow
+)
+
+// HostingRemoteAllow reads SWITCHBOARD_HOSTING_REMOTE_ALLOW through getenv
+// (DefaultHostingRemoteAllow when unset). from names the variable, for
+// messages.
+func HostingRemoteAllow(getenv func(string) string) (allow []netip.Prefix, from string, err error) {
+	v, from := EnvFrom(getenv, HostingRemoteAllowName)
+	if strings.TrimSpace(v) == "" {
+		v = DefaultHostingRemoteAllow
+	}
+	for _, part := range strings.Split(v, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		p, perr := netip.ParsePrefix(part)
+		if perr != nil {
+			return nil, from, fmt.Errorf("%s: %q is not a CIDR range such as 100.64.0.0/10", from, part) // leak-guard:allow
+		}
+		allow = append(allow, p.Masked())
+	}
+	if len(allow) == 0 {
+		return nil, from, fmt.Errorf("%s names no CIDR range", from)
+	}
+	return allow, from, nil
+}
+
+// AddrAllowed reports whether a is inside one of allow (an IPv4-mapped IPv6
+// address counts as its IPv4 address; a zone is ignored).
+func AddrAllowed(a netip.Addr, allow []netip.Prefix) bool {
+	a = a.Unmap().WithZone("")
+	for _, p := range allow {
+		if p.Contains(a) {
+			return true
+		}
+	}
+	return false
+}
 
 // Node-side hosting variables (#173), read with EnvFrom.
 const (

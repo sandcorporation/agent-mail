@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"net/url"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -106,10 +106,16 @@ func Up(v, dataDir string, port int, nodeName string) (err error) {
 // hostURL with the token in tokenFile, until SIGINT or SIGTERM. With a join
 // code it first exchanges the code for a token and writes tokenFile (user
 // only; an existing file is never replaced). restartSessions stops every
-// session at start so each relaunches with resume. Only a loopback host is
-// accepted in this release.
+// session at start so each relaunches with resume. The host is loopback or
+// inside SWITCHBOARD_HOSTING_REMOTE_ALLOW (checkNodeHost).
 func Node(v, hostURL, tokenFile, joinCode string, restartSessions bool) error {
-	if err := checkNodeHost(hostURL); err != nil {
+	allow, _, err := config.HostingRemoteAllow(os.Getenv)
+	if err != nil {
+		return fmt.Errorf("node: %w", err)
+	}
+	if err = checkNodeHost(hostURL, allow, func(ctx context.Context, h string) ([]netip.Addr, error) {
+		return net.DefaultResolver.LookupNetIP(ctx, "ip", h)
+	}); err != nil {
 		return err
 	}
 	abs, err := filepath.Abs(tokenFile)
@@ -159,19 +165,6 @@ func nodeRunError(err error) error {
 		return cli.ExitCodeError{Code: cli.ExitNodeRevoked, Err: fmt.Errorf("node: %w", err)}
 	}
 	return err
-}
-
-// checkNodeHost accepts an http(s) URL of a loopback host only: nodes on
-// other machines wait for the access-scope decision.
-func checkNodeHost(hostURL string) error {
-	u, err := url.Parse(hostURL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return fmt.Errorf("node: --host %q is not an http:// or https:// URL", hostURL)
-	}
-	if !loopbackHost(u.Hostname()) {
-		return fmt.Errorf("node: --host %s is not a loopback address; this release attaches nodes only to a host on this machine (access scope: spec #173 owner answers, decided again before #180)", u.Hostname())
-	}
-	return nil
 }
 
 // joinHost exchanges an invite code at hostURL for the node's token and
