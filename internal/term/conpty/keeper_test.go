@@ -836,7 +836,7 @@ func TestResolveCommand(t *testing.T) {
 }
 
 func TestRunArgsRoundTrip(t *testing.T) {
-	o := conpty.RunOptions{Instance: "n0123", History: 500, LogFile: `C:\data\keeper.log`}
+	o := conpty.RunOptions{Instance: "n0123", History: 500, LogFile: `C:\data\keeper.log`, IdleLimit: 90 * time.Second}
 	args := o.Args()
 	if args[0] != conpty.KeeperCommand {
 		t.Fatalf("args %q", args)
@@ -876,5 +876,43 @@ func TestVersion(t *testing.T) {
 	ki, err := r.client().Version(ctx(t))
 	if err != nil || ki.Version != "v9" || ki.Protocol != conpty.Protocol || ki.PID != os.Getpid() {
 		t.Fatalf("version %+v %v", ki, err)
+	}
+}
+
+func TestWatchIdleEndsAKeeperWithNothingToHold(t *testing.T) {
+	r := newKeeper(t, "v1")
+	if !r.keeper.WatchIdle(ctx(t), 100*time.Millisecond, 10*time.Millisecond) {
+		t.Fatal("an empty keeper did not report idle")
+	}
+}
+
+func TestWatchIdleWaitsWhileASessionOrConnectionExists(t *testing.T) {
+	r := newKeeper(t, "v1")
+	c := r.client()
+	if err := c.Launch(ctx(t), shell("sb-a")); err != nil {
+		t.Fatal(err)
+	}
+	// A session, even one that has ended, keeps the keeper.
+	short, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
+	defer cancel()
+	if r.keeper.WatchIdle(short, 50*time.Millisecond, 10*time.Millisecond) {
+		t.Fatal("keeper with a session went idle")
+	}
+	if err := c.Stop(ctx(t), "sb-a", time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Forget(ctx(t), "sb-a"); err != nil {
+		t.Fatal(err)
+	}
+	// No session left, but the client's connection is still attached.
+	short2, cancel2 := context.WithTimeout(context.Background(), 400*time.Millisecond)
+	defer cancel2()
+	if r.keeper.WatchIdle(short2, 50*time.Millisecond, 10*time.Millisecond) {
+		t.Fatal("keeper with a connection went idle")
+	}
+	// Once the node detaches, the limit runs out.
+	_ = c.Close()
+	if !r.keeper.WatchIdle(ctx(t), 100*time.Millisecond, 10*time.Millisecond) {
+		t.Fatal("detached empty keeper did not go idle")
 	}
 }

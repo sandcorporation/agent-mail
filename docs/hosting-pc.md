@@ -326,6 +326,8 @@ if (-not (Get-Command sbstop -ErrorAction SilentlyContinue)) { throw 'sbstop is 
 sbstop
 ```
 
+The keeper ends by itself after five minutes with no sessions and no node attached (`keeper: no sessions and no node attached for 5m0s; exiting` in `$data\keeper-<instance>.log`). A session of any state, even one that has ended, or an attached node keeps it. The next `up` starts a new keeper when none runs.
+
 Stop or start one session: `sbpc host stop $id`, `sbpc host start $id` (while `up` runs).
 
 Update: run W2 for the new version, run the helpers block of W3 again (it brings `sbstop` and the other helpers up to date; an `env.ps1` from docs before v0.17.0 has no `sbstop`), then:
