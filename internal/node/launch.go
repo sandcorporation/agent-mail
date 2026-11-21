@@ -191,8 +191,44 @@ func SecretName(name string) bool {
 	return false
 }
 
-// ChildEnv is a record's environment: the node's, minus the role token and
-// the node token, with the identity variables set from the record, the
+// AgentSessionMarkers are the variables a running agent CLI sets for its own
+// session and children. A node started from inside an agent session would hand
+// them to hosted sessions, which then think they are sub-sessions (no
+// transcript saved, so --resume has nothing to resume). Settings the user
+// chooses on purpose (plugin dirs, effort, auth) are not here.
+var AgentSessionMarkers = []string{
+	"CLAUDECODE",
+	"CLAUDE_PID",
+	"CLAUDE_CODE_CHILD_SESSION",
+	"CLAUDE_CODE_CHILD_NOTES_DIR",
+	"CLAUDE_CODE_SESSION_ID",
+	"CLAUDE_CODE_SESSION_ATTENDED",
+	"CLAUDE_CODE_AGENT",
+	"CLAUDE_CODE_ENTRYPOINT",
+	"CLAUDE_CODE_EXECPATH",
+	"CLAUDE_CODE_MESSAGING_SOCKET",
+	"CLAUDE_CODE_MESSAGING_TOKEN",
+	"AI_AGENT",
+}
+
+// DroppedMarkers lists, sorted, the session-marker names present in the node's
+// environment (names only, never values).
+func (c Config) DroppedMarkers() []string {
+	var out []string
+	for _, m := range AgentSessionMarkers {
+		for _, kv := range c.Environ {
+			if k, _, _ := strings.Cut(kv, "="); k == m {
+				out = append(out, m)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ChildEnv is a record's environment: the node's, minus the role token, the
+// node token and the agent session markers, with the identity variables set from the record, the
 // colour variables, then the record's non-secret env.
 func (c Config) ChildEnv(r Record) []string {
 	identity := []struct{ name, value string }{
@@ -209,6 +245,9 @@ func (c Config) ChildEnv(r Record) []string {
 	}
 	if c.Term != "" {
 		drop["TERM"] = true
+	}
+	for _, m := range AgentSessionMarkers {
+		drop[m] = true
 	}
 	for _, v := range identity {
 		drop[config.EnvPrefix+v.name] = true

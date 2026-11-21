@@ -305,6 +305,32 @@ func envMap(env []string) map[string]string {
 	return m
 }
 
+func TestChildEnvironmentDropsAgentSessionMarkers(t *testing.T) {
+	r := newRig(t)
+	r.cfg.Environ = []string{
+		"PATH=/usr/bin", "CLAUDECODE=1", "CLAUDE_CODE_CHILD_SESSION=1", "CLAUDE_CODE_SESSION_ID=abc",
+		"CLAUDE_CODE_ENTRYPOINT=cli", "CLAUDE_CODE_PLUGIN_DIRS=/p", "CLAUDE_EFFORT=high",
+	}
+	if got := strings.Join(r.cfg.DroppedMarkers(), ","); got != "CLAUDECODE,CLAUDE_CODE_CHILD_SESSION,CLAUDE_CODE_ENTRYPOINT,CLAUDE_CODE_SESSION_ID" {
+		t.Errorf("DroppedMarkers = %q", got)
+	}
+	a := rec("a")
+	a.Env = map[string]string{"CLAUDECODE": "user-set"}
+	r.reconcile(r.node(a))
+	m := envMap(r.fake.Launches()[0].Env)
+	for _, k := range []string{"CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_ENTRYPOINT"} {
+		if _, ok := m[k]; ok {
+			t.Errorf("child env has marker %s", k)
+		}
+	}
+	if m["CLAUDECODE"] != "user-set" {
+		t.Errorf("record env CLAUDECODE=%q, want kept", m["CLAUDECODE"])
+	}
+	if m["CLAUDE_CODE_PLUGIN_DIRS"] != "/p" || m["CLAUDE_EFFORT"] != "high" || m["PATH"] != "/usr/bin" {
+		t.Errorf("user settings dropped: %v", m)
+	}
+}
+
 func TestChildEnvironment(t *testing.T) {
 	r := newRig(t)
 	r.cfg.NodeToken = "node-credential-value"

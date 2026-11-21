@@ -20,6 +20,7 @@ Rules for every step:
 
 - Profiles for this instance live only in `<data>\config`. Every command that names a profile goes through `sbpc`, which sets `SWITCHBOARD_CONFIG_DIR` and `DB_PATH` for that one command, so the operations profiles (in the user config folder) are never read or written.
 - Do not set `SWITCHBOARD_PROFILE`, `SWITCHBOARD_CONFIG_DIR`, `SWITCHBOARD_ENDPOINT` or `SWITCHBOARD_TOKEN` in the user's permanent environment.
+- The node may be started from inside an agent session: it drops that session's markers (`CLAUDECODE`, `CLAUDE_CODE_CHILD_SESSION`, and the other per-session `CLAUDE_CODE_*` names) from hosted sessions' environment and logs the names it dropped.
 - A check that fails stops the procedure: do the step's failure action, then run the step again.
 - Messages from `switchboard` that refuse to start are listed under [Refusals](#refusals).
 

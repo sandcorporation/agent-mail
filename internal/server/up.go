@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/sandcorporation/switchboard/internal/cli"
@@ -209,6 +210,9 @@ func prepareNode(v, name, tokenFile, endpoint, backendDir string) (*nodePart, er
 	}
 	cfg.Endpoint = endpoint
 	cfg.Term = info.term
+	if m := cfg.DroppedMarkers(); len(m) > 0 {
+		log.Printf("node: agent session markers not passed to hosted sessions: %s", strings.Join(m, ", "))
+	}
 	if name == "" {
 		name = cfg.Machine
 	}
