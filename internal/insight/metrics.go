@@ -370,9 +370,9 @@ func threadRoundTrips(msgs []mail.FlowMail, base func(string) string) wire.Threa
 }
 
 // pendingAges lists, per recipient role, the pending mail not sent by the
-// system as of now, oldest first. over is the pending threshold (0: never).
+// system as of now, oldest first. Mail to a revoked role is left out. over is the pending threshold (0: never).
 func (s *Service) pendingAges(now time.Time, over time.Duration) ([]wire.PendingAge, error) {
-	rows, err := s.db.Query(`SELECT m.recipient,m.created_at FROM messages m `+mail.StatusJoin+` WHERE m.sender NOT IN (?,?) AND `+mail.StatusExpr+`='pending'`, identity.SystemSender, identity.LegacySystemSender)
+	rows, err := s.db.Query(`SELECT m.recipient,m.created_at FROM messages m `+mail.StatusJoin+` WHERE m.sender NOT IN (?,?) AND `+mail.StatusExpr+`='pending' AND `+mail.LiveRecipient, identity.SystemSender, identity.LegacySystemSender)
 	if err != nil {
 		return nil, err
 	}

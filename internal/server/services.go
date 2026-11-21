@@ -47,9 +47,18 @@ func (s *Server) authenticate(r *http.Request) (identity.Principal, bool) {
 }
 
 // ids is the identity rules over this server's database, clock, boss roles
-// and group cache. A revoke logs the slot offline in the presence history.
+// and group cache. A revoke logs the slot offline in the presence history
+// and tells the senders of the role's pending mail (mail.NoticeRevoked).
 func (s *Server) ids() *identity.Service {
-	return identity.New(s.db, s.now, s.bossRoles, s.bossOrder, &s.groups, presence.LogOffline)
+	return identity.New(s.db, s.now, s.bossRoles, s.bossOrder, &s.groups, presence.LogOffline).
+		WithRevokeNotice(func(tx *sql.Tx, role, stamp string, now time.Time) (func(), error) {
+			boxes, err := mail.NoticeRevoked(tx, role, stamp, now)
+			return func() {
+				for _, box := range boxes {
+					s.hub.Publish(box)
+				}
+			}, err
+		})
 }
 
 // mail is the mailbox over this server's database, clock, settings and hub.

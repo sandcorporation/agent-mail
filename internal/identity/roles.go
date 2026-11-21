@@ -69,10 +69,12 @@ var errNoRole = errors.New("no such role")
 // SetRevoked revokes (or restores) role. Revoking releases every live slot of
 // the role at once, as an intended stop (no offline notice), so its sessions
 // drop off presence; from then on Authenticate refuses the role and all its
-// -N names. Revoking a revoked role keeps the first revoked_at.
+// -N names. Revoking a revoked role keeps the first revoked_at. A first
+// revoke also runs the RevokeNotice, if set.
 func (s *Service) SetRevoked(ctx context.Context, role string, revoke bool) (RoleView, error) {
 	now := s.now()
 	var v RoleView
+	var after func()
 	err := store.InTx(ctx, s.db, func(tx *sql.Tx) error {
 		var at sql.NullString
 		if err := tx.QueryRow(`SELECT created_at,revoked_at FROM roles WHERE role=?`, role).Scan(&v.CreatedAt, &at); err != nil {
@@ -91,6 +93,12 @@ func (s *Service) SetRevoked(ctx context.Context, role string, revoke bool) (Rol
 			stamp = now.UTC().Format(time.RFC3339Nano)
 			if _, err := tx.Exec(`UPDATE roles SET revoked_at=? WHERE role=?`, stamp, role); err != nil {
 				return err
+			}
+			if s.revoked != nil {
+				var err error
+				if after, err = s.revoked(tx, role, stamp, now); err != nil {
+					return err
+				}
 			}
 		}
 		v.RevokedAt = &stamp
@@ -121,6 +129,9 @@ func (s *Service) SetRevoked(ctx context.Context, role string, revoke bool) (Rol
 		}
 		return nil
 	})
+	if err == nil && after != nil {
+		after()
+	}
 	return v, err
 }
 
