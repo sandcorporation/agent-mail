@@ -329,6 +329,45 @@ func nullInt(i int64) any {
 
 // List serves GET /api/messages (inbox or outbox of role).
 func (s *Service) List(w http.ResponseWriter, r *http.Request, role string) {
+	s.list(w, r, role)
+}
+
+// ListOf serves GET /api/messages?of=MAILBOX for a boss role: the same list
+// as List for another mailbox, read-only. The view is recorded (mailbox_views).
+// Only a global boss may call it; the caller has checked that.
+func (s *Service) ListOf(w http.ResponseWriter, r *http.Request, viewer identity.Principal, of string) {
+	if err := s.recordView(viewer.Role, of, 0); err != nil {
+		http.Error(w, "view not recorded", 500)
+		return
+	}
+	s.list(w, r, of)
+}
+
+// ViewForeign serves GET /api/messages/{id} for a boss role when message id
+// is neither sent nor received by viewer: it shows the message with its state
+// untouched and records the view. It reports false for any other message.
+func (s *Service) ViewForeign(w http.ResponseWriter, viewer identity.Principal, id int64) bool {
+	m, err := s.View(id)
+	if err != nil || m.Sender == viewer.Role || m.Recipient == viewer.Role {
+		return false
+	}
+	if err := s.recordView(viewer.Role, m.Recipient, id); err != nil {
+		http.Error(w, "view not recorded", 500)
+		return true
+	}
+	m.AnswersDirective = s.AnswersDirective(m.Recipient, id)
+	writeJSON(w, m)
+	return true
+}
+
+// recordView appends a mailbox view: who looked at which mailbox (and message
+// ID, 0 for a list) at what time. Body text is not stored.
+func (s *Service) recordView(viewer, mailbox string, id int64) error {
+	_, err := s.db.Exec(`INSERT INTO mailbox_views(viewer,mailbox,message_id,viewed_at) VALUES(?,?,?,?)`, viewer, mailbox, id, ms(s.now()))
+	return err
+}
+
+func (s *Service) list(w http.ResponseWriter, r *http.Request, role string) {
 	box := r.URL.Query().Get("box")
 	if box != "outbox" {
 		box = "inbox"

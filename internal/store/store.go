@@ -128,6 +128,9 @@ func Init(db *sql.DB) error {
 	if e = migrateHostedEvents(db); e != nil {
 		return e
 	}
+	if e = migrateMailboxViews(db); e != nil {
+		return e
+	}
 	if e = migrateReports(db); e != nil {
 		return e
 	}
@@ -451,6 +454,14 @@ func migratePresenceLog(db *sql.DB) error {
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS presence_log(id INTEGER PRIMARY KEY AUTOINCREMENT,base TEXT NOT NULL,number INTEGER NOT NULL,role TEXT NOT NULL,state TEXT NOT NULL,started_at INTEGER NOT NULL,ended_at INTEGER);
 CREATE INDEX IF NOT EXISTS idx_presence_log_slot ON presence_log(base,number,ended_at);
 CREATE INDEX IF NOT EXISTS idx_presence_log_started ON presence_log(started_at);`)
+	return err
+}
+
+// migrateMailboxViews adds the audit log of boss views of other mailboxes
+// (additive): viewer, mailbox, message ID (0 for a list) and time.
+func migrateMailboxViews(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS mailbox_views(id INTEGER PRIMARY KEY AUTOINCREMENT,viewer TEXT NOT NULL,mailbox TEXT NOT NULL,message_id INTEGER NOT NULL DEFAULT 0,viewed_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_mailbox_views_at ON mailbox_views(viewed_at)`)
 	return err
 }
 
