@@ -137,6 +137,17 @@ func EnvFrom(getenv func(string) string, name string) (value, from string) {
 	return getenv(EnvPrefix + name), EnvPrefix + name
 }
 
+// HostingAllowChecksName is SWITCHBOARD_HOSTING_ALLOW_CHECKS: "on" lets a
+// node run scheduled runs' prechecks (#334), like `node --allow-checks`;
+// `up`'s own node reads it. Off by default.
+const HostingAllowChecksName = "HOSTING_ALLOW_CHECKS"
+
+// HostingAllowChecks reads SWITCHBOARD_HOSTING_ALLOW_CHECKS through getenv.
+func HostingAllowChecks(getenv func(string) string) bool {
+	v, _ := EnvFrom(getenv, HostingAllowChecksName)
+	return strings.TrimSpace(v) == "on"
+}
+
 // DefaultHostingMax is the running-session cap per node when
 // SWITCHBOARD_HOSTING_MAX is unset (#190).
 const DefaultHostingMax = 4

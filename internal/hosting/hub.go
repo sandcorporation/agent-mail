@@ -67,6 +67,13 @@ type Hub struct {
 	runSeen    map[string]int64 // host time the current run was first reported, by record id
 
 	tickets tickets
+
+	// prechecks are the precheck frames sent and not yet answered, by ref
+	// (precheck.go).
+	prechecks map[string]pendingCheck
+	checkSeq  int64
+	// checking are the scheduled runs whose precheck is under way.
+	checking map[int64]bool
 }
 
 type nodeConn struct {
@@ -403,6 +410,7 @@ func (h *Hub) attach(c *nodeConn) {
 	h.mu.Lock()
 	if old, ok := h.conns[c.name]; ok {
 		old.cancel()
+		h.dropChecksLocked(old)
 	}
 	h.conns[c.name] = c
 	delete(h.away, c.name)
@@ -432,6 +440,7 @@ func (h *Hub) detach(c *nodeConn) {
 	}
 	delete(h.conns, c.name)
 	h.away[c.name] = h.svc.clock().UnixMilli()
+	h.dropChecksLocked(c)
 	h.mu.Unlock()
 	if err := h.svc.nodeLeft(c.name); err != nil {
 		log.Printf("hosting: node %s left: %v", c.name, err)
@@ -537,6 +546,10 @@ func (h *Hub) receive(c *nodeConn, f wire.NodeFrame) {
 		}
 		if err := h.svc.recordEvent(*f.Event); err != nil {
 			log.Printf("hosting: event %s %s: %v", f.Event.ID, f.Event.Kind, err)
+		}
+	case wire.NodeCheckResultType:
+		if f.CheckResult != nil {
+			h.checkAnswered(c, *f.CheckResult)
 		}
 	}
 }

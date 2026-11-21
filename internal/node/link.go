@@ -246,7 +246,7 @@ func (l *Link) session(ctx context.Context, url string) (attached bool, err erro
 				stop()
 				return
 			}
-			l.receive(ctx, f, sctx, rl)
+			l.receive(ctx, f, sctx, rl, write)
 		}
 	}()
 	sent := "\x00"
@@ -294,9 +294,21 @@ func (l *Link) session(ctx context.Context, url string) (attached bool, err erro
 }
 
 // receive applies one host frame; attach and detach drive rl, the relay of
-// this connection (sctx).
-func (l *Link) receive(ctx context.Context, f wire.NodeFrame, sctx context.Context, rl *relay) {
+// this connection (sctx), and write answers on it.
+func (l *Link) receive(ctx context.Context, f wire.NodeFrame, sctx context.Context, rl *relay, write func(wire.NodeFrame) error) {
 	switch f.Type {
+	case wire.NodeCheckType:
+		if f.Check == nil {
+			return
+		}
+		chk := *f.Check
+		go func() {
+			// Ends with the connection: the host's wait ends with it too.
+			res := l.Node.Check(sctx, f.ID, chk)
+			if err := write(wire.NodeFrame{Type: wire.NodeCheckResultType, ID: f.ID, CheckResult: &res}); err != nil {
+				l.Logf("node: precheck %s: %v", f.ID, err)
+			}
+		}()
 	case wire.NodeAttach:
 		rl.attach(sctx, f.ID)
 	case wire.NodeDetach:

@@ -139,6 +139,9 @@ func printAutoView(w io.Writer, v wire.HostAutoView) {
 	if len(v.Notify) > 0 {
 		fmt.Fprintf(w, "notify: %v\n", v.Notify)
 	}
+	if v.Check != "" {
+		fmt.Fprintf(w, "check (limit %s): %s\n", time.Duration(v.CheckTimeoutMS)*time.Millisecond, v.Check)
+	}
 	fmt.Fprintf(w, "prompt:\n%s\n", v.Prompt)
 	if len(v.Runs) == 0 {
 		fmt.Fprintln(w, "no runs yet")

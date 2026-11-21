@@ -409,6 +409,9 @@ func TestHostAutoCLI(t *testing.T) {
 		{[]string{"auto", "add", "hs_00000000000000000000000000000000", "--cron", "* * * * *", "--prompt", "p"}, 1, "no hosted session"},
 		{[]string{"auto", "add", id, "--cron", "nope", "--prompt", "p"}, 1, "cron"},
 		{[]string{"auto", "add", id, "--cron", "* * * * *", "--prompt", "p", "--notify", "team/nobody"}, 1, "not a registered role"},
+		{[]string{"auto", "add", id, "--cron", "* * * * *", "--prompt", "p", "--check-timeout", "30s"}, 2, "--check-timeout needs --check"},
+		{[]string{"auto", "add", id, "--cron", "* * * * *", "--prompt", "p", "--check", "true", "--check-timeout", "11m"}, 2, "1s to 10m"},
+		{[]string{"auto", "show", aid, "--check", "true"}, 2, "--check is not one of its options"},
 		{[]string{"auto", "show", aid, "--cron", "* * * * *"}, 2, "--cron is not one of its options"},
 		{[]string{"auto", "add", id, "--cron", "* * * * *", "--prompt", "p", "--max-run", "10s"}, 2, "--max-run wants a duration"},
 		{[]string{"auto", "show", aid, "--max-run", "1h"}, 2, "--max-run is not one of its options"},
@@ -442,6 +445,17 @@ func TestHostAutoCLI(t *testing.T) {
 	}
 	if code, out, _ = hostCLI(t, dbPath, "auto", "show", aid); code != 0 || !strings.Contains(out, "launch: resume, max-run 30m0s") || !strings.Contains(out, "no runs yet") {
 		t.Fatalf("auto show text = %d %q", code, out)
+	}
+	code, out, stderr = hostCLI(t, dbPath, "auto", "add", id, "--cron", "0 * * * *", "--prompt", "p", "--check", "test -s queue.txt", "--check-timeout", "2m", "--json")
+	var checked wire.HostAuto
+	if code != 0 || json.Unmarshal([]byte(out), &checked) != nil || checked.Check != "test -s queue.txt" || checked.CheckTimeoutMS != 120_000 {
+		t.Fatalf("auto add --check = %d %q %s", code, out, stderr)
+	}
+	if code, out, _ = hostCLI(t, dbPath, "auto", "show", fmt.Sprint(checked.ID)); code != 0 || !strings.Contains(out, "check (limit 2m0s): test -s queue.txt") {
+		t.Fatalf("auto show of a checked run = %d %q", code, out)
+	}
+	if code, _, stderr = hostCLI(t, dbPath, "auto", "rm", fmt.Sprint(checked.ID)); code != 0 {
+		t.Fatalf("auto rm = %d %s", code, stderr)
 	}
 	if code, out, _ = hostCLI(t, dbPath, "auto", "rm", aid); code != 0 || out != "removed "+aid {
 		t.Fatalf("auto rm = %d %q", code, out)

@@ -22,20 +22,22 @@ const (
 	// minAutoMaxRun and maxAutoMaxRun bound a scheduled run's max-run.
 	minAutoMaxRun = 60 * 1000
 	maxAutoMaxRun = 7 * 24 * 60 * 60 * 1000
+	// maxAutoCheck caps a precheck command (#334).
+	maxAutoCheck = 4 << 10
 )
 
 // ErrNoSuchAuto means no scheduled run has the given id (or it belongs to
 // another hosted session).
 var ErrNoSuchAuto = errors.New("no such scheduled run")
 
-const autoColumns = `id,session,cron,tz,prompt,label,resume,notify,state,next_fire_at,run_requested_at,created_at,updated_at,max_run_ms`
+const autoColumns = `id,session,cron,tz,prompt,label,resume,notify,state,next_fire_at,run_requested_at,created_at,updated_at,max_run_ms,precheck,precheck_timeout_ms`
 
 func scanAuto(r rowScanner) (wire.HostAuto, error) {
 	var a wire.HostAuto
 	var resume int
 	var notify string
 	var next, req sql.NullInt64
-	if err := r.Scan(&a.ID, &a.Session, &a.Cron, &a.TZ, &a.Prompt, &a.Label, &resume, &notify, &a.State, &next, &req, &a.CreatedAt, &a.UpdatedAt, &a.MaxRunMS); err != nil {
+	if err := r.Scan(&a.ID, &a.Session, &a.Cron, &a.TZ, &a.Prompt, &a.Label, &resume, &notify, &a.State, &next, &req, &a.CreatedAt, &a.UpdatedAt, &a.MaxRunMS, &a.Check, &a.CheckTimeoutMS); err != nil {
 		return a, err
 	}
 	a.Resume = resume != 0
@@ -83,6 +85,18 @@ func (s *Service) checkAuto(c wire.HostAutoCreate) error {
 	if err := checkLabel(c.Label); err != nil {
 		return err
 	}
+	if strings.TrimSpace(c.Check) == "" {
+		if c.CheckTimeoutMS != 0 {
+			return invalidf("check_timeout_ms: only with check")
+		}
+	} else {
+		if len(c.Check) > maxAutoCheck || strings.ContainsRune(c.Check, 0) {
+			return invalidf("check: at most %d bytes of text", maxAutoCheck)
+		}
+		if c.CheckTimeoutMS != 0 && (c.CheckTimeoutMS < wire.MinCheckTimeoutMS || c.CheckTimeoutMS > wire.MaxCheckTimeoutMS) {
+			return invalidf("check_timeout_ms: %d to %d", wire.MinCheckTimeoutMS, wire.MaxCheckTimeoutMS)
+		}
+	}
 	for _, r := range c.Notify {
 		if s.roleExists == nil || !s.roleExists(r) {
 			return invalidf("notify: %q is not a registered role", r)
@@ -118,9 +132,16 @@ func (s *Service) CreateAuto(id string, c wire.HostAutoCreate) (wire.HostAuto, e
 	if maxRun == 0 {
 		maxRun = wire.DefaultAutoMaxRunMS
 	}
+	check, timeout := strings.TrimSpace(c.Check), int64(0)
+	if check != "" {
+		timeout = c.CheckTimeoutMS
+		if timeout == 0 {
+			timeout = wire.DefaultCheckTimeoutMS
+		}
+	}
 	ms := now.UnixMilli()
-	res, err := s.db.Exec(`INSERT INTO host_autos(session,cron,tz,prompt,label,resume,notify,state,next_fire_at,created_at,updated_at,max_run_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-		id, c.Cron, tz, c.Prompt, c.Label, boolInt(c.Resume), string(nb), wire.HostAutoActive, *next, ms, ms, maxRun)
+	res, err := s.db.Exec(`INSERT INTO host_autos(session,cron,tz,prompt,label,resume,notify,state,next_fire_at,created_at,updated_at,max_run_ms,precheck,precheck_timeout_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		id, c.Cron, tz, c.Prompt, c.Label, boolInt(c.Resume), string(nb), wire.HostAutoActive, *next, ms, ms, maxRun, check, timeout)
 	if err != nil {
 		return wire.HostAuto{}, err
 	}

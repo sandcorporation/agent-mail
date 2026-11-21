@@ -43,9 +43,13 @@ type HostAuto struct {
 	Notify []string `json:"notify"`
 	// MaxRunMS is how long a session this run launched may run before the
 	// host stops it (result overrun), from its launch.
-	MaxRunMS   int64  `json:"max_run_ms"`
-	State      string `json:"state"`
-	NextFireAt *int64 `json:"next_fire_at"`
+	MaxRunMS int64 `json:"max_run_ms"`
+	// Check is the precheck the node runs before each run (#334); empty:
+	// none. CheckTimeoutMS is its limit.
+	Check          string `json:"check,omitempty"`
+	CheckTimeoutMS int64  `json:"check_timeout_ms,omitempty"`
+	State          string `json:"state"`
+	NextFireAt     *int64 `json:"next_fire_at"`
 	// RunRequestedAt is a `host auto run` the host has not handled yet.
 	RunRequestedAt *int64       `json:"run_requested_at,omitempty"`
 	CreatedAt      int64        `json:"created_at"`
@@ -63,7 +67,22 @@ type HostAutoCreate struct {
 	Notify []string `json:"notify,omitempty"`
 	// MaxRunMS is the max-run; 0 is DefaultAutoMaxRunMS.
 	MaxRunMS int64 `json:"max_run_ms,omitempty"`
+	// Check is a shell command the session's node runs in the session's
+	// directory before each run (#334): exit 0 runs, 1 skips, anything
+	// else is an error. CheckTimeoutMS defaults to DefaultCheckTimeoutMS,
+	// at most MaxCheckTimeoutMS.
+	Check          string `json:"check,omitempty"`
+	CheckTimeoutMS int64  `json:"check_timeout_ms,omitempty"`
 }
+
+// Precheck limits (#334).
+const (
+	DefaultCheckTimeoutMS = 60_000
+	MinCheckTimeoutMS     = 1_000
+	MaxCheckTimeoutMS     = 600_000
+	// CheckOutputMax is how much of the end of a precheck's stdout is kept.
+	CheckOutputMax = 4096
+)
 
 // HostAutoRun is one line of a scheduled run's history.
 type HostAutoRun struct {
