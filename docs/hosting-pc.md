@@ -801,3 +801,5 @@ Warning: with `PERMS` `skip` the agent runs every tool without asking anyone.
 ## Operations deployment
 
 The operations deployment (`compose.yaml`, the Jenkins deploy) never sets `SWITCHBOARD_HOSTING`; `internal/config/opsguard_test.go` fails the build if `compose.yaml` does. Terminal hosting runs only in an instance started with `switchboard up` on the PC that runs the sessions.
+
+<!-- docs-only probe for #339 -->
