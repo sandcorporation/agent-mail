@@ -56,6 +56,8 @@ type Hub struct {
 	bosses  []string
 	// autoMail is the mail of scheduled runs (autorun.go).
 	autoMail AutoMail
+	// autoMailDone tells whether a scheduled run's mail was completed.
+	autoMailDone AutoMailDone
 	// nodeLimit is the last usage limit each node reported; limited and
 	// limitKnown are the subscription limit as last published (#190).
 	nodeLimit  map[string]wire.NodeLimit

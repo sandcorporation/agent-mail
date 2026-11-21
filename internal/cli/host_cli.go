@@ -4,6 +4,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sandcorporation/switchboard/internal/wire"
 )
@@ -103,7 +104,7 @@ func cliHost(p parsedArgs, stdout io.Writer) (int, error) {
 }
 
 // autoOnly are the options of `host auto` alone.
-var autoOnly = []string{"--cron", "--prompt", "--resume", "--notify", "--runs"}
+var autoOnly = []string{"--cron", "--prompt", "--resume", "--notify", "--max-run", "--runs"}
 
 // cliHostAuto checks `host auto ACTION [REF] [options]` and hands it to the
 // binary's host auto command.
@@ -132,7 +133,7 @@ func cliHostAuto(p parsedArgs, stdout io.Writer) (int, error) {
 		if p.values["--cron"] == "" || p.values["--prompt"] == "" {
 			return 0, usagef("host auto add requires --cron and --prompt")
 		}
-		for _, o := range []string{"--cron", "--prompt", "--label", "--resume", "--notify"} {
+		for _, o := range []string{"--cron", "--prompt", "--label", "--resume", "--notify", "--max-run"} {
 			allowed[o] = true
 		}
 	case "list":
@@ -161,6 +162,13 @@ func cliHostAuto(p parsedArgs, stdout io.Writer) (int, error) {
 		runs = n
 	}
 	c := wire.HostAutoCreate{Cron: p.values["--cron"], Prompt: p.values["--prompt"], Label: p.values["--label"], Resume: p.bool("--resume")}
+	if v, ok := p.values["--max-run"]; ok {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < time.Minute || d > 7*24*time.Hour {
+			return 0, usagef("host auto add: --max-run wants a duration from 1m to 168h, not %q", v)
+		}
+		c.MaxRunMS = d.Milliseconds()
+	}
 	for _, r := range p.multi["--notify"] {
 		for _, role := range strings.Split(r, ",") {
 			if role = strings.TrimSpace(role); role != "" {

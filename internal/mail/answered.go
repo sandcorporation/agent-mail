@@ -160,6 +160,20 @@ func (st DirectiveState) Ended() bool { return st.Completed || st.Closed }
 // IsCompleteStatus reports whether a recipient status is complete.
 func IsCompleteStatus(status string) bool { return status == "complete" || status == "completed" }
 
+// Completed reports whether its recipient marked mail id complete (reply
+// --done or complete). Mail that does not exist is not complete.
+func Completed(q identity.Queryer, id int64) (bool, error) {
+	var st sql.NullString
+	err := q.QueryRow(`SELECT rs.status FROM messages m `+StatusJoin+` WHERE m.id=?`, id).Scan(&st)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return st.Valid && IsCompleteStatus(st.String), nil
+}
+
 // ReplyCandidates loads the mail that could reply to any of ds under Replies:
 // mail in their threads or threads rooted at them (idx_thread). A reply
 // always carries a thread_id (Send sets it from reply_to), so this covers

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"time"
 
 	"github.com/sandcorporation/switchboard/internal/wire"
 )
@@ -24,6 +25,19 @@ func (h *Hub) SetAutoMail(fn AutoMail) {
 	h.autoMail = fn
 }
 
+// AutoMailDone reports whether the mail id a scheduled run sent was
+// completed by its recipient. The server passes it in (mail knows); hosting
+// does not import mail.
+type AutoMailDone func(id int64) (bool, error)
+
+// SetAutoMailDone installs the completion check of scheduled runs' mail.
+// Without it a session a run launched stops only at its max-run.
+func (h *Hub) SetAutoMailDone(fn AutoMailDone) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.autoMailDone = fn
+}
+
 // AutoMailKey is the idempotency key of a scheduled run's mail:
 // hostauto:<id>:<time> for a scheduled time, hostauto:<id>:run:<time> for a
 // `host auto run`.
@@ -34,10 +48,14 @@ func AutoMailKey(id int64, at int64, manual bool) string {
 	return "hostauto:" + strconv.FormatInt(id, 10) + ":" + strconv.FormatInt(at, 10)
 }
 
-// SweepAutos fires every scheduled run whose time has come or that was
-// asked to run, once each: a stretch of missed times (the host was down)
-// fires once. It returns how many it fired or recorded.
+// SweepAutos first stops the sessions scheduled runs launched whose run is
+// over (StopAutoSessions), then fires every scheduled run whose time has
+// come or that was asked to run, once each: a stretch of missed times (the
+// host was down) fires once. It returns how many it fired or recorded.
 func (h *Hub) SweepAutos(ctx context.Context) (int, error) {
+	if _, err := h.StopAutoSessions(); err != nil {
+		return 0, err
+	}
 	now := h.svc.clock()
 	due, err := h.svc.dueAutos(now)
 	if err != nil {
@@ -96,7 +114,14 @@ func (h *Hub) fireAuto(a wire.HostAuto, at int64, manual bool) (wire.HostAutoRun
 	if !attached {
 		return finish(wire.AutoNodeOffline, "node "+rec.Node+" is not attached")
 	}
-	// The precheck (#334) and the overlap rule (#335) go here.
+	// Overlap (#335): a session an earlier run launched still runs for that
+	// run, so this one is busy, before any precheck (#334).
+	if held, err := h.heldBy(rec); err != nil {
+		return finish(wire.AutoError, "overlap: "+err.Error())
+	} else if held != nil {
+		return finish(wire.AutoBusy, fmt.Sprintf("run %d of scheduled run %d still holds the session", held.ID, held.Auto))
+	}
+	// The precheck (#334) goes here.
 	if rec.Desired != DesiredRunning {
 		var launched wire.HostedSession
 		if a.Resume {
@@ -111,7 +136,8 @@ func (h *Hub) fireAuto(a wire.HostAuto, at int64, manual bool) (wire.HostAutoRun
 		case err != nil:
 			return finish(wire.AutoError, "launch: "+err.Error())
 		}
-		run.Launched, run.AgentSessionID = true, launched.AgentSessionID
+		launchedAt := h.svc.clock().UnixMilli()
+		run.Launched, run.AgentSessionID, run.LaunchedAt = true, launched.AgentSessionID, &launchedAt
 		if err := h.Sync(); err != nil {
 			log.Printf("hosting: sync: %v", err)
 		}
@@ -134,4 +160,119 @@ func autoSubject(a wire.HostAuto) string {
 		return a.Label
 	}
 	return fmt.Sprintf("scheduled run %d", a.ID)
+}
+
+// heldBy is the run that launched rec and still holds it, or nil. A held run
+// whose session no longer runs is ended first (it was stopped by hand).
+func (h *Hub) heldBy(rec wire.HostedSession) (*wire.HostAutoRun, error) {
+	held, err := h.svc.heldAutoRuns(rec.ID)
+	if err != nil || len(held) == 0 {
+		return nil, err
+	}
+	if rec.Desired != DesiredRunning {
+		now := h.svc.clock().UnixMilli()
+		for _, r := range held {
+			if _, err := h.svc.endAutoRun(r.ID, now, "", "session stopped"); err != nil {
+				return nil, err
+			}
+		}
+		return nil, nil
+	}
+	return &held[0], nil
+}
+
+// StopAutoSessions ends every run that launched a session the host still
+// watches and whose run is over: the session is stopped (desired stopped)
+// when the run's mail was completed, or when max-run passed since the launch
+// (the run's result becomes overrun). A session that was stopped or removed
+// otherwise is only no longer watched. Sessions a run did not launch (they
+// already ran) are never stopped. It returns how many runs it ended.
+func (h *Hub) StopAutoSessions() (int, error) {
+	held, err := h.svc.heldAutoRuns("")
+	if err != nil || len(held) == 0 {
+		return 0, err
+	}
+	h.mu.Lock()
+	done := h.autoMailDone
+	h.mu.Unlock()
+	now := h.svc.clock().UnixMilli()
+	n, stopped := 0, false
+	for _, r := range held {
+		result, detail, stop, err := h.autoRunOver(r, now, done)
+		if err != nil {
+			log.Printf("hosting: scheduled run %d, run %d: %v", r.Auto, r.ID, err)
+			continue
+		}
+		if detail == "" {
+			continue
+		}
+		if stop {
+			a, _ := h.svc.GetAuto(r.Auto)
+			if _, err := h.svc.SetDesired(a.Session, DesiredStopped); err != nil && !errors.Is(err, ErrNotFound) {
+				log.Printf("hosting: scheduled run %d: stop %s: %v", r.Auto, a.Session, err)
+				continue
+			}
+			stopped = true
+		}
+		ended, err := h.svc.endAutoRun(r.ID, now, result, detail)
+		if err != nil {
+			return n, err
+		}
+		if ended {
+			n++
+		}
+	}
+	if stopped {
+		if err := h.Sync(); err != nil {
+			log.Printf("hosting: sync: %v", err)
+		}
+	}
+	if n > 0 {
+		h.publish("terminals")
+	}
+	return n, nil
+}
+
+// autoRunOver decides whether the held run r is over at now: detail is
+// empty while it goes on; stop says to stop its session; result is
+// overrun when max-run passed, else empty (the run keeps its result).
+func (h *Hub) autoRunOver(r wire.HostAutoRun, now int64, done AutoMailDone) (result, detail string, stop bool, err error) {
+	a, err := h.svc.GetAuto(r.Auto)
+	if errors.Is(err, ErrNoSuchAuto) {
+		return "", "scheduled run removed", false, nil
+	}
+	if err != nil {
+		return "", "", false, err
+	}
+	rec, err := h.svc.Get(a.Session)
+	if errors.Is(err, ErrNotFound) {
+		return "", "session removed", false, nil
+	}
+	if err != nil {
+		return "", "", false, err
+	}
+	if rec.Desired != DesiredRunning {
+		return "", "session stopped", false, nil
+	}
+	if r.MailID != nil && done != nil {
+		ok, err := done(*r.MailID)
+		if err != nil {
+			return "", "", false, err
+		}
+		if ok {
+			return "", "mail completed, session stopped", true, nil
+		}
+	}
+	start := r.At
+	if r.LaunchedAt != nil {
+		start = *r.LaunchedAt
+	}
+	maxRun := a.MaxRunMS
+	if maxRun <= 0 {
+		maxRun = wire.DefaultAutoMaxRunMS
+	}
+	if now-start >= maxRun {
+		return wire.AutoOverrun, "max-run " + time.Duration(maxRun*int64(time.Millisecond)).String() + " passed, session stopped", true, nil
+	}
+	return "", "", false, nil
 }

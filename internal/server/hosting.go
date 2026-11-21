@@ -154,6 +154,7 @@ func (s *Server) hostingHub() *hosting.Hub {
 		sort.Strings(bosses)
 		s.nodeHub.SetNotify(s.hostingNotify, bosses)
 		s.nodeHub.SetAutoMail(s.hostingAutoMail)
+		s.nodeHub.SetAutoMailDone(func(id int64) (bool, error) { return mail.Completed(s.db, id) })
 		s.nodeHub.SetSlotOf(s.hostingSlotOf)
 	})
 	return s.nodeHub
